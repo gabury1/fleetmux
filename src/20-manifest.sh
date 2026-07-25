@@ -27,6 +27,25 @@ tt_is_uuid() {
     return 1
 }
 
+# 복원이 pane 에 띄울 로그인 셸. tmux 의 서버 전역 default-shell 에 절대 기대지 않는다.
+#   default-shell 은 서버가 태어날 때 부모의 $SHELL 로 한 번 굳고 서버가 죽을 때까지 안 바뀐다.
+#   @reboot cron 이 서버를 낳으면 $SHELL=/bin/sh → 그 서버가 만드는 모든 pane 이 dash 가 되고,
+#   dash 는 .bashrc 를 안 읽어 claude 가 PATH 에서 사라진다(2026-07-26: agent 5개 전멸).
+#   set -g default-shell 로 고치면 남의 세션까지 영향이 가므로, 세션마다 명시하는 쪽을 택한다 —
+#   서버 전역 상태는 무접촉이고 효과는 우리 세션에만 든다.
+tt_login_shell() {
+    local s
+    s=$(getent passwd "$(id -un 2>/dev/null)" 2>/dev/null | cut -d: -f7)
+    case "$s" in */bash|*/zsh|*/fish) [ -x "$s" ] && { printf '%s' "$s"; return 0; } ;; esac
+    printf '/bin/bash'
+}
+
+# pane 에 에이전트가 실제로 떠 있나 — 복원 검증용. 판정 기준은 tt_is_agent 의 둘째 절과 같다.
+tt_pane_has_agent() {
+    tmux list-panes -s -t "=${1:-}:" -F '#{pane_current_command}' 2>/dev/null \
+        | grep -qxE 'claude|codex'
+}
+
 # 쓰기 전 무결성 검사 — 인자로 받은 '파일 전체 내용'의 모든 줄을 본다. 한 줄이라도 어긋나면 rc 1.
 #   깨진 매니페스트는 조용히 번진다: 한 번 밀린 필드가 다음 스냅샷의 "옛 값"으로 읽혀 누진 손상이 된다.
 #   그래서 규칙은 "의심스러우면 안 쓴다" — 기존 파일이 남아 있는 쪽이 언제나 낫다.

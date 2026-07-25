@@ -186,7 +186,11 @@ if [ "${1:-}" = "--help" ]; then
   ${T}fleet${R}  ${D}survive a reboot — the manifest remembers what was up${R}
     tt --snapshot           record every live session: cwd, kind, command, conversation
     tt --restore [--dry]    bring them all back — live ones are skipped, --dry just plans
+    tt --boot-restore       ${D}[--dry]${R} same, but safe to hang off @reboot cron
     tt --forget ${D}<name>${R}     drop one session from the manifest
+    ${D}--boot-restore waits up to 120s for DNS before restoring, and aborts if it never comes —${R}
+    ${D}claudes started without a network die into a shell, then look "already running" forever${R}
+    ${D}touch ~/.cache/tt/no-autorestore to skip it on the next boot; log is ~/.cache/tt/boot.log${R}
     ${D}agents come back with claude --resume <id>, never --continue —${R}
     ${D}--continue picks "latest chat in this folder", so same-cwd sessions clone each other${R}
     ${D}resume runs in the conversation's own home dir, which is often not the session cwd${R}

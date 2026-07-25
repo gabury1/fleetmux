@@ -48,20 +48,23 @@ tt_comm() {
 # 소수점 대기가 필요한 곳은 여기 한 곳에서 갈라 쓴다 — 4.x면 흡수, 3.2면 흡수 포기(1초 멈춤 방지).
 if [ "${BASH_VERSINFO[0]:-3}" -ge 4 ]; then TT_TINY_READ=1; else TT_TINY_READ=0; fi
 
-# hook.log 회전 — 하루 ~1600줄이 SD카드에 상시 append된다. 임계 초과 시 꼬리만 남기고 자른다.
+# 로그 회전 — hook.log는 하루 ~1600줄이 SD카드에 상시 append된다. 임계 초과 시 꼬리만 남기고 자른다.
 #   크기 측정은 `wc -c <파일`(POSIX) — stat은 GNU가 -c, BSD가 -f로 옵션이 정반대다.
-#   호출 지점은 --cron(1분)과 boot 훅뿐 — 이벤트마다 부르면 훅 경로에 포크가 하나 더 붙는다.
+#   호출 지점은 --cron(1분)·boot 훅·--boot-restore뿐 — 이벤트마다 부르면 훅 경로에 포크가 하나 더 붙는다.
+#   회전할 파일은 TT_LOG_FILE로 갈아끼운다(--boot-restore의 boot.log). 기본값은 예전 그대로
+#   hook.log라 기존 호출부는 한 글자도 안 바뀐다 — 회전 정책을 두 벌로 나눌 이유가 없다.
+#   인자가 아니라 환경변수 프리픽스로 넘기는 건 tt_fin_norm의 TT_FIN_SKIP과 같은 관례다.
 TT_LOG_MAX=${TT_LOG_MAX:-1048576}
 TT_LOG_KEEP=${TT_LOG_KEEP:-2000}
 tt_log_rotate() {
-    local f="$STATE/hook.log" sz
+    local f="${TT_LOG_FILE:-$STATE/hook.log}" sz
     [ -f "$f" ] || return 0
     sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ') || return 0
     case "${sz:-0}" in ''|*[!0-9]*) return 0 ;; esac
     [ "$sz" -gt "$TT_LOG_MAX" ] || return 0
     if tail -n "$TT_LOG_KEEP" "$f" > "$f.tmp" 2>/dev/null; then
         mv -f "$f.tmp" "$f" 2>/dev/null || { rm -f "$f.tmp"; return 0; }
-        echo "$(date '+%F %T') - hook.log rotated (was $sz bytes)" >> "$f"
+        echo "$(date '+%F %T') - ${f##*/} rotated (was $sz bytes)" >> "$f"
     else
         rm -f "$f.tmp"
     fi
@@ -95,6 +98,25 @@ tt_is_uuid() {
         [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) return 0 ;;
     esac
     return 1
+}
+
+# 복원이 pane 에 띄울 로그인 셸. tmux 의 서버 전역 default-shell 에 절대 기대지 않는다.
+#   default-shell 은 서버가 태어날 때 부모의 $SHELL 로 한 번 굳고 서버가 죽을 때까지 안 바뀐다.
+#   @reboot cron 이 서버를 낳으면 $SHELL=/bin/sh → 그 서버가 만드는 모든 pane 이 dash 가 되고,
+#   dash 는 .bashrc 를 안 읽어 claude 가 PATH 에서 사라진다(2026-07-26: agent 5개 전멸).
+#   set -g default-shell 로 고치면 남의 세션까지 영향이 가므로, 세션마다 명시하는 쪽을 택한다 —
+#   서버 전역 상태는 무접촉이고 효과는 우리 세션에만 든다.
+tt_login_shell() {
+    local s
+    s=$(getent passwd "$(id -un 2>/dev/null)" 2>/dev/null | cut -d: -f7)
+    case "$s" in */bash|*/zsh|*/fish) [ -x "$s" ] && { printf '%s' "$s"; return 0; } ;; esac
+    printf '/bin/bash'
+}
+
+# pane 에 에이전트가 실제로 떠 있나 — 복원 검증용. 판정 기준은 tt_is_agent 의 둘째 절과 같다.
+tt_pane_has_agent() {
+    tmux list-panes -s -t "=${1:-}:" -F '#{pane_current_command}' 2>/dev/null \
+        | grep -qxE 'claude|codex'
 }
 
 # 쓰기 전 무결성 검사 — 인자로 받은 '파일 전체 내용'의 모든 줄을 본다. 한 줄이라도 어긋나면 rc 1.
@@ -842,12 +864,13 @@ if [ "${1:-}" = "--snapshot" ]; then
         cwd=${info%%$'\t'*}; pcmd=${info#*$'\t'}
         [ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$HOME"
         old=$(tt_mf_row "$name")
-        oldcmd=""; oldconv=""; oldhome=""
+        oldcmd=""; oldconv=""; oldhome=""; oldkind=""
         if [ -n "$old" ]; then
             # 필드 순서: name·cwd·kind·cmd·conv[·chome] — cmd에 닿으려면 탭 3개를 벗겨야 한다.
             # 2개만 벗기던 시절엔 oldcmd=kind·oldconv=cmd로 한 칸씩 밀려, 스냅샷마다
             # 대화 id 자리에 "claude" 같은 문자열이 눌러앉는 누진 손상이 났다(2026-07-25 사고).
-            o=${old#*$'\t'}; o=${o#*$'\t'}; o=${o#*$'\t'}; oldcmd=${o%%$'\t'*}
+            o=${old#*$'\t'}; o=${o#*$'\t'}; oldkind=${o%%$'\t'*}
+            o=${o#*$'\t'};   oldcmd=${o%%$'\t'*}
             o=${o#*$'\t'};   oldconv=${o%%$'\t'*}
             # 6번째는 없을 수 있다(옛 5필드 줄) — 있을 때만 읽는다
             case "$o" in *$'\t'*) o=${o#*$'\t'}; oldhome=${o%%$'\t'*} ;; esac
@@ -880,6 +903,18 @@ if [ "${1:-}" = "--snapshot" ]; then
             conv="$oldconv"
             [ -n "$conv" ] || conv="-"
             chome="$oldhome"
+            # ★ 죽은 에이전트를 도구로 강등하지 않는다 — 2026-07-26 사고의 2차 피해.
+            #   에이전트가 죽으면 pane 에 맨 셸만 남는다 → tt_is_agent 가 false →
+            #   kind=tool 로 기록 → 복원은 kind 로 분기하므로 conv 를 무시하고 맨 셸만 띄운다.
+            #   즉 "복원이 가장 필요한 상태"에서 대장이 스스로 복원 능력을 지운다. 1분 cron 이
+            #   스냅샷을 돌리므로 백업 3세대도 3분이면 전부 강등본으로 덮인다(실측).
+            #   판정: 옛 기록이 agent + 대화 id 살아있음 + pane 이 맨 셸(대체 도구가 안 떴음)
+            #   → 죽은 에이전트로 본다. 사람이 그 세션에서 yazi 를 띄웠다면 cmd 가 맨 셸이
+            #   아니므로 위 case 에서 걸러져 정상적으로 tool 로 내려간다.
+            if [ "$oldkind" = agent ] && [ "$cmd" = "-" ] && tt_is_uuid "$conv"; then
+                kind=agent
+                cmd="$oldcmd"; case "$cmd" in ''|-) cmd=claude ;; esac
+            fi
         fi
         # 대화 id는 uuid 형식만 인정 — "claude" 같은 문자열이 통과하던 게 사고를 키웠다
         tt_is_uuid "$conv" || conv="-"
@@ -950,7 +985,8 @@ if [ "${1:-}" = "--restore" ]; then
     else
         tt_sweep_hooks
     fi
-    made=0; skipped=0; used=""; livec=""
+    made=0; skipped=0; used=""; livec=""; verify=""
+    TT_SH=$(tt_login_shell)
     # 지금 살아있는 claude가 물고 있는 대화 목록을 먼저 모은다.
     #   이름만 보고 "죽었다"고 판단하면 부족하다 — 세션이 개명되면(사람이 ^E로 바꾸거나 claude가
     #   스스로 이름을 갈면) 대장의 옛 이름은 죽은 세션처럼 보이고, 멀쩡히 돌고 있는 대화를 한 번 더
@@ -1042,7 +1078,9 @@ if [ "${1:-}" = "--restore" ]; then
             printf 'plan   %-16s %-5s %s  @ %s\n' "$name" "$kind" "${run:-<plain shell>}" "$cwd"
             continue
         fi
-        if ! tmux new-session -d -s "$name" -c "$cwd" 2>/dev/null; then
+        # 셸을 명시한다 — 서버 전역 default-shell 이 cron 에서 /bin/sh 로 굳어 있어도
+        # 우리 세션만은 로그인 bash 로 뜬다(서버 옵션은 무접촉). 2026-07-26 사고의 1차 원인.
+        if ! tmux new-session -d -s "$name" -c "$cwd" "$TT_SH" -l 2>/dev/null; then
             printf 'FAIL   %-16s could not create session\n' "$name"
             continue
         fi
@@ -1051,9 +1089,46 @@ if [ "${1:-}" = "--restore" ]; then
             tmux send-keys -t "=$name:" Enter
         fi
         printf 'made   %-16s %-5s %s\n' "$name" "$kind" "${run:-<plain shell>}"
+        # 검증 대상 적재 — 에이전트만. 도구는 뜨든 말든 대화 유실 위험이 없다.
+        case "$kind" in agent) verify="$verify$name"$'\t'"$run"$'\n' ;; esac
         made=$((made + 1))
         sleep 0.4    # 순차 기동 — claude 열 개를 동시에 띄우면 파이가 무릎을 꿇는다
     done < "$MANIFEST"
+    # ④ 복원 검증. send-keys 를 쳤다는 건 "글자를 보냈다"는 뜻일 뿐 에이전트가 떴다는 뜻이 아니다.
+    #   2026-07-26 사고에서 복원은 커맨드를 정확히 만들어 정확히 쳤고, 로그에도 `made ... agent
+    #   claude --resume <id>` 라고 성공으로 찍혔다. 실제로는 pane 셸이 claude 를 못 찾아 5개가
+    #   빈 셸로 남았고 아무도 40분간 몰랐다. 성공 판정을 "쳤다"에서 "떴다"로 옮기면 원인이
+    #   무엇이든(PATH·셸·대화 id 썩음·바이너리 이동) 걸린다. 위 ①~③은 이번 원인 하나를 막을 뿐이다.
+    if [ "$dry" != 1 ] && [ -n "$verify" ]; then
+        sleep 12          # 파이에서 claude 기동에 몇 초 걸린다 — 성급히 보면 멀쩡한 것도 실패로 읽는다
+        vbad=""
+        while IFS=$'\t' read -r vn vrun || [ -n "$vn" ]; do
+            [ -n "$vn" ] || continue
+            tt_pane_has_agent "$vn" && continue
+            printf '  warn  %-16s agent did not come up — retrying once\n' "$vn"
+            tmux send-keys -t "=$vn:" -l "$vrun" 2>/dev/null
+            tmux send-keys -t "=$vn:" Enter 2>/dev/null
+            vbad="$vbad $vn"
+        done <<< "$verify"
+        if [ -n "$vbad" ]; then
+            sleep 12
+            vfail=""
+            for vn in $vbad; do
+                tt_pane_has_agent "$vn" || vfail="$vfail $vn"
+            done
+            if [ -n "$vfail" ]; then
+                printf 'RESTORE INCOMPLETE — agents still down after retry:%s\n' "$vfail"
+                # 사람이 볼 흔적을 남긴다. 로그만 남기면 오늘처럼 아무도 모른 채 지나간다.
+                printf '%s\n' "$(date '+%Y-%m-%d %H:%M:%S')${vfail}" > "$STATE/restore-failed" 2>/dev/null || true
+            else
+                printf 'verify — all agents up after retry\n'
+                rm -f "$STATE/restore-failed" 2>/dev/null || true
+            fi
+        else
+            printf 'verify — all %d agent(s) came up\n' "$(printf '%s' "$verify" | grep -c .)"
+            rm -f "$STATE/restore-failed" 2>/dev/null || true
+        fi
+    fi
     if [ "$dry" = 1 ]; then
         printf 'dry run — %d already running, nothing created\n' "$skipped"
     else
@@ -1061,6 +1136,236 @@ if [ "${1:-}" = "--restore" ]; then
     fi
     exit 0
 fi
+
+# ── 부팅 자동 복원 (@reboot cron 전용 진입점) ────────────────────────────────
+# --restore 를 감싸는 껍데기다. 복원 로직은 한 줄도 다시 쓰지 않는다(도플갱어 방어·transcript
+# 확인·대화 홈 cd·0.4초 순차 기동은 전부 --restore 안에 이미 있다). 이 분기가 답하는 질문은
+# 딱 하나 — "지금 복원해도 되는 상황인가".
+#
+# 왜 @reboot 에 --restore 를 그냥 걸면 안 되나. 이 파이의 지난 부팅 journal 실측(2026-07-25):
+#   12:41:32  커널 부팅
+#   12:41:35  cron 이 @reboot 잡 발사        ← 이 순간 tailscaled 로그가 "network is unreachable"
+#   12:41:39  eth0 캐리어 + DHCP 리스(192.168.0.37)
+#   12:41:44  tailscaled DERP home 확보 = 이름 해석이 처음 가능해지는 시점
+# @reboot 은 네트워크보다 9~12초 빠르다. 그 틈에 claude 10개를 띄우면 전부 껍데기가 된다.
+#
+# 배치: --restore 분기 바로 뒤. 앞의 분기들은 전부 `[ "$1" = "--xxx" ]` 완전일치라
+# "--boot-restore" 가 "--restore" 에 먼저 잡아먹히지 않는다(접두사 매칭이 아니다).
+if [ "${1:-}" = "--boot-restore" ]; then
+    dry=0; [ "${2:-}" = "--dry" ] && dry=1
+    mkdir -p "$STATE"
+    BOOTLOG="$STATE/boot.log"
+    # 이 기능은 사람이 안 보는 시각에 딱 한 번 돌고, 실패해도 조용하다 → 로그가 유일한 증거다.
+    # 그래서 판정 하나하나를 다 남긴다. 회전은 hook.log 와 같은 정책을 재사용한다.
+    blog() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$BOOTLOG"; }
+    TT_LOG_FILE="$BOOTLOG" tt_log_rotate
+    blog "=== boot-restore start (dry=$dry, pid $$)"
+
+    # ① 킬 스위치. "재부팅은 하되 함대는 안 떴으면" 하는 상황이 있다(커널 교체·디스크 정리 뒤
+    #    관찰, 손으로 함대를 재편하는 중). 사람이 파일 하나로 끌 수 있어야 하고, 지우면 다음
+    #    부팅부터 다시 산다. 끈 것은 고장이 아니므로 성공 코드로 나간다.
+    if [ -f "$STATE/no-autorestore" ]; then
+        blog "kill switch present ($STATE/no-autorestore) — nothing done"
+        exit 0
+    fi
+
+    # ② PATH 보정. cron 의 PATH 는 사실상 /usr/bin:/bin 뿐이다.
+    #    이 파이에서 `env -i PATH=/usr/bin:/bin` 으로 직접 확인한 결과:
+    #      tmux flock getent jq pgrep awk date → /usr/bin 에 있다. 여기까진 cron PATH 로도 산다.
+    #      claude codex fzf → 없다(claude=~/.npm-global/bin, 훅주입 wrapper=~/.local/libexec/tt,
+    #      fzf=~/.local/bin).
+    #    복원이 pane 에 치는 `claude --resume` 자체는 사실 pane 의 로그인 셸이 .profile→.bashrc 를
+    #    다시 읽어 PATH 를 복구하므로 살아난다(격리 소켓에서 실측: 빈약한 PATH 로 띄운 서버의
+    #    pane 안에서도 PATH 가 정상이었다). 그럼에도 여기서 고치는 이유는 tmux **서버**다 —
+    #    서버를 우리가 cron 환경에서 띄우면 그 빈약한 PATH 가 서버 전역 환경으로 굳어 다음
+    #    재부팅까지 남는다(실측: show-environment -g PATH = /usr/bin:/bin). 그 뒤 tmux 가
+    #    비로그인으로 돌리는 것들(run-shell·훅·--preview)이 조용히 깨진다.
+    #    순서 주의: 앞에 붙이므로 아래 나열은 우선순위의 '역순'이다. 최종적으로 libexec/tt 가
+    #    맨 앞이어야 한다 — 그게 뒤로 가면 훅 주입 wrapper 를 건너뛴 맨 claude 가 떠서
+    #    함대 상태판(hook-*)이 통째로 죽는다.
+    for d in "$HOME/.npm-global/bin" "$HOME/.local/bin" "$HOME/.local/libexec/tt"; do
+        [ -d "$d" ] || continue
+        case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
+    done
+    export PATH
+
+    # ②-2 SHELL 보정. PATH 와 똑같은 함정이 $SHELL 에도 있다 — 그리고 이쪽이 더 아팠다.
+    #   cron 의 $SHELL 은 /bin/sh 다. 아래 ⑥에서 우리가 tmux **서버**를 낳으면 그 값이
+    #   서버 전역 default-shell 로 굳어(서버가 죽을 때까지 불변) 이후 만들어지는 모든 pane 이
+    #   dash 가 된다. dash 는 .bashrc 를 안 읽으므로 사용자 PATH 가 통째로 날아가고,
+    #   복원이 친 `claude --resume` 이 전부 `claude: not found` 로 떨어진다.
+    #   2026-07-26 실측: 자동복구 첫 실전에서 agent 5개가 빈 셸로 떴고 상태판은 40분간 초록이었다.
+    #   위 PATH 루프가 이걸 못 막는 이유 — 우리 프로세스의 PATH 는 고쳤지만 pane 은 로그인 셸이
+    #   /etc/profile 을 다시 읽으면서 PATH 를 통째로 덮어쓰기 때문이다.
+    SHELL=$(tt_login_shell); export SHELL
+
+    # ③ 중복 실행 방지. --cron 의 rc.lock 과 같은 방식(flock -n, fd 9).
+    #    --restore 의 "이미 살아있으면 skip" 검사는 세션이 *만들어진 뒤에야* 참이다.
+    #    두 인스턴스가 나란히 돌면 둘 다 "없다"고 읽고 같은 대화를 두 번 연다 = 도플갱어.
+    #    아래 네트워크 대기가 최대 120초라 그 창이 활짝 열려 있다 → 락은 대기보다 먼저 잡는다.
+    #
+    #    ★ fd 9 는 아래에서 자식에게 물려주지 않는다(9>&-). 격리 시험에서 실제로 밟은 함정이다:
+    #      --restore 가 부른 `tmux new-session` 이 서버를 띄우면 그 **데몬**이 fd 9 를 상속하고,
+    #      데몬은 재부팅까지 안 죽으니 락이 영원히 잡힌 채로 남는다. 실측 —
+    #        PID 326033 /usr/bin/tmux -L fmuxtest new-session -d -s zzh-alpha
+    #        /proc/326033/fd/9 -> …/state/boot-restore.lock
+    #      그 뒤로는 사람이 손으로 친 --boot-restore 까지 전부 "already holds the lock" 으로
+    #      튕겼다. 중복을 막으려던 장치가 유일한 수동 재시도를 막는 꼴 — ⑤의 실패 모드와 판박이다.
+    if command -v flock >/dev/null 2>&1; then
+        exec 9>"$STATE/boot-restore.lock"
+        if ! flock -n 9; then
+            blog "another boot-restore already holds the lock — exiting"
+            exit 0
+        fi
+    else
+        blog "warn: flock not found — running without a duplicate-run guard"
+    fi
+
+    # ④ 부팅 맥락 확인. @reboot 전용이지만 사람이 손으로 칠 수도 있고 그건 정당한 용법이라
+    #    막지 않는다. 다만 나중에 로그를 읽을 때 "재부팅 직후였나 아니었나"를 구분할 수 있어야 한다.
+    up=$(cut -d' ' -f1 /proc/uptime 2>/dev/null) || up=""
+    up=${up%%.*}
+    case "${up:-x}" in
+        ''|*[!0-9]*) blog "warn: cannot read uptime — proceeding anyway" ;;
+        *) if [ "$up" -gt 600 ]; then
+               blog "warn: uptime ${up}s > 600s — this is not a fresh boot (manual run?); proceeding"
+           else
+               blog "uptime ${up}s — fresh boot"
+           fi ;;
+    esac
+
+    # ⑤ 네트워크·DNS 준비 대기. 타임아웃이면 복원하지 '않고' 죽는다.
+    #    왜 "일단 띄우고 보자"가 아닌가: 네트워크 없이 뜬 claude 는 즉시 실패하고 pane 에 셸만
+    #    남긴다. 그런데 tmux 세션 이름은 멀쩡히 살아있으므로, 나중에 사람이 --restore 를 쳐도
+    #    전부 "skip — already running" 으로 걸러진다. 즉 실패한 자동복원이 성공할 수동복원을
+    #    막아버린다. 아무것도 안 만든 채 죽는 편이 사람이 고치기 훨씬 싸다.
+    #
+    #    판정으로 이름 해석(getent hosts)을 고른 근거 — 이 파이에서 직접 확인:
+    #      /etc/resolv.conf 는 tailscale 이 쓴 것이고 nameserver 가 100.100.100.100(MagicDNS)뿐이다.
+    #      MagicDNS 로 공인 도메인이 풀리려면 tailscaled 가 떠 있고 업스트림까지 실제로 닿아야 한다
+    #      → 성공 = 링크·라우팅·DNS 가 전부 살아있다는 뜻. 평범한 DNS 를 쓰는 박스보다 강한 신호다.
+    #      캐시 오탐도 콜드부트에선 없다: tailscaled 가 새로 뜨면 캐시가 비어 있다.
+    #      실측 — 성공 6~10ms(10회 54ms) / 없는 이름은 즉시 rc=2. 판정이 싸서 2초 간격이 아깝지 않다.
+    #    그래도 timeout 으로 감싼다: 응답 없는 리졸버를 만나면 glibc 는 5초×2회×서버수를 통째로 끈다.
+    #    DNS 만으로는 부족한 구멍(이름은 풀리는데 라우팅이 아직)을 위해 443 TCP 로 한 번 더 본다.
+    #    /dev/tcp 는 bash 내장이라 curl 의존이 안 붙는다(실측 42ms).
+    NETHOST=${TT_BOOT_NETHOST:-api.anthropic.com}
+    NETWAIT=${TT_BOOT_NETWAIT:-120}
+    t0=$(date +%s); netok=0
+    while :; do
+        # 호스트명을 명령 문자열에 이어붙이지 않고 $1 로 넘긴다(따옴표 escape 는 바깥 셸이
+        # 미리 풀어버리지 않게 하려는 것 — 안쪽 bash 가 볼 때 "$1" 형태여야 한다)
+        if timeout 5 getent hosts "$NETHOST" >/dev/null 2>&1 &&
+           timeout 5 bash -c "exec 3<>/dev/tcp/\"\$1\"/443" _ "$NETHOST" 2>/dev/null; then
+            netok=1; break
+        fi
+        el=$(( $(date +%s) - t0 ))
+        [ "$el" -lt "$NETWAIT" ] || break
+        sleep 2
+    done
+    el=$(( $(date +%s) - t0 ))
+    if [ "$netok" != 1 ]; then
+        blog "ABORT: no DNS+tcp/443 to $NETHOST after ${el}s (budget ${NETWAIT}s) — refusing to restore"
+        blog "       (a fleet of network-less claudes would look 'already running' and block the manual retry)"
+        exit 1
+    fi
+    blog "network ready after ${el}s — $NETHOST resolves and tcp/443 connects"
+
+    # ⑥ tmux 서버. new-session 이 알아서 띄우긴 하지만, 명시적으로 띄워야 여기서 실패를 잡는다
+    #    (소켓 디렉토리 권한·/tmp 미마운트 등 부팅 직후에만 나는 문제들). 서버가 이미 있으면
+    #    완전한 no-op 다 — 세션도 윈도도 만들지 않는다.
+    #    9>&- : 여기서 뜨는 서버 데몬이 락 fd 를 물고 재부팅까지 안 놓는 사고를 막는다(③ 참조).
+    if ! tmux start-server 9>&- 2>>"$BOOTLOG"; then
+        blog "ABORT: tmux start-server failed"
+        exit 1
+    fi
+
+    # ⑦ 복원 명세. 없거나 비었으면 할 일 자체가 없다 — --restore 도 같은 판정을 하지만
+    #    여기서 먼저 걸러야 로그에 이유가 남는다.
+    if [ ! -s "$MANIFEST" ]; then
+        blog "ABORT: no manifest at $MANIFEST — nothing to restore"
+        exit 1
+    fi
+    # 낡음은 경고만. --cron 이 1분마다 --snapshot 을 돌리므로 7일보다 오래된 대장은
+    # "그동안 fmux cron 이 아예 안 돌았다"는 뜻이다(파이가 꺼져 있었거나 fmux 가 빠졌거나).
+    # 그래도 막지 않는다 — 낡은 명세라도 없는 것보다 낫고, 줄 하나하나는 --restore 가 다시
+    # 검증한다(살아있는 대화 선점·transcript 존재·cwd 존재). 7일인 이유는 그보다 짧으면
+    # 여행·정전으로 파이가 며칠 꺼져 있던 정상 상황에서 매번 경고가 뜨기 때문.
+    # 기간 비교에 stat 을 안 쓰는 이유는 tt_log_rotate 와 같다 — GNU 와 BSD 의 옵션이 정반대다.
+    # `find -mtime +7` 은 POSIX 라 양쪽에서 똑같이 돈다.
+    if [ -n "$(find "$MANIFEST" -mtime +7 2>/dev/null)" ]; then
+        blog "warn: $MANIFEST is older than 7 days — restoring it anyway"
+    fi
+
+    # ⑧ 여기부터가 실제 복원. --restore 의 출력을 통째로 남긴다 —
+    #    무엇을 만들고 무엇을 왜 건너뛰었는지가 나중에 유일한 증거다.
+    #    인자는 배열로 넘긴다 — `set -- --restore --dry` 로 위치인자를 갈아끼우면 이 아래에
+    #    남은 분기들(--list·팝업 진입점)이 보는 "$1" 까지 바뀐다. 지금은 바로 exit 하니 무해하지만
+    #    이 블록이 언젠가 위로 올라가면 그날 조용히 터진다.
+    rargs=(--restore)
+    if [ "$dry" = 1 ]; then rargs+=(--dry); fi
+    blog "handing over to: $SELF ${rargs[*]}"
+    rc=0
+    #    9>&- : --restore 가 띄우는 tmux 서버 데몬에게 락 fd 를 물려주지 않는다(③ 참조).
+    #    락 자체는 이 프로세스가 끝날 때까지 그대로 유지된다 — 닫는 건 자식 쪽 사본뿐이다.
+    out=$("$SELF" "${rargs[@]}" 9>&- 2>&1) || rc=$?
+    printf '%s\n' "$out" | while IFS= read -r l; do blog "  | $l"; done
+    printf '%s\n' "$out"
+    blog "=== boot-restore done (restore rc=$rc)"
+    exit "$rc"
+fi
+
+# ── 마지막 대화 시각의 진짜 출처: transcript ────────────────────────────────
+# 원래는 hook-<sid>의 기록 시각을 "마지막 대화 시각"으로 썼다. 그게 틀렸다는 걸 실측했다:
+#   2026-07-25 12:41 부팅 → 13:10 --restore → hook-3/5/8이 전부 13:10으로 갱신 → 함대가 통째로 굵어짐.
+#   재부팅하면 tmux가 session id를 0번부터 재발급해서 tt_sweep_hooks가 옛 훅 파일을 유령으로
+#   지우고 boot 훅이 새로 만든다 — "이 세션의 것"으로는 맞지만 "마지막 대화"로는 완전히 틀린 값이다.
+#
+# 대화 기록 파일이 진짜 출처다. 경로는 $HOME/.claude/projects/*/<대화id>.jsonl
+#   (대화 id는 전역 유일하니 프로젝트 폴더를 알아맞힐 필요가 없다 — --restore와 같은 글롭).
+#
+# 단, **파일 mtime은 쓰면 안 된다**(실측으로 함정을 밟았다):
+#   claude --resume과 원격제어 브리지가 `{"type":"bridge-session",…}` 줄을 덧붙인다. 이 줄엔
+#   timestamp 필드가 없다. 그래서 복원 직후 ULTRACODE의 mtime은 13:10:45인데 마지막 진짜 턴은
+#   2026-07-24T16:03:12Z였다 — mtime을 썼으면 버그가 그대로 남는다(직접 확인함).
+#   그래서 꼬리 64KB 안의 마지막 "timestamp" 값을 읽는다. 브리지 줄은 timestamp가 없어 저절로 걸러진다.
+#
+# 비용: 세션 수와 무관하게 tail 1 + awk 1 = 포크 2개.
+#   tail은 정규 파일이면 끝으로 seek한다 — 58MB짜리 대화도 실측 1.3ms(4개 묶어서).
+#   `stat` 포크 하나가 1.2ms인 걸 감안하면 세션마다 stat을 부르는 것보다 오히려 싸다.
+#
+# 시각 변환을 date에 안 맡기는 이유: 세션마다 포크가 하나씩 는다. awk에서 직접 계산한다
+#   (타임스탬프는 항상 UTC 'Z'). mktime을 안 쓰는 건 mawk에 없어서다(파이 기본이 mawk 1.3.4).
+#   정규식 {n} 반복도 피한다 — 구현마다 interval 지원이 다르다(TT_MF_CHECK_AWK과 같은 이유).
+# 출력 = "<경로>\t<epoch>" 한 줄씩. timestamp를 못 찾으면 0 — 호출부가 훅 시각으로 폴백한다.
+TT_ACT_AWK='
+    function iso2epoch(s,   y, mo, d, h, mi, se, yy, era, yoe, doy, doe, days) {
+        y  = substr(s, 1, 4) + 0;  mo = substr(s, 6, 2) + 0;  d  = substr(s, 9, 2) + 0
+        h  = substr(s, 12, 2) + 0; mi = substr(s, 15, 2) + 0; se = substr(s, 18, 2) + 0
+        if (y < 1970 || mo < 1 || mo > 12 || d < 1 || d > 31) return 0
+        yy  = y - (mo <= 2 ? 1 : 0)          # 3월을 한 해의 시작으로 옮기면 윤일이 항상 맨 끝
+        era = int(yy / 400)
+        yoe = yy - era * 400
+        doy = int((153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5) + d - 1
+        doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+        days = era * 146097 + doe - 719468   # 146097 = 400년의 일수, 719468 = 0000-03-01→1970-01-01
+        return days * 86400 + h * 3600 + mi * 60 + se
+    }
+    /^==> .* <==$/ {
+        if (f != "") print f "\t" (best == "" ? 0 : iso2epoch(best))
+        f = substr($0, 5, length($0) - 8); best = ""; next
+    }
+    {
+        # 한 줄에 여러 개가 들어있을 수 있고(긴 줄이 잘려 순서가 뒤집힐 수도 있다) ISO 문자열은
+        # 사전순 = 시간순이라 그냥 최대값을 잡는다. "timestamp":" 는 13글자, 값 앞 19글자가 초 단위까지다.
+        s = $0
+        while (match(s, /"timestamp":"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) {
+            v = substr(s, RSTART + 13, 19)
+            if (v > best) best = v
+            s = substr(s, RSTART + RLENGTH)
+        }
+    }
+    END { if (f != "") print f "\t" (best == "" ? 0 : iso2epoch(best)) }'
 
 # 목록 생성: 내용 변경 시각 순(진짜 대화·작업이 최근인 세션이 위)
 #   세션명 굵게=6시간 내 대화 있음, 흐리게=그 이상 조용  ●=attached  ✻=Claude 작업중
@@ -1075,6 +1380,40 @@ if [ "${1:-}" = "--list" ]; then
     rcoff=""; rcts=0
     [ -f "$STATE/rc-off" ] && read -r rcts rcoff < "$STATE/rc-off" || true
     [ $(( now - ${rcts:-0} )) -lt 300 ] || rcoff=""
+    # ── 활동 시각 사전조사(루프 밖에서 딱 한 번) ─────────────────────────────
+    # 대장을 세션마다 다시 읽으면 O(세션수 × 대장줄수)가 된다 — 한 번 읽어 표로 들고 간다.
+    # 연관배열은 안 쓴다(bash 4 전용, 맥 기본 3.2에서 깨진다 — tt_sweep_hooks와 같은 판단).
+    # 대신 "\n<이름>\t<값>" 줄 표 + case 글롭 조회: 이름에 공백이 있어도 안전하고 포크가 0이다.
+    # (매니페스트는 이름에 탭을 금지하므로 탭이 필드 구분자로 안전하다)
+    acttab=""; actn=(); actp=()
+    if [ -s "$MANIFEST" ]; then
+        while IFS=$'\t' read -r mname _ mkind _ mconv _ || [ -n "$mname" ]; do
+            [ -n "$mname" ] || continue
+            [ "$mkind" = agent ] || continue         # 도구 세션은 어차피 ts=0
+            tt_is_uuid "${mconv:-}" || continue      # 대화 id를 모르면 폴백에 맡긴다
+            for tf in "$HOME"/.claude/projects/*/"$mconv".jsonl; do
+                [ -f "$tf" ] || continue             # 글롭 미스는 패턴 자신이 그대로 남는다
+                actn+=("$mname"); actp+=("$tf")
+                break                                # 대화 id는 전역 유일 — 첫 놈이 정답
+            done
+        done < "$MANIFEST"
+    fi
+    if [ "${#actp[@]}" -gt 0 ]; then
+        # /dev/null을 덧붙이는 이유: tail은 파일이 하나뿐이면 "==> …<==" 헤더를 안 찍는다.
+        # 항상 다중 파일 모드로 만들어 파싱 분기를 없앤다(빈 파일이라 비용 0).
+        actraw=$'\n'$(tail -c 65536 -- "${actp[@]}" /dev/null 2>/dev/null | awk "$TT_ACT_AWK") || actraw=""
+        i=0
+        while [ "$i" -lt "${#actp[@]}" ]; do
+            # 경로로 되찾는다(출력 순서에 기대지 않는다 — 파일이 그 사이에 사라지면 헤더가 빠져 밀린다)
+            v=""
+            case "$actraw" in
+                *$'\n'"${actp[$i]}"$'\t'*) v=${actraw#*$'\n'"${actp[$i]}"$'\t'}; v=${v%%$'\n'*} ;;
+            esac
+            case "${v:-0}" in ''|*[!0-9]*) v=0 ;; esac
+            [ "$v" -gt 0 ] && acttab="$acttab"$'\n'"${actn[$i]}"$'\t'"$v"
+            i=$((i + 1))
+        done
+    fi
     # 내부 파이프는 탭 구분 + 이름을 마지막 필드로 — 공백 든 이름이 필드를 밀어내지 않게.
     #   attached는 빈 값 대신 '-' 센티넬을 쓴다: 탭은 IFS 화이트스페이스라 read가 연속 탭을 하나로
     #   합쳐버려, 미접속 세션에서 필드가 통째로 밀리고 이름이 사라진다(빈 필드 금지).
@@ -1086,13 +1425,36 @@ if [ "${1:-}" = "--list" ]; then
             # created를 같이 넘긴다: 물려받은 stale 훅 파일을 걸러내는 근거이자, 이미 손에
             # 들고 있는 값이라 tmux 호출이 늘지 않는다. 판정 기준은 tt_is_agent 한 곳에만.
             tt_is_agent "$sid" "$created" && grp=1
-            # 활동 시각: 에이전트=훅 이벤트 시각 — 기록 없으면 죽은 세션 취급(0, 흐림·맨 아래)
-            #   단 신생 세션(1시간 미만)은 생성 시각 인정 — 만들자마자 보여야 함
+            # 활동 시각: 에이전트=대화 기록의 마지막 턴 시각(위 사전조사 표) — 훅 시각이 아니다.
+            #   폴백 사다리: transcript → 훅 기록 시각 → 신생 세션(1시간 미만)의 생성 시각 → 0.
+            #   codex는 대화 id를 훅으로 못 주므로 항상 훅 시각 폴백을 탄다 — 의도한 동작이다.
             #   도구 세션=시각 무관 사전순 (ts 0 고정 → 이름 3차 정렬키가 결정)
             if [ "$grp" = 1 ]; then
-                ts=$(cut -d' ' -f2 "$STATE/hook-${sid#\$}" 2>/dev/null) || {
-                    if [ $(( now - ${created:-0} )) -lt 3600 ]; then ts="$created"; else ts=0; fi
-                }
+                # 훅 파일은 read로 읽는다(예전엔 cut — 세션마다 포크 1개였다). 상태도 같이 필요하다.
+                hst=""; hts=0
+                read -r hst hts _ < "$STATE/hook-${sid#\$}" 2>/dev/null || true
+                case "${hts:-0}" in ''|*[!0-9]*) hts=0 ;; esac
+                ats=0
+                case "$acttab" in
+                    *$'\n'"$name"$'\t'*) ats=${acttab#*$'\n'"$name"$'\t'}; ats=${ats%%$'\n'*} ;;
+                esac
+                case "${ats:-0}" in ''|*[!0-9]*) ats=0 ;; esac
+                if [ "$ats" -gt 0 ]; then
+                    ts="$ats"
+                    # 훅이 transcript보다 최신인 경우는 딱 하나만 인정한다 — '지금 턴이 도는 중'.
+                    #   프롬프트를 막 보냈는데 아직 파일이 안 써진 몇 초를 메운다.
+                    #   idle까지 인정하면 안 된다: boot 훅이 쓰는 게 바로 idle이라 복원 시각이
+                    #   그대로 "마지막 대화"로 둔갑한다 — 고치려던 버그가 통째로 되살아난다.
+                    case "$hst" in
+                        working|waiting) if [ "$hts" -gt "$ts" ]; then ts="$hts"; fi ;;
+                    esac
+                elif [ "$hts" -gt 0 ]; then
+                    ts="$hts"
+                elif [ $(( now - ${created:-0} )) -lt 3600 ]; then
+                    ts="$created"
+                else
+                    ts=0
+                fi
             else
                 ts=0
             fi
@@ -1357,7 +1719,11 @@ if [ "${1:-}" = "--help" ]; then
   ${T}fleet${R}  ${D}survive a reboot — the manifest remembers what was up${R}
     tt --snapshot           record every live session: cwd, kind, command, conversation
     tt --restore [--dry]    bring them all back — live ones are skipped, --dry just plans
+    tt --boot-restore       ${D}[--dry]${R} same, but safe to hang off @reboot cron
     tt --forget ${D}<name>${R}     drop one session from the manifest
+    ${D}--boot-restore waits up to 120s for DNS before restoring, and aborts if it never comes —${R}
+    ${D}claudes started without a network die into a shell, then look "already running" forever${R}
+    ${D}touch ~/.cache/tt/no-autorestore to skip it on the next boot; log is ~/.cache/tt/boot.log${R}
     ${D}agents come back with claude --resume <id>, never --continue —${R}
     ${D}--continue picks "latest chat in this folder", so same-cwd sessions clone each other${R}
     ${D}resume runs in the conversation's own home dir, which is often not the session cwd${R}

@@ -1,3 +1,55 @@
+# ── 마지막 대화 시각의 진짜 출처: transcript ────────────────────────────────
+# 원래는 hook-<sid>의 기록 시각을 "마지막 대화 시각"으로 썼다. 그게 틀렸다는 걸 실측했다:
+#   2026-07-25 12:41 부팅 → 13:10 --restore → hook-3/5/8이 전부 13:10으로 갱신 → 함대가 통째로 굵어짐.
+#   재부팅하면 tmux가 session id를 0번부터 재발급해서 tt_sweep_hooks가 옛 훅 파일을 유령으로
+#   지우고 boot 훅이 새로 만든다 — "이 세션의 것"으로는 맞지만 "마지막 대화"로는 완전히 틀린 값이다.
+#
+# 대화 기록 파일이 진짜 출처다. 경로는 $HOME/.claude/projects/*/<대화id>.jsonl
+#   (대화 id는 전역 유일하니 프로젝트 폴더를 알아맞힐 필요가 없다 — --restore와 같은 글롭).
+#
+# 단, **파일 mtime은 쓰면 안 된다**(실측으로 함정을 밟았다):
+#   claude --resume과 원격제어 브리지가 `{"type":"bridge-session",…}` 줄을 덧붙인다. 이 줄엔
+#   timestamp 필드가 없다. 그래서 복원 직후 ULTRACODE의 mtime은 13:10:45인데 마지막 진짜 턴은
+#   2026-07-24T16:03:12Z였다 — mtime을 썼으면 버그가 그대로 남는다(직접 확인함).
+#   그래서 꼬리 64KB 안의 마지막 "timestamp" 값을 읽는다. 브리지 줄은 timestamp가 없어 저절로 걸러진다.
+#
+# 비용: 세션 수와 무관하게 tail 1 + awk 1 = 포크 2개.
+#   tail은 정규 파일이면 끝으로 seek한다 — 58MB짜리 대화도 실측 1.3ms(4개 묶어서).
+#   `stat` 포크 하나가 1.2ms인 걸 감안하면 세션마다 stat을 부르는 것보다 오히려 싸다.
+#
+# 시각 변환을 date에 안 맡기는 이유: 세션마다 포크가 하나씩 는다. awk에서 직접 계산한다
+#   (타임스탬프는 항상 UTC 'Z'). mktime을 안 쓰는 건 mawk에 없어서다(파이 기본이 mawk 1.3.4).
+#   정규식 {n} 반복도 피한다 — 구현마다 interval 지원이 다르다(TT_MF_CHECK_AWK과 같은 이유).
+# 출력 = "<경로>\t<epoch>" 한 줄씩. timestamp를 못 찾으면 0 — 호출부가 훅 시각으로 폴백한다.
+TT_ACT_AWK='
+    function iso2epoch(s,   y, mo, d, h, mi, se, yy, era, yoe, doy, doe, days) {
+        y  = substr(s, 1, 4) + 0;  mo = substr(s, 6, 2) + 0;  d  = substr(s, 9, 2) + 0
+        h  = substr(s, 12, 2) + 0; mi = substr(s, 15, 2) + 0; se = substr(s, 18, 2) + 0
+        if (y < 1970 || mo < 1 || mo > 12 || d < 1 || d > 31) return 0
+        yy  = y - (mo <= 2 ? 1 : 0)          # 3월을 한 해의 시작으로 옮기면 윤일이 항상 맨 끝
+        era = int(yy / 400)
+        yoe = yy - era * 400
+        doy = int((153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5) + d - 1
+        doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+        days = era * 146097 + doe - 719468   # 146097 = 400년의 일수, 719468 = 0000-03-01→1970-01-01
+        return days * 86400 + h * 3600 + mi * 60 + se
+    }
+    /^==> .* <==$/ {
+        if (f != "") print f "\t" (best == "" ? 0 : iso2epoch(best))
+        f = substr($0, 5, length($0) - 8); best = ""; next
+    }
+    {
+        # 한 줄에 여러 개가 들어있을 수 있고(긴 줄이 잘려 순서가 뒤집힐 수도 있다) ISO 문자열은
+        # 사전순 = 시간순이라 그냥 최대값을 잡는다. "timestamp":" 는 13글자, 값 앞 19글자가 초 단위까지다.
+        s = $0
+        while (match(s, /"timestamp":"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) {
+            v = substr(s, RSTART + 13, 19)
+            if (v > best) best = v
+            s = substr(s, RSTART + RLENGTH)
+        }
+    }
+    END { if (f != "") print f "\t" (best == "" ? 0 : iso2epoch(best)) }'
+
 # 목록 생성: 내용 변경 시각 순(진짜 대화·작업이 최근인 세션이 위)
 #   세션명 굵게=6시간 내 대화 있음, 흐리게=그 이상 조용  ●=attached  ✻=Claude 작업중
 # 출력 한 줄 = "<이름>\t<표시용 색칠 문자열>". 이름을 탭으로 떼어 앞에 두는 이유:
@@ -11,6 +63,40 @@ if [ "${1:-}" = "--list" ]; then
     rcoff=""; rcts=0
     [ -f "$STATE/rc-off" ] && read -r rcts rcoff < "$STATE/rc-off" || true
     [ $(( now - ${rcts:-0} )) -lt 300 ] || rcoff=""
+    # ── 활동 시각 사전조사(루프 밖에서 딱 한 번) ─────────────────────────────
+    # 대장을 세션마다 다시 읽으면 O(세션수 × 대장줄수)가 된다 — 한 번 읽어 표로 들고 간다.
+    # 연관배열은 안 쓴다(bash 4 전용, 맥 기본 3.2에서 깨진다 — tt_sweep_hooks와 같은 판단).
+    # 대신 "\n<이름>\t<값>" 줄 표 + case 글롭 조회: 이름에 공백이 있어도 안전하고 포크가 0이다.
+    # (매니페스트는 이름에 탭을 금지하므로 탭이 필드 구분자로 안전하다)
+    acttab=""; actn=(); actp=()
+    if [ -s "$MANIFEST" ]; then
+        while IFS=$'\t' read -r mname _ mkind _ mconv _ || [ -n "$mname" ]; do
+            [ -n "$mname" ] || continue
+            [ "$mkind" = agent ] || continue         # 도구 세션은 어차피 ts=0
+            tt_is_uuid "${mconv:-}" || continue      # 대화 id를 모르면 폴백에 맡긴다
+            for tf in "$HOME"/.claude/projects/*/"$mconv".jsonl; do
+                [ -f "$tf" ] || continue             # 글롭 미스는 패턴 자신이 그대로 남는다
+                actn+=("$mname"); actp+=("$tf")
+                break                                # 대화 id는 전역 유일 — 첫 놈이 정답
+            done
+        done < "$MANIFEST"
+    fi
+    if [ "${#actp[@]}" -gt 0 ]; then
+        # /dev/null을 덧붙이는 이유: tail은 파일이 하나뿐이면 "==> …<==" 헤더를 안 찍는다.
+        # 항상 다중 파일 모드로 만들어 파싱 분기를 없앤다(빈 파일이라 비용 0).
+        actraw=$'\n'$(tail -c 65536 -- "${actp[@]}" /dev/null 2>/dev/null | awk "$TT_ACT_AWK") || actraw=""
+        i=0
+        while [ "$i" -lt "${#actp[@]}" ]; do
+            # 경로로 되찾는다(출력 순서에 기대지 않는다 — 파일이 그 사이에 사라지면 헤더가 빠져 밀린다)
+            v=""
+            case "$actraw" in
+                *$'\n'"${actp[$i]}"$'\t'*) v=${actraw#*$'\n'"${actp[$i]}"$'\t'}; v=${v%%$'\n'*} ;;
+            esac
+            case "${v:-0}" in ''|*[!0-9]*) v=0 ;; esac
+            [ "$v" -gt 0 ] && acttab="$acttab"$'\n'"${actn[$i]}"$'\t'"$v"
+            i=$((i + 1))
+        done
+    fi
     # 내부 파이프는 탭 구분 + 이름을 마지막 필드로 — 공백 든 이름이 필드를 밀어내지 않게.
     #   attached는 빈 값 대신 '-' 센티넬을 쓴다: 탭은 IFS 화이트스페이스라 read가 연속 탭을 하나로
     #   합쳐버려, 미접속 세션에서 필드가 통째로 밀리고 이름이 사라진다(빈 필드 금지).
@@ -22,13 +108,36 @@ if [ "${1:-}" = "--list" ]; then
             # created를 같이 넘긴다: 물려받은 stale 훅 파일을 걸러내는 근거이자, 이미 손에
             # 들고 있는 값이라 tmux 호출이 늘지 않는다. 판정 기준은 tt_is_agent 한 곳에만.
             tt_is_agent "$sid" "$created" && grp=1
-            # 활동 시각: 에이전트=훅 이벤트 시각 — 기록 없으면 죽은 세션 취급(0, 흐림·맨 아래)
-            #   단 신생 세션(1시간 미만)은 생성 시각 인정 — 만들자마자 보여야 함
+            # 활동 시각: 에이전트=대화 기록의 마지막 턴 시각(위 사전조사 표) — 훅 시각이 아니다.
+            #   폴백 사다리: transcript → 훅 기록 시각 → 신생 세션(1시간 미만)의 생성 시각 → 0.
+            #   codex는 대화 id를 훅으로 못 주므로 항상 훅 시각 폴백을 탄다 — 의도한 동작이다.
             #   도구 세션=시각 무관 사전순 (ts 0 고정 → 이름 3차 정렬키가 결정)
             if [ "$grp" = 1 ]; then
-                ts=$(cut -d' ' -f2 "$STATE/hook-${sid#\$}" 2>/dev/null) || {
-                    if [ $(( now - ${created:-0} )) -lt 3600 ]; then ts="$created"; else ts=0; fi
-                }
+                # 훅 파일은 read로 읽는다(예전엔 cut — 세션마다 포크 1개였다). 상태도 같이 필요하다.
+                hst=""; hts=0
+                read -r hst hts _ < "$STATE/hook-${sid#\$}" 2>/dev/null || true
+                case "${hts:-0}" in ''|*[!0-9]*) hts=0 ;; esac
+                ats=0
+                case "$acttab" in
+                    *$'\n'"$name"$'\t'*) ats=${acttab#*$'\n'"$name"$'\t'}; ats=${ats%%$'\n'*} ;;
+                esac
+                case "${ats:-0}" in ''|*[!0-9]*) ats=0 ;; esac
+                if [ "$ats" -gt 0 ]; then
+                    ts="$ats"
+                    # 훅이 transcript보다 최신인 경우는 딱 하나만 인정한다 — '지금 턴이 도는 중'.
+                    #   프롬프트를 막 보냈는데 아직 파일이 안 써진 몇 초를 메운다.
+                    #   idle까지 인정하면 안 된다: boot 훅이 쓰는 게 바로 idle이라 복원 시각이
+                    #   그대로 "마지막 대화"로 둔갑한다 — 고치려던 버그가 통째로 되살아난다.
+                    case "$hst" in
+                        working|waiting) if [ "$hts" -gt "$ts" ]; then ts="$hts"; fi ;;
+                    esac
+                elif [ "$hts" -gt 0 ]; then
+                    ts="$hts"
+                elif [ $(( now - ${created:-0} )) -lt 3600 ]; then
+                    ts="$created"
+                else
+                    ts=0
+                fi
             else
                 ts=0
             fi
