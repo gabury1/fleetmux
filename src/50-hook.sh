@@ -1,0 +1,178 @@
+# 상태바용 함대 집계 "⏸2 ✻3" — 가장 급한 신호(⏸)가 팝업을 열어야만 보이던 문제를 없앤다.
+#   색은 --list 팔레트 그대로(⏸ 주황 215, ✻ 노랑 33). 0이면 생략.
+tt_fleet_agg() {
+    local f st ts pid w=0 k=0 out=""
+    for f in "$STATE"/hook-*; do
+        [ -f "$f" ] || continue
+        st=""; ts=0; pid=0
+        read -r st ts pid < "$f" 2>/dev/null || true
+        case "$st" in waiting|working) ;; *) continue ;; esac
+        # 훅 프로세스가 죽었으면 박제된 상태 — 세지 않는다(--list의 생존 판정과 같은 기준)
+        case "${pid:-0}" in ''|*[!0-9]*) pid=0 ;; esac
+        [ "$pid" -gt 0 ] && ! kill -0 "$pid" 2>/dev/null && continue
+        case "$st" in waiting) w=$((w + 1)) ;; working) k=$((k + 1)) ;; esac
+    done
+    [ "$w" -gt 0 ] && out="$out#[fg=colour215,bold]⏸$w #[default]"
+    [ "$k" -gt 0 ] && out="$out#[fg=yellow,bold]✻$k #[default]"
+    printf '%s' "$out"
+    return 0
+}
+
+# 에이전트 훅 수신부: claude/codex 훅이 이벤트마다 호출 — 화면 긁기보다 정확한 상태 소스
+#   claude: working(UserPromptSubmit/PostToolUse) / idle(Stop) / waiting(Notification) / clear(SessionEnd)
+#   codex : working(UserPromptSubmit/PreToolUse) / idle(Stop) / waiting-codex(PermissionRequest)
+# 훅은 에이전트 프로세스 환경에서 돌아 $TMUX_PANE으로 자기 세션을 안다 (세션 매핑 문제 해결)
+if [ "${1:-}" = "--hook" ]; then
+    st="${2:-}"
+    [ -n "${TMUX_PANE:-}" ] || exit 0
+    # 세션 정보를 한 번에 묻는다. 매니페스트 기록엔 이름·cwd·명령도 필요한데 display-message를
+    # 이벤트마다 여러 번 부르면 훅 지연이 그만큼 늘어난다 — 호출 횟수는 예전(1회)과 똑같이 유지하고
+    # 아래 idle/boot 분기가 다시 묻던 것(#S·session_attached)까지 여기서 흡수했다.
+    sid=""; sname=""; spath=""; scmd=""; satt=1
+    IFS=$'\t' read -r sid sname spath scmd satt < <(tmux display-message -p -t "$TMUX_PANE" \
+        $'#{session_id}\t#{session_name}\t#{pane_current_path}\t#{pane_current_command}\t#{session_attached}' 2>/dev/null) || true
+    # rc=0인데 빈 출력이 나오는 경합이 있다(pane이 막 사라지는 중). 그냥 두면 "hook-"이라는 빈 이름
+    # 파일이 생기고 clear는 그것만 지운 채 끝나 진짜 상태 파일이 고아로 남는다(hook-21·33 실측).
+    [ -n "$sid" ] || exit 0
+    # stdin 페이로드는 이벤트마다 온다(claude: session_id=대화 id, cwd, hook_event_name).
+    # 한 번만 읽는다 — waiting 판정과 매니페스트 기록이 같은 스트림을 두 번 읽을 수는 없다.
+    # stdin이 tty면(사람이 손으로 tt --hook을 친 경우) 읽지 않는다 — 통째로 2초를 기다리게 된다.
+    payload=""
+    [ -t 0 ] || IFS= read -r -d '' -t 2 payload || true
+    mkdir -p "$STATE"
+    hf="$STATE/hook-${sid#\$}"
+    echo "$(date '+%F %T') $sid $st" >> "$STATE/hook.log"   # 이벤트 감사 로그 (오탐 추적용)
+    # 부모 체인을 올라가 에이전트 본체 PID를 찾는다 ($PPID는 일회용 셸일 수 있음) — 죽은 세션 감지용
+    #   tt_comm을 쓰는 이유: macOS ps는 comm에 절대경로를 준다 — 생짜 비교면 맥에서 영영 안 걸린다
+    cpid=$PPID
+    while [ "$cpid" -gt 1 ]; do
+        case "$(tt_comm "$cpid" || true)" in claude|codex) break ;; esac
+        cpid=$(ps -p "$cpid" -o ppid= 2>/dev/null | tr -d ' ') || { cpid=0; break; }
+        [ -n "$cpid" ] || { cpid=0; break; }
+    done
+    case "$(tt_comm "${cpid:-0}" || true)" in claude|codex) ;; *) cpid=0 ;; esac
+    case "$st" in
+        waiting)
+            # Notification 페이로드는 크게 두 갈래다:
+            #   ① 사용자 조작 요구 — "Claude needs your permission to use Bash", 플랜 승인·질문 대기
+            #   ② 단순 유휴 알림 — "Claude is waiting for your input" (입력창이 60초 비면 발화)
+            # 예전엔 'permission' 문구만 ⏸로 인정해서 플랜 승인·AskUserQuestion 대기를 통째로 놓쳤다.
+            # 그래서 화이트리스트를 뒤집어 ②만 걸러낸다: 문구가 바뀌어도 안 깨지고, 새로 생기는
+            # 알림 종류는 기본적으로 ⏸로 잡힌다. 여기선 미탐이 오탐보다 비싸다 —
+            # 오탐은 다음 working/idle 훅이 즉시 자기교정하지만, 미탐은 부재중 대기를 영영 못 본다.
+            # 페이로드를 못 읽으면(빈 stdin) 판단 근거가 없으니 무시 — 예전과 같은 보수적 동작.
+            # (payload는 위에서 한 번만 읽어둔다 — 매니페스트 기록도 같은 걸 쓴다)
+            case "${payload,,}" in
+                "") ;;                                                 # 근거 없음 → 무시
+                *"waiting for your input"*|*"waiting for input"*) ;;    # 단순 유휴 → ⏸ 아님
+                *) echo "waiting $(date +%s) $cpid" > "$hf" ;;
+            esac ;;
+        waiting-codex)
+            # codex PermissionRequest는 이벤트 자체가 승인 대기 — stdin 판별 불필요
+            echo "waiting $(date +%s) $cpid" > "$hf" ;;
+        working)
+            echo "$st $(date +%s) $cpid" > "$hf" ;;
+        idle)
+            prev=$(cut -d' ' -f1 "$hf" 2>/dev/null || true)
+            echo "idle $(date +%s) $cpid" > "$hf"
+            if [ "$prev" = working ] || [ "$prev" = waiting ]; then
+                name="$sname"                      # 위에서 이미 물어봤다(포크 절약)
+                [ -n "$name" ] || exit 0
+                att="${satt:-1}"
+                if [ "$att" = 0 ]; then
+                    # 락 필수: 상태바가 5초마다 같은 파일을 통째로 재작성한다 — 안 잡으면 이 알림이 유실
+                    tt_finished_lock
+                    tt_finished_rewrite "$name"   # 정규화 + 같은 세션의 옛 기록 제거(sed 대체)
+                    echo "$(date +%s) $name" >> "$STATE/finished"   # 상태바 뱃지 + 목록 안읽음 표시
+                    tt_finished_unlock
+                    tmux list-clients -F '#{client_name}' 2>/dev/null | while read -r c; do
+                        tmux display-message -c "$c" -d 8000 "✓ $name done"
+                    done
+                fi
+            fi ;;
+        clear)
+            rm -f "$hf" ;;
+        boot)
+            # 에이전트 부팅 자백 — 즉시 에이전트 세션으로 분류 + 예약된 /rename 실행
+            #   claude: SessionStart 훅   codex: wrapper가 exec 직전에 직접 발신
+            # 고아·유령 sweep 먼저 — 재부팅 후 세션 id 재발급 사고 방지. --restore도 같은 함수를 쓴다.
+            #   순서가 중요하다: 내 파일을 만든 뒤에 쓸면 방금 만든 걸 지울 일은 없지만,
+            #   물려받은 유령 파일이 있을 때 "이미 있음"으로 건너뛰면 남의 상태를 그대로 입는다.
+            #   쓸고 나서 없으면 만든다 = 어느 쪽이든 이 세션의 pid가 박힌 파일이 남는다.
+            tt_sweep_hooks
+            [ -f "$hf" ] || echo "idle $(date +%s) $cpid" > "$hf"
+            tt_log_rotate   # cron이 안 깔린 환경에서도 감사 로그가 무한히 자라지 않게
+            name="$sname"                          # 위에서 이미 물어봤다(포크 절약)
+            [ -n "$name" ] || exit 0
+            pr="$STATE/pending-rename-$name"
+            if [ -f "$pr" ]; then
+                # TTL 5분. 기동에 실패해 소비되지 않은 예약이 몇 주 뒤 동명 세션에 되살아나
+                # /rename을 주입하는 사고가 있었다(codex엔 그런 슬래시 명령도 없다).
+                read -r pts _ < "$pr" 2>/dev/null || pts=0
+                case "${pts:-0}" in ''|*[!0-9]*) pts=0 ;; esac
+                rm -f "$pr"
+                if [ $(( $(date +%s) - pts )) -le 300 ]; then
+                    ( sleep 1
+                      tmux send-keys -t "$TMUX_PANE" -l "/rename $name"
+                      sleep 0.5
+                      tmux send-keys -t "$TMUX_PANE" Enter ) >/dev/null 2>&1 &
+                fi
+            fi ;;
+    esac
+    # ── 함대 대장 자동 기록 ──────────────────────────────────────────────────
+    # 훅은 "어느 tmux 세션"(TMUX_PANE)과 "어느 대화"(stdin의 session_id)를 동시에 아는 유일한
+    # 지점이다 — 대화 id가 공짜로 굴러들어온다. 여기서 주워 담아두면 사용자가 --snapshot을
+    # 한 번도 안 쳐도 복원표가 항상 최신이다(사용자 개입 0).
+    # 비용: 포크 0(전역 반환 tt_jv + 문자열 연산) + 내용이 같으면 파일 미접촉. 실패해도 조용히 통과.
+    # 대화 홈(6번째 필드)도 여기서만 정확하다: stdin의 cwd는 claude 자신의 cwd이고,
+    # claude는 바로 그 값으로 ~/.claude/projects/<인코딩된 cwd>/ 를 계산해 대화를 찾는다.
+    # 세션 cwd(pane_current_path)와는 별개다 — 둘을 한 필드에 뭉개던 게 복원 실패의 원인이었다.
+    if [ -n "$sname" ]; then
+        mconv=""; mhome=""
+        if [ -n "$payload" ]; then
+            tt_jv "$payload" session_id && mconv="$TT_JV" || true   # claude 훅의 대화 id
+            tt_jv "$payload" cwd && mhome="$TT_JV" || true          # claude의 cwd = 대화 홈
+        fi
+        # pane 명령은 도구 실행 중엔 claude가 아닐 수 있다(자식이 tty 전면에 올 때) →
+        # 확실할 때만 적고 아니면 빈 값으로 넘겨 기존 기록을 보존한다.
+        case "$scmd" in claude|codex) mcmd="$scmd" ;; *) mcmd="" ;; esac
+        tt_mf_upsert "$sname" "$spath" agent "$mcmd" "$mconv" "$mhome" || true
+    fi
+    exit 0
+fi
+
+# 상태바: 함대 집계(⏸n ✻n) + 끝난 세션 ✓이름 뱃지
+#   뱃지는 그 세션에 들어가보거나 10분 지나면 소멸. .tmux.conf status-right의 #(tt --status)가 5초마다 호출
+if [ "${1:-}" = "--status" ]; then
+    f="$STATE/finished"
+    now=$(date +%s)
+    agg=$(tt_fleet_agg)     # finished와 무관한 집계라 락 밖에서 먼저
+    out=""
+    if [ -s "$f" ]; then
+        tt_finished_lock
+        tt_finished_rewrite     # 구포맷 마이그레이션 + poison 라인 제거
+        keep=""
+        while read -r ts name; do
+            case "$ts" in ''|*[!0-9]*) continue ;; esac   # 숫자 아닌 줄은 버린다(영구 잔존 차단)
+            [ -n "$name" ] || continue
+            # "=" = 정확 일치. 접두 매칭이면 zzh 기록이 zzh2를 보고 뱃지를 지운다.
+            #   두 필드를 같이 묻는 이유: tmux는 못 찾는 타깃에도 rc 0에 빈 출력을 준다(실측) —
+            #   생존 판정을 session_id 유무로 해야 죽은 세션 엔트리가 파일에 영원히 눌러앉지 않는다.
+            #   last_attached는 한 번도 접속 안 한 세션에서 빈 값이라 0으로 접어준다(있음≠접속함).
+            info=$(tmux display-message -p -t "=$name:" '#{session_id}|#{?session_last_attached,#{session_last_attached},0}' 2>/dev/null) || continue
+            [ -n "${info%%|*}" ] || continue        # session_id가 비었다 = 세션 사라짐 → 엔트리 폐기
+            la=${info#*|}
+            [ "${la:-0}" -gt "$ts" ] && continue    # 이미 들어가봄 = 확인 완료 → 제거
+            keep="$keep$ts $name
+"
+            [ $(( now - ts )) -le 600 ] && out="$out ✓$name"   # 상태바엔 10분만, 파일은 볼 때까지 유지
+        done < "$f"
+        printf '%s' "$keep" > "$f"
+        tt_finished_unlock
+    fi
+    badge=""
+    [ -n "$out" ] && badge="#[fg=#7fae6e,bold]$out #[default] "
+    printf '%s%s' "$agg" "$badge"
+    exit 0
+fi
+
