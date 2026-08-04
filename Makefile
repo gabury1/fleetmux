@@ -8,6 +8,7 @@
 #
 # 각 파일이 담은 것:
 #   00-header.sh   셔뱅·set -euo pipefail·LC_ALL·STATE·자기 절대경로 해석(tt_self/SELF/SELFQ)
+#   05-config.sh   설정 — 화이트리스트 파서·env>파일>기본 우선순위·tt_conf_get/on/source
 #   10-util.sh     이식성 헬퍼(tt_comm)·bash 3.2 분기(TT_TINY_READ)·hook.log 회전
 #   20-manifest.sh 매니페스트 경로/형식·uuid 판정·무결성 검사(awk)·원자적 쓰기·백업 3세대
 #   30-state.sh    상태 판정 계층 — 화면 작업중 판정(tt_working)·finished 락/정규화·
@@ -23,6 +24,7 @@
 # 파일을 추가하면 아래 SRC 목록에도 번호 순서대로 넣을 것(글롭이 아니라 이 목록이 정답이다).
 
 SRC = src/00-header.sh \
+      src/05-config.sh \
       src/10-util.sh \
       src/20-manifest.sh \
       src/30-state.sh \
