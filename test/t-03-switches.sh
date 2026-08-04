@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # rc · snapshot · boot_restore 스위치.
 #
-# 이 테스트가 지켜야 하는 것은 "꺼지면 조용히 성공한다" 하나가 아니다. 세 가지다:
+# 이 테스트가 지켜야 하는 것은 "꺼지면 조용히 성공한다" 하나가 아니다. 네 가지다:
 #   ① 꺼짐 — rc 0 으로 끝나고, 이유를 stdout 한 줄로 말하고, tmux 를 아예 부르지 않는다.
-#   ② 켜짐 — 예전 그대로 tmux 를 부르고 대장을 쓴다(스위치가 기능을 죽이지 않았다).
+#   ② 켜짐 — 예전 그대로 tmux 를 부른다(스위치가 기능을 죽이지 않았다).
 #   ③ rc=off 여도 --cron 의 --snapshot 은 산다(exit 0 으로 끄면 여기서 걸린다).
-# ①·③ 의 "tmux 를 부르지 않는다/부른다"는 가짜 tmux 를 PATH 앞에 세워 호출을 받아 적어 잰다.
-# ② 는 격리된 소켓 디렉토리($TMUX_TMPDIR=$TTROOT)에 진짜 tmux 서버를 띄워 end-to-end 로 잰다 —
-# 사용자의 진짜 서버에는 닿지 않고, 아래 trap 이 끝날 때 죽인다.
+#   ④ 켜짐 end-to-end — 스위치를 지나 대장(manifest)에 실제로 줄이 들어간다.
+#
+# 전부 "가짜 tmux"로 잰다: PATH 맨 앞에 tmux 라는 이름의 bash 스크립트를 세워
+#   (a) 호출을 한 줄씩 받아 적고  (b) ls·display-message 에만 세션 하나를 흉내 내 답한다.
+# 진짜 tmux 바이너리는 이 파일에서 단 한 번도 실행되지 않는다. 이건 편의가 아니라 규율이다 —
+# 예전 판은 ④ 를 재려고 진짜 서버를 띄우고 끝에 `tmux kill-server` 를 trap 으로 걸었는데,
+# 소켓 격리(TMUX_TMPDIR)가 한 번이라도 새면 그 한 줄이 개발자의 살아있는 함대를 통째로 죽인다.
+# 실제로 그 사고가 났다. 가짜 tmux 는 "몇 번 어떤 인자로 불렸나"까지 재므로 오히려 더 촘촘하다.
+# 진짜 tmux 서버와의 end-to-end 는 이 스위트의 범위 밖으로 둔다(손으로 확인할 일).
 set -u
 . "$(dirname "$0")/lib.sh"
 tt_test_sandbox
@@ -16,12 +22,24 @@ CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")"
 STATE="$HOME/.cache/tt"
 
-# ── 가짜 tmux: 호출을 받아 적기만 하고 아무것도 하지 않는다 ──────────────────
+# ── 가짜 tmux ──────────────────────────────────────────────────────────────
+# 받아 적기 + 최소한의 응답. 모르는 하위명령은 rc 1 로 답한다(진짜 tmux 가 서버 없을 때와 같다).
+#   list-panes 가 빈손이면 rc_target 이 실패해 rc 라운드는 send-keys 까지 가지 않는다 —
+#   즉 이 shim 아래서는 복구 주입이 절대 발사되지 않는다(sleep 8 도 안 탄다).
 mkdir -p "$TTROOT/bin"
 cat > "$TTROOT/bin/tmux" <<'SHIM'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TT_TMUX_LOG"
-exit 1
+case "$1" in
+    ls)
+        # -F 포맷의 구분자가 진입점마다 다르다(rc=공백, 스냅샷=탭) — 그대로 흉내 낸다.
+        case "$*" in
+            *"#{session_id}"$'\t'"#{session_name}"*) printf '$1\tfmuxsw1\n' ;;
+            *)                                       printf '$1 fmuxsw1\n' ;;
+        esac ;;
+    display-message) printf '%s\t%s\n' "$HOME" bash ;;
+    *) exit 1 ;;
+esac
 SHIM
 chmod +x "$TTROOT/bin/tmux"
 export TT_TMUX_LOG="$TTROOT/tmux-calls.log"
@@ -29,8 +47,10 @@ export TT_TMUX_LOG="$TTROOT/tmux-calls.log"
 # 두 진입점의 tmux ls 는 포맷 문자열이 다르다 — 로그에서 서로 구분된다.
 RC_CALL='ls -F #{session_id} #{session_name}'                 # 60-rc.sh 의 rc 라운드(공백)
 SNAP_CALL="ls -F #{session_id}"$'\t'"#{session_name}"         # 70-fleet.sh 의 스냅샷(탭)
-REALPATH_SAVED="$PATH"
 export PATH="$TTROOT/bin:$PATH"
+
+# 로그에 그 호출이 있었나 — assert_contains 는 "없음"을 못 재므로 없음 전용 헬퍼를 둔다
+seen_call() { case "$(cat "$TT_TMUX_LOG")" in *"$1"*) echo yes ;; *) echo no ;; esac; }
 
 # ── ① 전부 꺼짐 ────────────────────────────────────────────────────────────
 printf 'rc=off\nsnapshot=off\nboot_restore=off\n' > "$CONF"
@@ -52,7 +72,8 @@ assert_contains "$(cat "$STATE/boot.log" 2>/dev/null || true)" "boot_restore=off
 assert_rc 1 test -f "$STATE/manifest"
 # 크론은 1분마다 돈다 — 삼켜지는 자리에선 한 줄도 뱉지 않아야 cron 메일이 안 쌓인다
 assert_eq "$("$TTBIN" --cron 2>/dev/null)" "" "크론 경로는 리다이렉트될 때 침묵한다"
-# 그리고 이게 핵심: 꺼진 진입점은 tmux 를 단 한 번도 부르지 않는다(조기 return 이 첫 tmux 앞이다)
+# 그리고 이게 핵심: 꺼진 진입점은 tmux 를 단 한 번도 부르지 않는다(조기 return 이 첫 tmux 앞이다).
+#   세션이 있는데도 안 부른다는 뜻이다 — 위 shim 은 물어보기만 하면 언제나 세션 하나를 답한다.
 assert_eq "$(cat "$TT_TMUX_LOG")" "" "전부 꺼져 있으면 tmux 를 한 번도 부르지 않는다"
 
 # ── ② 전부 켜짐 — 예전처럼 tmux 를 부른다 ──────────────────────────────────
@@ -64,7 +85,7 @@ assert_contains "$log" "$RC_CALL"   "rc=on 이면 --cron 이 rc 라운드를 돈
 assert_contains "$log" "$SNAP_CALL" "snapshot=on 이면 --cron 이 스냅샷도 부른다"
 
 : > "$TT_TMUX_LOG"
-"$TTBIN" --rc >/dev/null 2>&1 || true
+assert_contains "$("$TTBIN" --rc 2>&1)" "SESSION" "rc=on 이면 --rc 가 현황표를 그린다"
 assert_contains "$(cat "$TT_TMUX_LOG")" "$RC_CALL" "rc=on 이면 --rc 가 현황표를 그리러 tmux 에 간다"
 
 : > "$TT_TMUX_LOG"
@@ -83,19 +104,15 @@ assert_contains "$(cat "$STATE/boot.log" 2>/dev/null || true)" "no DNS+tcp/443" 
 : > "$TT_TMUX_LOG"
 printf 'rc=off\nsnapshot=on\n' > "$CONF"
 "$TTBIN" --cron >/dev/null 2>&1 || true
-log=$(cat "$TT_TMUX_LOG")
-assert_contains "$log" "$SNAP_CALL" "rc=off 여도 --cron 은 스냅샷을 부른다"
-case "$log" in *"$RC_CALL"*) seen=yes ;; *) seen=no ;; esac
-assert_eq "$seen" "no" "rc=off 면 --cron 의 rc 라운드는 tmux 를 부르지 않는다"
+assert_contains "$(cat "$TT_TMUX_LOG")" "$SNAP_CALL" "rc=off 여도 --cron 은 스냅샷을 부른다"
+assert_eq "$(seen_call "$RC_CALL")" "no" "rc=off 면 --cron 의 rc 라운드는 tmux 를 부르지 않는다"
 
 # 반대쪽 — snapshot 만 꺼짐: rc 라운드는 살고 스냅샷 포크는 없다
 : > "$TT_TMUX_LOG"
 printf 'rc=on\nsnapshot=off\n' > "$CONF"
 "$TTBIN" --cron >/dev/null 2>&1 || true
-log=$(cat "$TT_TMUX_LOG")
-assert_contains "$log" "$RC_CALL" "snapshot=off 여도 rc 라운드는 돈다"
-case "$log" in *"$SNAP_CALL"*) seen=yes ;; *) seen=no ;; esac
-assert_eq "$seen" "no" "snapshot=off 면 --cron 이 스냅샷을 부르지 않는다"
+assert_contains "$(cat "$TT_TMUX_LOG")" "$RC_CALL" "snapshot=off 여도 rc 라운드는 돈다"
+assert_eq "$(seen_call "$SNAP_CALL")" "no" "snapshot=off 면 --cron 이 스냅샷을 부르지 않는다"
 
 # 환경변수도 스위치로 쓰인다(일회성 실험용 — env > 파일)
 : > "$TT_TMUX_LOG"
@@ -116,37 +133,27 @@ _warn=$("$TTBIN" --cron 2>&1 >/dev/null)
 _count=$(printf '%s\n' "$_warn" | grep -c "모르는 키: unknown_key")
 assert_eq "$_count" "1" "--cron 은 설정을 두 번 조회해도 경고는 한 번만"
 
-# ── ④ 진짜 tmux 로 end-to-end ──────────────────────────────────────────────
-export PATH="$REALPATH_SAVED"
-if command -v tmux >/dev/null 2>&1; then
-    # 격리 소켓($TMUX_TMPDIR=$TTROOT)에 우리 서버를 띄우고, 끝나면 반드시 죽인다.
-    trap 'tmux kill-server >/dev/null 2>&1; rm -rf "$TTROOT"' EXIT
-    if tmux new-session -d -s fmuxsw1 2>/dev/null; then
-        printf 'rc=on\nsnapshot=on\n' > "$CONF"
-        out=$("$TTBIN" --snapshot 2>&1) || true
-        assert_contains "$out" "fmuxsw1" "snapshot=on 이면 살아있는 세션을 기록한다"
-        assert_contains "$(cat "$STATE/manifest" 2>/dev/null || true)" "fmuxsw1" "대장에 줄이 들어간다"
-        assert_contains "$("$TTBIN" --rc 2>&1)" "SESSION" "rc=on 이면 현황표를 그린다"
+# ── ④ 켜짐 end-to-end — 스위치를 지나 대장까지 간다 ────────────────────────
+# ①~③ 은 "tmux 를 불렀나"까지만 잰다. 스위치가 tmux 호출은 통과시키면서 그 뒤 로직을
+# 망가뜨렸다면 거기선 안 잡힌다 → 산출물(manifest)로 한 번 더 못을 박는다.
+rm -f "$STATE/manifest"
+printf 'snapshot=on\n' > "$CONF"
+out=$("$TTBIN" --snapshot 2>&1) || true
+assert_contains "$out" "fmuxsw1" "snapshot=on 이면 살아있는 세션을 기록한다"
+assert_contains "$out" "snapshot: 1 sessions" "켜져 있으면 예전 그대로 요약 줄을 찍는다"
+assert_contains "$(cat "$STATE/manifest" 2>/dev/null || true)" "fmuxsw1" "대장에 줄이 들어간다"
 
-        before=$(cat "$STATE/manifest")
-        tmux new-session -d -s fmuxsw2 2>/dev/null || true
-        printf 'rc=off\nsnapshot=off\n' > "$CONF"
-        out=$("$TTBIN" --snapshot 2>&1) || true
-        assert_contains "$out" "snapshot=off" "꺼짐 메시지는 진짜 tmux 가 있어도 같다"
-        assert_eq "$(cat "$STATE/manifest")" "$before" "꺼져 있으면 새 세션이 떠도 대장을 안 건드린다"
-        case "$("$TTBIN" --rc 2>&1)" in *SESSION*) seen=yes ;; *) seen=no ;; esac
-        assert_eq "$seen" "no" "rc=off 면 현황표를 그리지 않는다"
+# 그리고 꺼면 그 대장을 더 이상 건드리지 않는다(새 세션이 떠도 파일이 그대로다)
+before=$(cat "$STATE/manifest")
+printf 'snapshot=off\n' > "$CONF"
+"$TTBIN" --snapshot >/dev/null 2>&1 || true
+assert_eq "$(cat "$STATE/manifest")" "$before" "꺼져 있으면 대장을 안 건드린다"
 
-        # 규율 ①의 end-to-end 판: rc 를 꺼도 크론 한 틱이 대장을 새로 쓴다
-        printf 'rc=off\nsnapshot=on\n' > "$CONF"
-        rm -f "$STATE/manifest"
-        "$TTBIN" --cron >/dev/null 2>&1 || true
-        assert_contains "$(cat "$STATE/manifest" 2>/dev/null || true)" "fmuxsw2" \
-            "rc=off 여도 --cron 한 틱이 대장을 새로 쓴다"
-    fi
-    tmux kill-server >/dev/null 2>&1 || true
-else
-    printf '  --   tmux 없음 — end-to-end 판정은 건너뜀\n'
-fi
+# 규율 ①의 end-to-end 판: rc 를 꺼도 크론 한 틱이 대장을 새로 쓴다
+printf 'rc=off\nsnapshot=on\n' > "$CONF"
+rm -f "$STATE/manifest"
+"$TTBIN" --cron >/dev/null 2>&1 || true
+assert_contains "$(cat "$STATE/manifest" 2>/dev/null || true)" "fmuxsw1" \
+    "rc=off 여도 --cron 한 틱이 대장을 새로 쓴다"
 
 tt_test_done

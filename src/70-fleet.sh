@@ -340,7 +340,7 @@ if [ "${1:-}" = "--boot-restore" ]; then
 
     # ⓪ 설정 스위치. ① 킬 스위치와 뜻은 같고 손잡이만 다르다(파일 하나 vs `tt config`).
     #    자리도 같아야 한다 — 여기서 나가야 아래의 PATH 보정·flock·네트워크 대기(최대 120초)·
-    #    tmux start-server(451행, 이 진입점의 첫 tmux 호출)를 전부 건드리지 않는다.
+    #    tmux start-server(이 진입점이 처음 tmux 를 부르는 자리)를 전부 건드리지 않는다.
     #    tt_conf_load 는 서브셸 아닌 맨 statement (05-config.sh:53 계약).
     tt_conf_load
     if ! tt_conf_on boot_restore; then
