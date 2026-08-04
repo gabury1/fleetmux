@@ -91,10 +91,12 @@ key_new=ctrl-t
 | `key_broadcast` | `ctrl-b` | 팝업 유지 브로드캐스트 |
 | `key_help` | `?` | 도움말 |
 | `key_settings` | `ctrl-o` | 설정 화면 ("options") |
-| `key_summon` | `M-Left` | 팝업 소환 (tmux 쪽, 아래 6절) |
+| `key_summon` | `F` | 팝업 소환 — prefix 뒤 (아래 6a·6절) |
+| `key_summon_fast` | (비어 있음) | 무prefix 소환키 목록 (아래 6b절) |
 
 값 문법은 **fzf 키 이름을 그대로 쓴다** (`ctrl-n`, `alt-x`, `f2`, `btab`). 새 문법을 만들지 않으면
-fzf 문서가 그대로 우리 문서가 된다. `key_summon` 만 tmux 키 문법(`M-Left`, `C-b`)이다.
+fzf 문서가 그대로 우리 문서가 된다. `key_summon`·`key_summon_fast` 둘만 tmux 키 문법
+(`F`, `M-Left`, `C-Left`, `M-b`)이다 — 그 둘은 fzf 가 아니라 tmux 가 받는 키다.
 
 **예약**: `esc`·`left`(닫기)·`enter`(진입)는 재매핑 금지. 잘못 밟아도 나갈 수 있는 문 하나는
 항상 열어둔다.
@@ -122,6 +124,54 @@ tt config path            # 설정 파일 경로 출력
 잘못된 키·값은 rc 1 과 허용 범위를 출력한다. `set` 은 사람이 손편집한 주석·순서를 보존한다
 (있는 줄은 교체, 없으면 append).
 
+### 6a. 소환키 기본값 — 왜 prefix 인가
+
+관용 조사(2026-08-04): tmux 세션 매니저 플러그인은 **예외 없이 `prefix + 한 글자`** 를 기본으로 쓴다.
+
+| 도구 | 기본 |
+|---|---|
+| tmux-sessionx | `prefix + O` (무prefix는 `@sessionx-prefix off` 로 따로) |
+| tmux-fzf | `prefix + F` |
+| sesh / t-smart | `prefix + T` |
+| tmux-session-wizard | `prefix + T` |
+| tmux-fzf-session-switch | `prefix + C-f` |
+| tmux-sessionist | `prefix + g` 외 |
+
+무prefix 한 방 키를 **기본값**으로 두는 세션 매니저는 찾지 못했다. 이유는 플랫폼별 실측으로 분명하다:
+
+| 키 | Linux | macOS | Windows(WSL2+WT) |
+|---|---|---|---|
+| `M-Left` (`ESC[1;3D`) | ✅ | ❌ Ghostty·Terminal.app 이 Option+← 를 `ESC b` 로 보냄 | ❌ WT 가 Alt+화살표를 pane 이동으로 먼저 먹음 |
+| `M-b` (`ESC b`) | ✅ | ✅ **macOS 의 Option+← 는 여기로 온다** | ✅ |
+| `C-Left` | ✅ | ⚠️ Mission Control 스페이스 전환이 먼저 먹을 수 있음 | ✅ |
+| `prefix + F` | ✅ | ✅ | ✅ |
+
+**macOS 의 Option+← 는 `M-b` 다.** Ghostty 는 `macos-option-as-alt=true` 에서도 `ESC b` 를 보낸다
+(Terminal.app 호환 의도, ghostty#7131·discussion#7740). cmux 는 libghostty 기반이라 같다.
+따라서 맥에서는 **Option+← 와 Alt+b 를 구분할 수 없다** — 이 키를 소환에 쓰면 readline
+`backward-word` 를 잃는 것은 선택이 아니라 필연이다. README 에 그대로 적는다.
+
+기본값은 `prefix + F`(fleet). tmux 기본 바인딩에서 대문자 `F` 는 비어 있다
+(`f`=find-window, `Space`=next-layout 은 살아 있으므로 쓰지 않는다).
+
+### 6b. 빠른 키 — 값이 아니라 목록
+
+물리 키 하나가 터미널마다 다른 바이트로 도착한다. 그래서 `key_summon_fast` 는 공백으로 나눈 목록이다.
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `key_summon` | `F` | prefix 뒤 한 글자. 보증선 |
+| `key_summon_fast` | (비어 있음) | 무prefix 키 목록. 예: `C-Left M-Left M-b` |
+
+install.sh 프리셋:
+
+| 프리셋 | `key_summon_fast` | 대상 |
+|---|---|---|
+| safe | (비움) | 기본. 첫 실행이 반드시 성공한다 |
+| mac | `M-b` | Ghostty·cmux·Terminal.app 에서 Option+← |
+| linux | `C-Left M-Left` | 리눅스 로컬 터미널 |
+| wsl | `C-Left` | Windows Terminal (Alt+화살표는 WT 가 먹는다) |
+
 ### 6. 팝업 소환키 — 전용 스니펫 파일
 
 fmux 는 `~/.tmux.conf` 를 편집하지 않는다. 대신 자기 파일을 소유한다:
@@ -136,8 +186,18 @@ fmux 는 `~/.tmux.conf` 를 편집하지 않는다. 대신 자기 파일을 소�
 source-file ~/.config/fleetmux/tmux.conf
 ```
 
-`tt config set key_summon M-t` 는 자기 파일만 다시 쓰고, tmux 안이면 `tmux source-file` 로
-즉시 반영한다. shim 철학과 같다 — **한 줄만 빌리고, 지우면 흔적이 사라진다.**
+```tmux
+# 생성 예 — key_summon=F, key_summon_fast="C-Left M-b"
+bind    F      display-popup -E -w 85% -h 75% "tt --from '#S'"
+bind -n C-Left display-popup -E -w 85% -h 75% "tt --from '#S'"
+bind -n M-b    display-popup -E -w 85% -h 75% "tt --from '#S'"
+```
+
+`tt config set key_summon_fast "C-Left M-b"` 는 자기 파일만 다시 쓰고, tmux 안이면
+`tmux source-file` 로 즉시 반영한다. 목록에서 빠진 키는 `unbind` 도 함께 낸다 —
+안 그러면 지운 바인딩이 서버가 죽을 때까지 남는다.
+
+shim 철학과 같다 — **한 줄만 빌리고, 지우면 흔적이 사라진다.**
 
 ### 7. 팝업 설정 화면
 
