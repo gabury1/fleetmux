@@ -47,4 +47,23 @@ assert_rc 0 test -d "$HOME"
 # ⑤ 모르는 키를 물으면 거절한다
 assert_rc 1 "$TTBIN" config get nope
 
+# ⑥ '=' 없는 줄도 경고한다 — 전엔 조용히 씹었다(고침 라운드 1, 지적 2)
+cat > "$CONF" <<'EOF'
+rc=off
+rm -rf $HOME
+EOF
+_warn=$("$TTBIN" config get rc 2>&1 >/dev/null)
+assert_contains "$_warn" "key=value 모양이 아니다" "'=' 없는 줄도 경고한다"
+assert_eq "$("$TTBIN" config get rc)" "off" "'=' 없는 줄이 있어도 다른 값은 산다"
+
+# ⑦ 같은 프로세스에서 여러 키를 조회해도 경고는 한 번만 — 전엔 조회한 키 수만큼
+#    같은 경고가 반복됐다(고침 라운드 1, 지적 1). 개수를 직접 센다(존재만 보면 재발을 못 잡는다).
+cat > "$CONF" <<'EOF'
+rc=off
+unknown_key=1
+EOF
+_warn=$("$TTBIN" config get rc recent_hours key_summon accent 2>&1 >/dev/null)
+_count=$(printf '%s\n' "$_warn" | grep -c "모르는 키: unknown_key")
+assert_eq "$_count" "1" "같은 프로세스에서 여러 키를 조회해도 경고는 한 번만"
+
 tt_test_done

@@ -38,15 +38,39 @@ tt_conf_envname() {
     printf 'TT_%s' "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
 }
 
-# 설정 파일에서 한 키를 읽는다. 없으면 rc 1.
-#   통과 조건: 키가 알려진 목록에 있고, 줄 모양이 `key=value` 이며,
-#   값이 [0-9A-Za-z_./:+ -] 로만 이뤄진다(공백 허용 — key_summon_fast 가 목록이다).
-tt_conf_file_get() {
-    local want="${1:-}" line k v found=1 out=''
-    [ -f "$TT_CONF" ] || return 1
+# 설정 파일을 프로세스당 한 번만 읽는다 — 매 조회마다 통째로 다시 훑으면, 훅이 이벤트마다
+# cron 이 1분마다 도는 이 경로에서 깨진 줄 하나가 조회한 키 수만큼 같은 경고를 반복해
+# hook.log 를 계속 채운다(고침 라운드 1 지적: 4개 키 조회 = 같은 경고 4번). 그래서
+# 두 번째 호출부터는 즉시 반환한다 — 디자인 문서의 "읽기는 매 진입점 시작 시 1회
+# (tt_conf_load)" 를 그대로 구현한 것. ("파일은 열 줄 미만이라 캐시하지 않는다"는 디스크에
+# 캐시 파일을 만들지 않는다는 뜻이지, 프로세스 안에서 값을 기억하지 말라는 뜻이 아니다.)
+#
+#   알려진 키마다 TT_CONF_V_<key>(값)·TT_CONF_S_<key>(파일에 있었다는 표식, 빈 값과 구분
+#   하기 위해 값과 별도로 둔다)에 담는다. bash 3.2 엔 연관 배열이 없어 변수명을 동적으로
+#   조립한다(eval) — 그래서 이 변수명 자리에 들어가는 키는 반드시 tt_conf_default 화이트
+#   리스트를 통과한 것만 써야 한다(그 앞단인 tt_conf_file_get 이 검사한다).
+#
+#   주의(중요 — 호출부 계약): 이 함수는 명령치환(subshell) 안에서 부르면 캐시가 그
+#   subshell 안에서만 세워지고 밖으로 못 나온다 — bash 는 subshell 의 변수 변경을 부모
+#   프로세스로 절대 되돌리지 않는다. 그래서 "한 프로세스 안 여러 조회에 경고가 한 번만"을
+#   보장하려면, 그 프로세스의 진입점이 `v=$(...)` 로 감싸지 않은 맨 statement 로
+#   tt_conf_load 를 한 번 불러둬야 한다 — 아래 `config get/source` 진입점이 그렇게 한다.
+#   (단일 조회만 하는 호출부는 이 걱정을 할 필요 없다 — tt_conf_get/tt_conf_source 가
+#   내부에서 알아서 한 번 부른다.)
+TT_CONF_LOADED=0
+tt_conf_load() {
+    [ "$TT_CONF_LOADED" = 1 ] && return 0
+    TT_CONF_LOADED=1
+    [ -f "$TT_CONF" ] || return 0
+    local line k v
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|'#'*|' '*'#'*) continue ;; esac
-        case "$line" in *=*) ;; *) continue ;; esac
+        # key=value 모양인가 — '=' 이 아예 없는 줄도 무시하되, 예전엔 여기서 경고 없이
+        # 조용히 넘어갔다(고침 라운드 1 지적 2). 다른 무시 사유처럼 한 줄 경고를 낸다.
+        case "$line" in
+            *=*) ;;
+            *) printf 'fleetmux: %s 의 줄 무시 — key=value 모양이 아니다: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+        esac
         k=${line%%=*}
         v=${line#*=}
         # 키 모양 검사
@@ -62,10 +86,20 @@ tt_conf_file_get() {
         case "$v" in
             *[!0-9A-Za-z_./:+\ -]*) printf 'fleetmux: %s 의 줄 무시 — 값에 허용 안 된 글자: %s\n' "$TT_CONF" "$line" >&2; continue ;;
         esac
-        if [ "$k" = "$want" ]; then out=$v; found=0; fi   # 마지막에 쓴 줄이 이긴다
+        eval "TT_CONF_V_$k=\$v"   # 마지막에 쓴 줄이 이긴다 — 그냥 덮어쓴다
+        eval "TT_CONF_S_$k=1"
     done < "$TT_CONF"
-    [ "$found" = 0 ] || return 1
-    printf '%s' "$out"
+    return 0
+}
+
+# 캐시(tt_conf_load)에서 한 키를 읽는다. 없으면 rc 1.
+tt_conf_file_get() {
+    local want="${1:-}" have
+    tt_conf_default "$want" >/dev/null 2>&1 || return 1   # eval에 꽂기 전 화이트리스트 재확인(주입 방지)
+    tt_conf_load
+    eval "have=\${TT_CONF_S_$want+set}"
+    [ "${have:-}" = set ] || return 1
+    eval "printf '%s' \"\$TT_CONF_V_$want\""
     return 0
 }
 
@@ -102,11 +136,20 @@ tt_conf_on() {
 }
 
 # 설정 조회 진입점(최소). 나머지 하위명령은 85-config-cli.sh 가 맡는다.
+#   여러 키를 한 호출로 받는다 — 진입점 맨 앞에서 tt_conf_load 를 맨 statement 로(=명령치환
+#   으로 감싸지 않고) 한 번 태워두면, 아래 키마다 도는 `v=$(tt_conf_get ...)` 들은 이미
+#   1로 세팅된 캐시 상태를 fork 시점에 물려받아 다시 파싱하거나 다시 경고하지 않는다.
 if [ "${1:-}" = "config" ] && { [ "${2:-}" = "get" ] || [ "${2:-}" = "source" ]; }; then
-    [ -n "${3:-}" ] || { echo "usage: tt config ${2} <key>" >&2; exit 1; }
-    if [ "$2" = get ]; then tt_conf_get "$3" || { echo "모르는 키: $3" >&2; exit 1; }
-    else                    tt_conf_source "$3" || { echo "모르는 키: $3" >&2; exit 1; }
-    fi
-    echo
-    exit 0
+    [ -n "${3:-}" ] || { echo "usage: tt config ${2} <key> [key...]" >&2; exit 1; }
+    tt_conf_load
+    st=0
+    for k in "${@:3}"; do
+        if [ "$2" = get ]; then
+            v=$(tt_conf_get "$k") || { echo "모르는 키: $k" >&2; st=1; continue; }
+        else
+            v=$(tt_conf_source "$k") || { echo "모르는 키: $k" >&2; st=1; continue; }
+        fi
+        printf '%s\n' "$v"
+    done
+    exit "$st"
 fi
