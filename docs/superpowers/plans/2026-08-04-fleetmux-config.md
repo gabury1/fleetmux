@@ -1479,7 +1479,187 @@ git commit -m "feat: 팝업 안 설정 화면 — 토글·값 입력·두 진입
 
 ---
 
+---
+
+### Task 9: 에이전트용 스킬 배포 (`skills/fleetmux/SKILL.md`)
+
+fmux 는 훅으로 상태를 이미 알고 있다. 그 앎을 **에이전트 자신에게** 열어주는 것이 이 태스크다.
+사람이 팝업을 열어 보는 것과 같은 사실을, 세션 안의 claude 가 명령 한 줄로 읽게 한다.
+
+기존 화면 긁기 방식(`capture-pane` 으로 다른 세션 화면을 떠서 눈으로 판독)과 다르다 —
+그 방식은 fmux 가 세 번 실패하고 버린 길이다(작업중 표시의 모양이 여러 가지, 유휴 세션도
+상태바가 깜빡여 해시가 계속 바뀜, 붙기만 해도 pane 이 다시 감겨 또 바뀜). 스킬도 같은 규율을 따른다:
+**훅 상태가 정답, 화면은 참고.**
+
+**Files:**
+- Create: `skills/fleetmux/SKILL.md`
+- Test: `test/t-08-skill.sh`
+
+**Interfaces:**
+- Consumes: `tt --list`·`tt --status`·`tt --preview`(기존 CLI, 변경 없음), `~/.cache/tt/hook-*`
+- Produces: 설치 시 `~/.claude/skills/fleetmux/SKILL.md` 로 복사될 파일. 코드 변경 없음
+
+- [ ] **Step 1: 실패하는 테스트를 쓴다**
+
+`test/t-08-skill.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -u
+. "$(dirname "$0")/lib.sh"
+tt_test_sandbox
+cd "$(dirname "$0")/.." || exit 1
+
+S=skills/fleetmux/SKILL.md
+assert_rc 0 test -f "$S"
+
+# 프론트매터가 있어야 스킬로 인식된다
+assert_eq "$(head -1 "$S")" "---" "프론트매터로 시작한다"
+assert_contains "$(sed -n '1,6p' "$S")" "name: fleetmux" "name 필드가 있다"
+assert_contains "$(sed -n '1,6p' "$S")" "description:" "description 필드가 있다"
+
+# 스킬이 안내하는 명령이 실제로 존재하는 진입점이어야 한다
+for cmd in -- --list --status --preview; do
+    case "$cmd" in --) continue ;; esac
+    assert_contains "$(cat "$S")" "tt $cmd" "스킬이 tt $cmd 를 안내한다"
+    assert_contains "$(cat src/*.sh)" "\"\${1:-}\" = \"$cmd\"" "$cmd 진입점이 실제로 있다"
+done
+
+# 쓰기 동작은 반드시 확인을 거치라고 적혀 있어야 한다
+assert_contains "$(cat "$S")" "--do-broadcast" "브로드캐스트를 언급한다"
+assert_contains "$(cat "$S")" "read-only" "읽기 전용이 기본이라고 못박는다"
+
+tt_test_done
+```
+
+- [ ] **Step 2: 실패를 확인한다**
+
+```bash
+./test/run.sh
+```
+
+기대: `t-08` 이 첫 줄부터 FAIL(파일이 없다).
+
+- [ ] **Step 3: 스킬을 쓴다**
+
+`skills/fleetmux/SKILL.md` (레포 언어에 맞춰 영어로 쓴다):
+
+```markdown
+---
+name: fleetmux
+description: Use when asked what the other agent sessions are doing — "what is each session working on", "who is waiting for me", "is anything stuck", "fleet status", "check the other sessions". Reports per-session state for tmux sessions running Claude Code or Codex, using fmux hook state rather than screen scraping. Read-only by default.
+---
+
+# fleetmux — read the fleet without attaching
+
+## The one rule
+
+**Hook state is the fact. The screen is a rendering.**
+
+Do not decide whether a session is working by looking at its pane. fmux tried that first and it
+failed three ways: the "working" line has many shapes, an idle session's status bar keeps ticking,
+and merely attaching re-wraps the pane. Every session reports its own state through Claude Code /
+Codex hooks, and fmux writes that down. Read what it wrote.
+
+## Fleet at a glance
+
+```bash
+tt --status     # one line: "⏸2 ✻3" — waiting for you / working right now, plus ✓name badges
+tt --list       # one row per session: name, marks, last activity
+```
+
+Marks: `●` attached · `✻` working · `⏸` awaiting your approval · `✓` finished while you were away
+· `⊘` remote control dropped.
+
+**`⏸` is the one that matters.** It means a session is blocked on a human — permission prompt,
+plan approval, a question. Surface those first, before anything else.
+
+## One session in detail
+
+```bash
+tt --preview <session-name>    # tail of that pane — the bottom is where the prompt lives
+```
+
+Use this only after the state told you which session is interesting. It is a rendering: quote it
+as evidence, never as the state itself.
+
+## Raw state, if you need it
+
+```bash
+cat ~/.cache/tt/hook-<tmux-session-id>   # "<state> <unix-ts> <agent-pid>"
+cat ~/.cache/tt/manifest                 # name, cwd, kind, command, conversation id
+```
+
+`~/.cache/tt/hook.log` is an append-only audit trail of every state transition — useful for
+"when did it go quiet?".
+
+## Many sessions
+
+With more than two sessions, do not read every pane yourself — that is hundreds of lines per
+session and it buys nothing. Dispatch one subagent per session, in parallel, and require a fixed
+report shape:
+
+```
+state:   working | waiting-on-human | idle
+doing:   <one line>
+blocked: <what it needs, or none>
+```
+
+Then merge. `tt --status` already gives you the tally, so the subagents only fill in the "why".
+
+## Writing into other sessions
+
+This skill is **read-only** by default. Sending text into another agent's session interrupts
+whatever it is doing and cannot be undone.
+
+If — and only if — the human explicitly asks to send something:
+
+```bash
+tt --do-broadcast <name> [<name>...]    # prompts, then sends to each
+```
+
+Confirm the exact target list with the human first. Never broadcast to tool sessions (shells,
+`btop`, `lazydocker`); a prompt typed into a shell runs as a command. fmux skips them, but say
+out loud which sessions you are about to touch.
+
+## When tt is not installed
+
+If `tt` is not on PATH, say so and stop. Do not fall back to scraping panes — that is the exact
+guesswork this tool exists to remove.
+```
+
+- [ ] **Step 4: 테스트 통과를 확인한다**
+
+```bash
+./test/run.sh
+```
+
+기대: `t-08` 전부 `ok`.
+
+- [ ] **Step 5: 실물로 한 번 써본다**
+
+```bash
+mkdir -p ~/.claude/skills/fleetmux
+cp skills/fleetmux/SKILL.md ~/.claude/skills/fleetmux/SKILL.md
+```
+
+새 claude 세션에서 "다른 세션들 뭐 하고 있어?" 라고 물어 스킬이 발동하는지, `tt --status` 를
+먼저 부르는지 확인한다.
+
+> 설치 자동화(`install.sh` 가 이 디렉토리를 깔지 물어보기)는 **공개 준비 계획**에서 다룬다.
+> 스킬은 Claude Code 전용이다 — codex 에는 스킬 개념이 없으므로 README 에 그렇게 적는다.
+
+- [ ] **Step 6: 커밋**
+
+```bash
+make check
+git add skills/fleetmux/SKILL.md test/t-08-skill.sh
+git commit -m "feat: 에이전트용 스킬 — 화면 대신 훅 상태로 함대를 읽는다"
+```
+
+---
+
 ## 다음 계획 (이 문서 범위 밖)
 
-- **공개 준비**: `install.sh`(의존성 확인 → `make install` → shim 배치 → `source-file` 한 줄 안내 → 프리셋 선택), README 의 `Configuration` 절과 libexec 경로 오기(`libexec/fleetmux` → `libexec/tt`) 수정, macOS/WSL 키 표. 별도 계획 문서로 뺀다.
+- **공개 준비**: `install.sh`(의존성 확인 → `make install` → shim 배치 → `source-file` 한 줄 안내 → 소환키 프리셋 선택 → 스킬 설치 여부 질문), README 의 `Configuration` 절과 libexec 경로 오기(`libexec/fleetmux` → `libexec/tt`) 수정, macOS/WSL 키 표. 별도 계획 문서로 뺀다.
 - **`0.0.0.0:5432` 확인**: fmux 와 무관한 파이 운영 건. LX 노트 세션이 조사 중.
