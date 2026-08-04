@@ -1,0 +1,38 @@
+
+
+  My recommendation is B + A — fix the pattern against a real screen first (that is what secondary
+  evidence is for), and widen the window from 20 to 60 seconds so it covers the thinking stretch.
+
+  Want me to measure why WORKING_PAT misses this screen first? Feeding an idle capture straight into
+  the pattern shows it immediately.
+
+✻ Waiting for 1 dynamic workflow to finish
+
+❯ B+C go
+  ⎿  1 skill available
+
+● Going with B+C. First I pull the evidence myself — screen captures and the CPU signal need a live
+  session, so I do not hand those to an agent.
+
+  Ran 1 shell command
+
+● Everything is idle right now, so there is no real "working" sample. My own session is working, so I
+  use that as the sample — and measure the CPU signal for plan C at the same time.
+
+● Running 1 shell command…
+  ⎿  $ cd ~/fleetmux; E=.work/screen-evidence
+     # 1) real working screen sample = this very session
+     tmux capture-pane -p -t tui-worker -S -10 > "$E/WORKING-sample-tui-worker.screen"
+     echo "=== working screen sample (my session) ==="; grep -v '^$'
+     "$E/WORKING-sample-tui-worker.screen" | tail -5 | cat -A | sed 's/\$$//' …
+
+✻ Choreographing… (43s · ↓ 1.9k tokens)
+
+─────────────────────────────────────────────────────────────────────────────────── tui-worker ──
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────
+  «demo» fleetmux ⎇ feat/config                                                               /rc
+  Opus 5 (1M context) ctx:57% 5h:96%left 7d:31%left
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+  ◯ fmux-settings-tui  fmux                           3/4 agents done · 17m 52s · ↓ 366.8k tokens

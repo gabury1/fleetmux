@@ -1,0 +1,38 @@
+
+
+● Moved the audit log up to the application layer — 3142bfa.
+
+  item_registered     owner_id · group_id · item_id · item_tag
+  item_unregistered   owner_id · group_id · item_id · item_tag + orphan_children
+
+  This was a placement problem. With the audit sitting in the domain service, it structurally couldn't carry
+  the actor — audit exists to answer "who did this," but the domain must not know about sessions. I just followed the path the earlier branch already cut.
+
+  Two things came along with it:
+
+  - Unlinking reads before it deletes — once membership is dropped, the tag meant for the audit log can
+  no longer be found in that group. Missing or someone else's group, the domain service rejects both with the same code, so the judgment doesn't fork.
+  - Two stale statements — item_service's docstring saying "records that fact to the audit log," and a
+  comment explaining the read as "to get the tag that goes into the audit log." Now that audit has moved out,
+  the only reason left for that read is the 404 check.
+
+  One of the 3 safety-net checks measures whether the audit is a single line — if it also lingers in the
+  service it becomes two lines, the easiest mistake to make in a migration like this.
+
+  Full suite: 1791 passed / 1 failed (someone else's worker's territory)
+  Mutation: dropping owner_id from the shared payload catches 3
+
+  What's left is the second finding from earlier — list_items sends back a raw list[Item], register_item
+  a raw Item, straight as the response. That's the spot grid §2 flags as "Item/Child can't rename fields
+  right now" — the earlier branch closed it today with DetailResult, but this one is still open.
+
+  Next up is that ItemResult — want me to keep going?
+
+✻ Baked for 11m 42s
+
+────────────────────────────────────────────────────────────────────────────── device-refactor ──
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────
+  «demo» sample-api ⎇ feature/item-domain*                                                   /rc
+  Opus 5 (1M context) ctx:75% 5h:96%left 7d:31%left
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

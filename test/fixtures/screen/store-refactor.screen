@@ -1,0 +1,38 @@
+
+  # Establishes entities 1 and 2 and saves them as canonical C. **This is the point of no return** — the C slot
+  #     inserts the body row and the default-policy row together as one unit.
+
+  Produced a duplicate line and then removed it — didn't check that the earlier patch had already added
+  it, and added it again. I've now confirmed zero consecutive duplicates across this whole branch.
+
+  Twenty-two commits. It's 01:45.
+
+✻ Baked for 1m 54s
+
+❯ /compact
+  ⎿  Compacted (ctrl+o to see full summary)
+     PreCompact [~/.local/share/example/log-reminder.py --precompact] completed successfully:
+     [Alert] Current time: 2026-08-05 (Wed) 01:31 KST
+     Right before a context compaction. No work log has been kept through the 31st response. Immediately
+     summarize what this session did into today's log file and record it right now.
+     Once it compacts, the details are gone.
+     PreCompact ['~/.local/bin/fmux' --hook working 2>/dev/null || true] completed
+     successfully
+     PostCompact ['~/.local/bin/fmux' --hook working 2>/dev/null || true] completed
+     successfully
+  ⎿  Read app/core/application/sample/settings/result/range_result.py (25 lines)
+  ⎿  Read app/core/application/sample/schedule/result/schedule_result.py (98 lines)
+  ⎿  Referenced file app/core/adapters/inbound/dashboard_router.py
+  ⎿  Referenced file app/core/application/sample/get_status_snapshot_usecase.py
+  ⎿  Referenced file ../../notes/2026-08-04.md
+
+※ recap: Working through the usecase gauntlet, and just committed after attaching meaning to the execute procedure numbers (total
+  22 commits, 1789 passed). Next is either the remaining round 5/7 or deciding whether to push. (disable recaps in
+  /config)
+
+─────────────────────────────────────────────────────────────────────────────── store-refactor ──
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────
+  «demo» sample-api ⎇ feature/item-domain*                                                   /rc
+  Opus 5 (1M context) ctx:0% 5h:97%left 7d:31%left
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

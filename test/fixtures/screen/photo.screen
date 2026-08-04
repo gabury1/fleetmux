@@ -1,0 +1,38 @@
+
+
+● 338 photos uploaded so far. The last one landed at 22:41:22 — in the last 30 minutes, 3 came in at 22:40 and 2 at 22:41.
+
+  It's stopped again right now — nothing new has come in since 22:41.
+
+  Cumulative flow
+
+  ┌──────────────────────────┬────────┐
+  │           Time           │ Total  │
+  ├──────────────────────────┼────────┤
+  │ 07-26 16:55 (first burst)│ 302    │
+  ├──────────────────────────┼────────┤
+  │ 07-26 23:47              │ 309    │
+  ├──────────────────────────┼────────┤
+  │ 07-27 16:46              │ 324    │
+  ├──────────────────────────┼────────┤
+  │ 07-28 22:41 (now)        │ 338    │
+  └──────────────────────────┴────────┘
+
+  302 came in within the first minute, then just 36 more over the next two days. The pattern is only 3-6 going up each time the app is opened.
+
+✻ Brewed for 21s
+
+※ recap: Backing up files to the server — out of 338, only a handful go up each time the app opens
+  because of the background limit. Opening the app on the device and plugging in the charger pushes them
+  all at once, and before that you just need to decide whether to put a 502 safeguard in place. (disable recaps in /config)
+
+❯ /remote-control
+
+❯ /remote-control
+
+───────────────────────────────────────────────────────────────────────────────────────────────── photo ──
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  «demo» sample                                                                                       /rc
+  Opus 5 (1M context) ctx:35% 5h:63%left 7d:33%left
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

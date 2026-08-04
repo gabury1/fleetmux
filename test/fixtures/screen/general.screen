@@ -1,0 +1,38 @@
+  └────────┴──────────────────────────────────────────┘
+
+  What's straining the laptop isn't compute — it's memory. You never know which expert gets picked
+  per token, so all 512 of them have to stay resident. Only 3B is actually running, but it occupies 80B's worth of space.
+
+  So what I said earlier — that "34B Q4 might be better" — doesn't really apply to this model.
+  That would hold for an 80B@Q2 dense model, but MoE has a big speed edge and its quality tracks the 80B side, so the original call was reasonable.
+
+  So the only advice left is one thing
+
+  Cut the context. This model's native context is 262,144 tokens (up to 1.01M extended). Leave it at
+  the default and the KV cache balloons enormously.
+
+  Fortunately this model was designed with few KV heads (16 Q : 2 KV, GQA). Even so, holding 260k tokens
+  still costs gigabytes on its own. Dropping to 8k-16k keeps the weights the same but the pressure drops
+  sharply. That's plenty for reading code or having a conversation.
+
+  Summary
+
+  - Laptop struggling = memory pressure (512 resident experts), not compute load
+  - Top fix = shrink the context. Cheapest and most effective
+  - Disk offloading? Still unnecessary. It's already loaded in memory, no reason to push it down
+  - Only worry if memory pressure goes into the red
+
+  Sources:
+  - Model card
+
+✻ Churned for 42s
+
+※ recap: Diagnosed the temperature issue and wrote a new study note. We're now talking about the local LLM,
+  and the next step is lowering the context to 8k-16k to ease the memory pressure.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  «demo» sample                                                                                       /rc
+  Opus 5 (1M context) ctx:22% 5h:63%left 7d:33%left
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

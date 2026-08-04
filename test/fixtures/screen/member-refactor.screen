@@ -1,0 +1,38 @@
+  ├──────────────────────────────────────────────────────┼────────────────────────────────────────┤
+  │ Lens A-J + path mapping                              │ §3                                     │
+  ├──────────────────────────────────────────────────────┼────────────────────────────────────────┤
+  │ "How to write" - 4 steps                             │ §3 - how to judge it                   │
+  ├──────────────────────────────────────────────────────┼────────────────────────────────────────┤
+  │ "Related" (domain-rules/)                            │ §2 - context docs is the right place   │
+  └──────────────────────────────────────────────────────┴────────────────────────────────────────┘
+
+  Also added three more things along with it:
+
+  1. Result placement rule — one file inside the usecase file if there's a single consumer, two or more
+  goes to application/<domain>/result/, one file per class. Decided yesterday, but it hadn't made it into any doc as a skill.
+  2. Module function vs. class — Service.md §1/§2/§8. The basis for splitting a service today, but it
+  wasn't in the skill.
+  3. §1 concurrent-worker warning — just experienced it. Running the full suite twice wobbled from
+  4 failed to 1 failed. That's because another worker is mid-edit.
+
+  ---
+  Baseline (hex §1)
+
+  import app.main            OK
+  integration                261 passed
+  lint-imports               7 kept 0 broken
+  unit+wire                  1447~1451 passed, 1~4 failing — all someone else's territory (not mine)
+
+  refactor-direction.md is still frozen at last week's state — the table shows all three branches as
+  ⬜, and §3 still says "the worktree is broken," even though the read-model deletion and the view
+  move are already done. Should I update the doc, or go after token-reuse detection (net 0)
+  first?
+
+✻ Worked for 7m 32s
+
+────────────────────────────────────────────────────────────────────────────── member-refactor ──
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────
+  «demo» skills                                                                               /rc
+  Opus 5 (1M context) ctx:10% 5h:96%left 7d:31%left
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

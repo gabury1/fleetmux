@@ -1,0 +1,38 @@
+  Code blocks went from 28 to 3, and all three that remain have a clear reason to stay — episode 11's
+  isn't a metaphor but an actual compression measurement run on the machine, episode 14's is a short
+  bridge to the spot the audit called "best intro design of the 8 episodes," and 13's is grammar notation.
+
+  The three best replacements
+
+  ▎ Sync is a mirror, backup is a photograph. A mirror only reflects what's in front of it right now.
+  ▎ If I tear up the paper on my desk, the paper in the mirror tears too, in that same instant. A mirror
+  ▎ only has "now"; a photograph holds onto "then." (Episode 16 §2 — replaces the shallow-copy metaphor)
+
+  ▎ An office with an empty desk isn't the same as one that gets things done. (Episode 11 §1 — replaces the cache metaphor)
+
+  Episode 14's block rule became the notepad taped by a shop's front door — every time someone knocks
+  the wrong door, you jot down the time, first wiping any line older than 10 minutes, and once 5 lines
+  remain, the door stays shut for 6 hours. Four concepts land in one scene: window, cap, current failure, cumulative failure.
+
+  Two places the design landed well
+  - Episode 11's §2 picks up §1's desk scene as-is (copy vs. a hand-written note) — one image split
+  across two sections instead of piling on more metaphors
+  - Episode 15 expands §1's existing "three households renting under one roof" into a multi-unit building, absorbing the isolation metaphor
+
+  Verification passed across the board too — secret scan clean, all 16 masked spots intact, every link
+  real, measured numbers/commands/output untouched. All 8 episodes held the one-metaphor-per-section rule.
+
+  Total 4295 → 4251 lines. It shrank by exactly what the code blocks took out.
+
+✻ Churned for 13m 39s
+
+※ recap: Finished writing ops study notes 09-16, all eight episodes, through review and publishing, and just now replaced the
+  metaphors from code to everyday objects across the board. All that's left is for you to read it and flag what needs fixing.
+  (disable recaps in /config)
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  «demo» notes ⎇ main*                                                                                /rc
+  Opus 5 (1M context) ctx:47% 5h:63%left 7d:33%left
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
