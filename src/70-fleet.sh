@@ -23,6 +23,10 @@ tt_conv_of() {
 #   살아있는 세션이 하나도 없으면 아예 쓰지 않는다: 재부팅 직후 습관적으로 --snapshot을 치면
 #   복원표가 그 자리에서 증발한다(가장 필요한 순간에).
 if [ "${1:-}" = "--snapshot" ]; then
+    tt_conf_load                               # 서브셸 아닌 맨 statement (05-config.sh:53 계약)
+    # 아래 while 에 들어가는 순간 프로세스치환이 tmux 를 포크하고, 루프 안에서 세션마다
+    # display-message 를 또 부른다 — 그 전에 나가야 '전부' 막힌다. 락은 아직 아무것도 안 잡았다.
+    tt_conf_on snapshot || { printf 'snapshot=off — 기록하지 않는다 (tt config set snapshot on)\n'; exit 0; }
     mkdir -p "$STATE"
     rows=""; n=0
     while IFS=$'\t' read -r sid name; do
@@ -333,6 +337,17 @@ if [ "${1:-}" = "--boot-restore" ]; then
     blog() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$BOOTLOG"; }
     TT_LOG_FILE="$BOOTLOG" tt_log_rotate
     blog "=== boot-restore start (dry=$dry, pid $$)"
+
+    # ⓪ 설정 스위치. ① 킬 스위치와 뜻은 같고 손잡이만 다르다(파일 하나 vs `tt config`).
+    #    자리도 같아야 한다 — 여기서 나가야 아래의 PATH 보정·flock·네트워크 대기(최대 120초)·
+    #    tmux start-server(451행, 이 진입점의 첫 tmux 호출)를 전부 건드리지 않는다.
+    #    tt_conf_load 는 서브셸 아닌 맨 statement (05-config.sh:53 계약).
+    tt_conf_load
+    if ! tt_conf_on boot_restore; then
+        blog "boot_restore=off in config — nothing done"
+        printf 'boot_restore=off — 부팅 복원을 건너뛴다 (tt config set boot_restore on)\n'
+        exit 0
+    fi
 
     # ① 킬 스위치. "재부팅은 하되 함대는 안 떴으면" 하는 상황이 있다(커널 교체·디스크 정리 뒤
     #    관찰, 손으로 함대를 재편하는 중). 사람이 파일 하나로 끌 수 있어야 하고, 지우면 다음

@@ -870,6 +870,19 @@ rc_target() {
 # 라운드 끝에 --list용 표시 캐시($STATE/rc-off)를 갈아끼운다 — 목록은 손이 자주 타는 경로라
 # 거기서 pgrep 팬아웃을 돌리면 팝업이 눈에 띄게 굼떠진다(0.05s → 0.4s 실측). 판정은 여기서만 한다.
 if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # 옛 이름은 하위호환
+    # 설정은 진입점 맨 위에서 "서브셸이 아닌 맨 statement"로 한 번만 읽는다(05-config.sh:53 계약).
+    # $(...) 안에서 부르면 캐시가 그 서브셸과 함께 죽어, 아래 루프가 세션마다 파일을 다시 파싱하고
+    # 깨진 줄 경고를 1분마다 그 횟수만큼 중복 발사한다.
+    tt_conf_load
+    # rc 스위치. 여기서 exit 하면 이 블록 끝(142행)의 --snapshot 까지 같이 죽는다 —
+    # rc 와 snapshot 은 서로 다른 스위치이므로 "나가지 않고 건너뛰기만" 한다.
+    tt_rc_enabled=1
+    tt_conf_on rc || tt_rc_enabled=0
+    # 크론은 1분마다 돈다 → 리다이렉트로 삼켜지는 자리에선 입을 다물고(안 그러면 cron 메일이
+    # 1분마다 쌓인다), 사람이 직접 친 터미널에서만 이유를 한 줄 알린다.
+    if [ "$tt_rc_enabled" = 0 ] && [ -t 1 ]; then
+        printf 'rc=off — 자동복구를 건너뛴다 (tt config set rc on)\n'
+    fi
     only="${2:-}"; off=""
     mkdir -p "$STATE"
     tt_log_rotate                              # 감사 로그가 SD카드를 갉아먹지 않게 (1분 1회)
@@ -878,6 +891,11 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # 옛 이름�
         exec 9>"$STATE/rc.lock"
         flock -n 9 || exit 0
     fi
+    # rc 라운드 전체(아래 while 한 문장)를 감싼다. `while … done < <(tmux ls …)` 는 쪼갤 수 없는
+    # 한 문장이라 스위치는 반드시 while 앞에 있어야 한다 — 진입하는 순간 프로세스치환이
+    # 이미 tmux 를 포크하기 때문이다. 안쪽 들여쓰기는 일부러 그대로 뒀다(53줄을 통째로 밀면
+    # 진짜 바뀐 곳이 diff 에 묻힌다).
+    if [ "$tt_rc_enabled" = 1 ]; then
     while read -r sid name; do
         [ -z "$only" ] || [ "$name" = "$only" ] || continue
         t=$(rc_target "$sid") || continue          # claude 없음·모호·PID 재사용 의심 → 조용히 스킵
@@ -932,16 +950,24 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # 옛 이름�
             echo "$(date '+%F %T') $sid rc-recover fail" >> "$STATE/hook.log"
         fi
     done < <(tmux ls -F '#{session_id} #{session_name}' 2>/dev/null || true)
+    fi                                         # ← rc 스위치 끝. 아래는 rc=off 여도 그대로 돈다.
     # 표시 캐시 통째 교체 — 죽은 세션 찌꺼기가 남지 않는다. 세션 하나만 검사한 라운드는 건드리지 않음
+    #   rc=off 라면 $off 가 비어 있어 타임스탬프만 남는다 = ⊘ 배지 전멸. 안 쓰고 두면 꺼기 직전의
+    #   낡은 배지가 최대 5분(80-view.sh 의 staleness 창) 더 화면에 남는다.
     [ -n "$only" ] || printf '%s%s\n' "$(date +%s)" "$off" > "$STATE/rc-off"
     # 함대 스냅샷도 여기서 굳힌다(maintainer 제안) — 어차피 1분마다 전 세션을 훑는 김에.
     # 팝업을 안 열어도 매니페스트가 최신이라, 갑작스런 재부팅에도 최대 1분 전 상태가 남는다.
-    [ -n "$only" ] || "$SELF" --snapshot >/dev/null 2>&1 || true
+    #   snapshot=off 면 자식도 스스로 조기 return 하지만, 여기서 막아 1분마다의 포크 자체를 아낀다.
+    tt_conf_on snapshot && { [ -n "$only" ] || "$SELF" --snapshot >/dev/null 2>&1 || true; }
     exit 0
 fi
 
 # rc 현황표 (읽기 전용, 디버깅용): 세션 / rc / URL
 if [ "${1:-}" = "--rc" ]; then
+    tt_conf_load                               # 서브셸 아닌 맨 statement (05-config.sh:53 계약)
+    # 표를 그리는 첫 tmux 호출(아래 while)보다 앞에서 나간다 — 자동복구를 끈 사람에게
+    # rc 현황표는 "왜 전부 OFF 인가"만 되묻게 만드는 표다.
+    tt_conf_on rc || { printf 'rc=off — 자동복구가 꺼져 있다 (tt config set rc on)\n'; exit 0; }
     printf '%-18s %-5s %s\n' SESSION RC URL
     while read -r sid name; do
         if ! t=$(rc_target "$sid"); then
@@ -986,6 +1012,10 @@ tt_conv_of() {
 #   살아있는 세션이 하나도 없으면 아예 쓰지 않는다: 재부팅 직후 습관적으로 --snapshot을 치면
 #   복원표가 그 자리에서 증발한다(가장 필요한 순간에).
 if [ "${1:-}" = "--snapshot" ]; then
+    tt_conf_load                               # 서브셸 아닌 맨 statement (05-config.sh:53 계약)
+    # 아래 while 에 들어가는 순간 프로세스치환이 tmux 를 포크하고, 루프 안에서 세션마다
+    # display-message 를 또 부른다 — 그 전에 나가야 '전부' 막힌다. 락은 아직 아무것도 안 잡았다.
+    tt_conf_on snapshot || { printf 'snapshot=off — 기록하지 않는다 (tt config set snapshot on)\n'; exit 0; }
     mkdir -p "$STATE"
     rows=""; n=0
     while IFS=$'\t' read -r sid name; do
@@ -1296,6 +1326,17 @@ if [ "${1:-}" = "--boot-restore" ]; then
     blog() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$BOOTLOG"; }
     TT_LOG_FILE="$BOOTLOG" tt_log_rotate
     blog "=== boot-restore start (dry=$dry, pid $$)"
+
+    # ⓪ 설정 스위치. ① 킬 스위치와 뜻은 같고 손잡이만 다르다(파일 하나 vs `tt config`).
+    #    자리도 같아야 한다 — 여기서 나가야 아래의 PATH 보정·flock·네트워크 대기(최대 120초)·
+    #    tmux start-server(451행, 이 진입점의 첫 tmux 호출)를 전부 건드리지 않는다.
+    #    tt_conf_load 는 서브셸 아닌 맨 statement (05-config.sh:53 계약).
+    tt_conf_load
+    if ! tt_conf_on boot_restore; then
+        blog "boot_restore=off in config — nothing done"
+        printf 'boot_restore=off — 부팅 복원을 건너뛴다 (tt config set boot_restore on)\n'
+        exit 0
+    fi
 
     # ① 킬 스위치. "재부팅은 하되 함대는 안 떴으면" 하는 상황이 있다(커널 교체·디스크 정리 뒤
     #    관찰, 손으로 함대를 재편하는 중). 사람이 파일 하나로 끌 수 있어야 하고, 지우면 다음
