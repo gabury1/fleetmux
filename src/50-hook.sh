@@ -1,7 +1,21 @@
 # 상태바용 함대 집계 "⏸2 ✻3" — 가장 급한 신호(⏸)가 팝업을 열어야만 보이던 문제를 없앤다.
 #   색은 --list 팔레트 그대로(⏸ 주황 215, ✻ 노랑 33). 0이면 생략.
+#
+# 여기가 CPU 스냅샷의 **샘플러**이기도 하다. 상태바는 status-interval 5로 5초마다 돌아
+# (.tmux.conf 의 `#(tt --status)`) working 세션의 표본을 갱신한다 — 덕분에 팝업(--list)은
+# 언제 열려도 3~10초짜리 신선한 창을 sleep 0으로 얻는다. 샘플러를 여기 두는 것이 설계의 축이다.
+#
+# 판정 규칙을 --list 에 맞춘 이유(EVIDENCE.md: "상태바엔 ✻4, 목록엔 마크 없음"):
+#   예전엔 여기에 20초 박제 가드가 아예 없어서 --list 와 규칙이 통째로 달랐다. 이제 둘 다
+#   ①훅 신선(≤20초) → ②CPU 델타 순으로 같은 근거를 같은 순서로 본다.
+#   다만 --status 는 3순위 증인(화면)이 없다 — 세션 이름을 모르고, 5초마다 함대 전체를
+#   capture-pane 하는 건 비용상 불가다. 그래서 rc 2(판정불가)에서만 갈린다:
+#   여기서는 **세는 쪽**으로 접는다. ✻n 은 개수 뱃지라 하나 더 세는 건 싸고, 덜 세면
+#   부재중 함대를 통째로 놓친다 — 미탐이 오탐보다 비싼 자리다(waiting 훅 판정과 같은 논리).
+#   결과적으로 불일치는 "CPU 가 확정적으로 아니라고 답하는 구간"만큼 좁아진다. 없애지는 못한다.
 tt_fleet_agg() {
-    local f st ts pid w=0 k=0 out=""
+    local f st ts pid w=0 k=0 out="" now sid cbusy
+    now=$(date +%s)
     for f in "$STATE"/hook-*; do
         [ -f "$f" ] || continue
         st=""; ts=0; pid=0
@@ -10,7 +24,19 @@ tt_fleet_agg() {
         # 훅 프로세스가 죽었으면 박제된 상태 — 세지 않는다(--list의 생존 판정과 같은 기준)
         case "${pid:-0}" in ''|*[!0-9]*) pid=0 ;; esac
         [ "$pid" -gt 0 ] && ! kill -0 "$pid" 2>/dev/null && continue
-        case "$st" in waiting) w=$((w + 1)) ;; working) k=$((k + 1)) ;; esac
+        case "${ts:-0}" in ''|*[!0-9]*) ts=0 ;; esac
+        case "$st" in
+            waiting) w=$((w + 1)) ;;
+            working)
+                sid=${f##*/hook-}
+                if [ $(( now - ts )) -le 20 ]; then
+                    k=$((k + 1))
+                else
+                    cbusy=0; tt_cpu_busy "$sid" "$pid" "$now" || cbusy=$?
+                    [ "$cbusy" = 1 ] || k=$((k + 1))   # 0(작업중)·2(판정불가)는 센다, 1(아님)만 뺀다
+                fi
+                tt_cpu_sample "$sid" "$pid" "$now" ;;
+        esac
     done
     [ "$w" -gt 0 ] && out="$out#[fg=colour215,bold]⏸$w #[default]"
     [ "$k" -gt 0 ] && out="$out#[fg=yellow,bold]✻$k #[default]"
@@ -91,7 +117,9 @@ if [ "${1:-}" = "--hook" ]; then
                 fi
             fi ;;
         clear)
-            rm -f "$hf" ;;
+            # CPU 스냅샷은 훅 파일의 수명에 완전히 종속된다 — 정리 규칙을 두 벌로 나누면
+            # "지웠는데 또 믿는" 모순이 난다(tt_sweep_hooks 주석의 기존 판단과 같은 결).
+            rm -f "$hf" "$STATE/cpu-${sid#\$}" ;;
         boot)
             # 에이전트 부팅 자백 — 즉시 에이전트 세션으로 분류 + 예약된 /rename 실행
             #   claude: SessionStart 훅   codex: wrapper가 exec 직전에 직접 발신

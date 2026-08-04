@@ -174,15 +174,30 @@ if [ "${1:-}" = "--list" ]; then
             fi
             case "$hstate" in
                 working)
-                    # 박제 방지: 갱신이 끊겼는데 화면에도 스피너가 없으면 Stop 유실로 보고 끈다.
+                    # 박제 방지: 갱신이 끊겼는데 다른 근거도 없으면 Stop 유실로 보고 끈다.
                     #   Esc로 턴을 취소하면 Claude Code가 Stop을 안 쏴서 working이 그대로 박제된다(실사용 제보).
-                    #   창을 20초로 좁혀도 진짜 작업 중엔 화면에 스피너가 있어 안 꺼진다 — 화면이 2차 근거라 안전.
-                    if [ $(( now - ${_hts:-0} )) -gt 20 ] \
-                        && ! tmux capture-pane -p -t "=$name:" 2>/dev/null | tt_working; then
-                        mark=""
-                    else
+                    # 증거 셋을 **OR** 로 쌓는다 — 삭제 조건은 도입 전과 똑같이 "셋 다 아닐 때"뿐이다.
+                    #   ① 훅이 신선(≤20초) → 에이전트 본인의 자백이라 가장 정확하고 포크 0. 순서 1위 유지.
+                    #   ② CPU 델타(30-state.sh) → 커널 회계라 TUI 문구와 무관하고 포크 0.
+                    #      화면보다 앞에 두는 이유: 싸고(포크 0 vs 3) 단단하고, 틀릴 때 "모른다"로 틀려서
+                    #      ③이 받아준다. 긍정이면 tmux를 아예 안 불러 팝업이 그만큼 빨리 그려진다.
+                    #   ③ 화면 판정 → 렌더링이라 언제든 또 깨지지만(이번 버그) 마지막 보험으로 남긴다.
+                    #      CPU 신호가 미탐 쪽으로 틀리는 경우(부하로 굶은 세션·향후 TUI가 대기 중 렌더를
+                    #      멈추는 경우)를 여기서만 구할 수 있다.
+                    if [ $(( now - ${_hts:-0} )) -le 20 ]; then
                         mark=$'\033[33m✻\033[0m'
-                    fi ;;
+                    else
+                        cbusy=0; tt_cpu_busy "$sid" "${hpid:-0}" "$now" || cbusy=$?
+                        if [ "$cbusy" = 0 ]; then
+                            mark=$'\033[33m✻\033[0m'
+                        elif tmux capture-pane -p -t "=$name:" 2>/dev/null | tt_working; then
+                            mark=$'\033[33m✻\033[0m'
+                        else
+                            mark=""
+                        fi
+                    fi
+                    # 다음 호출을 위한 표본은 판정 결과와 무관하게 항상 남긴다(ROTATE 안이면 미접촉)
+                    tt_cpu_sample "$sid" "${hpid:-0}" "$now" ;;
                 waiting)
                     # 박제 방지: 승인을 거부하면 codex는 Stop을 안 쏜다 —
                     # 60초 넘게 갱신 없는데 화면에 승인 프롬프트가 없으면 취소된 것으로 본다

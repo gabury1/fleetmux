@@ -24,7 +24,9 @@
 #   ④ (글리프) [A-Za-z]*ing for [^ ]
 #      `✻ Waiting for 1 dynamic workflow to finish`(WORKING 캡처 9행 실물). 진행형이라 완료줄(과거형)과
 #      문법으로 갈린다 — for 형태 중 유일하게 안전한 쪽.
-#   ⑤ (글리프) [^ ]+ for [0-9]+h   ← ★알려진 미해결 오탐. CPU 델타 판정이 들어오면 지우거나 AND 로 묶어라.
+#   ⑤ (글리프) [^ ]+ for [0-9]+h   ← ★알려진 미해결 오탐. 아직 안 닫혔다.
+#      ※ CPU 델타 판정(아래)이 들어왔지만 이 구멍은 그걸로 못 닫는다: ⑤가 터지는 자리는
+#        80-view.sh 의 **훅 없는 분기**라 잴 pid 자체가 없다. CPU 는 훅이 working 인 경로에만 선다.
 #      EVIDENCE 가 스피너로 지목한 `✻ Sautéed for 1h 10m 46s` 를 잡으려고 "시(h) 단위"를 판별자로 쓴다.
 #      그런데 완료줄도 시 단위가 된다 — `✻ Baked for 1h 5m 3s` 는 실측 오탐이고 글자만으로는 못 가른다
 #      (유휴 캡처의 `✻ Baked for 11m 42s`·`✻ Worked for 7m 32s` 가 정확히 같은 문법이다).
@@ -50,6 +52,201 @@ tt_working() {
             while (i >= 1 && L[i] ~ /^[ \t]*$/) i--
             if (i >= 1) print L[i]
         }' | grep -qaE "$WORKING_PAT"
+}
+
+# ── CPU 델타 기반 작업중 판정 ────────────────────────────────────────────────
+# 왜 들어왔나(2026-08-05): 위 화면 판정은 렌더링 산출물을 읽는 일이라 글리프 하나·문구 한 줄이
+# 바뀌면 조용히 깨진다 — WORKING_PAT 주석 전체가 그 실증이다. 반면 "그 프로세스가 지금 CPU를
+# 태우고 있나"는 커널 회계라 TUI 문구와 무관하다. 그래서 화면을 **대체하지 않고 앞에 끼운다**.
+#
+# ⚠️ 이 신호는 ✻ 를 **살리는 근거로만** 쓴다. 죽이는 근거로는 절대 쓰지 마라.
+#    이번 버그가 "실제로 일하는 세션의 ✻ 를 잘못 지운 것"이라, 새 삭제 경로를 하나도 만들지 않는
+#    배치만 안전하다. 그래서 tt_cpu_busy 의 rc 는 3값이다: 0=작업중 / 1=아님 / **2=판정불가**.
+#    "모른다"를 "아니다"로 접는 순간 ✻ 가 또 사라진다 — 접는 건 호출부가 자기 맥락에서 정한다.
+#
+# 설계의 축: --list 는 팝업을 여는 경로라 즉시 그려져야 한다 → 3초를 재는 동기 샘플링은 못 넣는다.
+# 그래서 **지난 호출이 남긴 스냅샷과의 델타**를 쓴다(상태를 작은 파일 한 줄에 두는 기존 관례 그대로).
+# 샘플러는 상태바다 — .tmux.conf 의 `#(tt --status)` 가 status-interval 5로 5초마다 돌며
+# working 세션의 스냅샷을 갱신한다. 그래서 팝업은 언제 열려도 3~10초짜리 신선한 창을 즉시 얻는다.
+# 상태바가 없는 환경(붙은 클라이언트 없음)에서는 창이 늘 MAXWIN을 넘어 항상 rc 2 →
+# 동작이 도입 전과 정확히 같아진다(화면 판정). 퇴행 경로가 없다.
+#
+# 단위: 리눅스 /proc 의 USER_HZ 틱(=100Hz 고정)과 macOS `ps -o time=` 의 1/100초가 같은 단위라
+# **양 플랫폼이 같은 산술·같은 임계값**을 쓴다. 갈리는 건 "카운터를 읽는 한 줄"뿐이다.
+#
+# 임계값 근거 — 이 파이에서 직접 잰 것(utime+stime 1Hz, claude 7세션, 총 177초, 훅 상태로 대조):
+#   초당 평균: working 15.9 / 23.0 / 23.9 / 25.3 cs/s   idle 1.4 / 1.4 / 1.6 cs/s
+#   창 길이별 (min working vs max idle):
+#     1s  working 2.00 vs idle 6.00   *** 겹침 ***     ← 1~2초 창은 두 부류를 못 가른다
+#     2s  working 5.00 vs idle 5.50   *** 겹침 ***
+#     3s  working 4.00~6.00 vs idle 4.00~5.00
+#     5s  working 5.20~6.00 vs idle 3.20~4.00
+#    20s  working 10.70~12.35 vs idle 2.15~2.85
+#   임계값별 오류율: win3 th6 → 미탐 0~2.3% 오탐 0% | win3 th4 → 오탐 0.3~2.9%(유휴 버스트)
+#                    win5 th10 → 미탐 26.4%(긴 사고 구간을 놓침)
+#   즉 MINWIN=3 은 타협이 아니라 데이터가 그은 선이고, 6 은 미탐·오탐이 동시에 바닥인 유일한 값이다.
+#   오차는 비대칭이라 이 좁은 여유가 허용된다 — 미탐은 화면 판정이 3순위로 받아주고,
+#   오탐은 훅이 이미 working 이라 새로 생기는 오류가 아니다.
+# MAXWIN 이 왜 필요한가: 긴 창은 희석된다. Esc 로 턴을 취소한 박제 케이스를 대입하면
+#   10초 일하고 멈춘 뒤 5분 뒤 조회 → (25×10 + 1.5×290)/300 = 9.8 cs/s 로 임계를 넘어
+#   **CPU 신호가 박제를 되살리는 흉기가 된다**. 60초로 자르면 그 창이 애초에 성립하지 않는다.
+# 환경변수로 덮어쓸 수 있게 두는 건 TT_LOG_MAX 선례 그대로다. TT_CONF_KEYS 화이트리스트에는
+#   넣지 않는다 — 사용자 설정이 아니라 튜닝 손잡이다(향후 TUI 렌더 비용이 바뀌면 여기만 만진다).
+TT_CPU_BUSY=${TT_CPU_BUSY:-6}              # cs/s. 코어 하나의 6%
+TT_CPU_MINWIN=${TT_CPU_MINWIN:-3}          # 초. 이보다 짧은 창은 판정불가(1~2초는 유휴와 겹친다)
+TT_CPU_MINWIN_COARSE=${TT_CPU_MINWIN_COARSE:-20}  # 초. 카운터 분해능이 1초(=100cs)일 때의 하한
+TT_CPU_MAXWIN=${TT_CPU_MAXWIN:-60}         # 초. 이보다 긴 창은 희석돼 못 믿는다 → 판정불가
+TT_CPU_ROTATE=${TT_CPU_ROTATE:-3}          # 초. 표본 회전 간격(이보다 이르면 파일을 안 건드린다)
+
+# macOS/BSD 폴백: `ps -p <pid> -o time=` → 센티초. TT_CPU_CS·TT_CPU_Q 를 세팅한다.
+#   `ps -o %cpu=` 는 쓰지 않는다 — 리눅스에서는 **생애 평균**이라(실측: 36분 일한 세션이 유휴로
+#   돌아선 뒤에도 17.8%) "지금 일하나"를 전혀 못 가르고, BSD 의 감쇠 평균은 상수가 문서화돼 있지
+#   않다. 무엇보다 그걸 쓰면 맥과 리눅스가 다른 규칙·다른 임계값·다른 테스트를 갖게 된다 —
+#   갈래가 둘이면 한쪽은 반드시 조용히 썩는다. 알고리즘 하나, 임계값 하나로 간다.
+#   TIME 포맷은 [[DD-]HH:]MM:SS[.cc] 를 다 받는다. `10#` 접두사가 필수다 — 08·09 를 8진수로
+#   해석해 산술이 즉사한다. 소수점이 있으면 분해능 1cs(맥), 없으면 100cs(초 단위 ps) →
+#   호출부가 최소 창을 20초로 늘려 양자화 오탐을 막는다. 맥 실기기 확인 없이도 안 깨지는 구조다.
+tt_cpu_cs_ps() {
+    TT_CPU_CS=""; TT_CPU_Q=100
+    local t d=0 h=0 m=0 s=0 frac=0
+    t=$(ps -p "${1:-0}" -o time= 2>/dev/null | tr -d ' ') || return 1
+    [ -n "$t" ] || return 1
+    case "$t" in *-*) d=${t%%-*}; t=${t#*-} ;; esac
+    case "$t" in *.*) frac=${t##*.}; t=${t%.*}; TT_CPU_Q=1 ;; esac
+    case "$t" in
+        *:*:*) h=${t%%:*}; t=${t#*:}; m=${t%%:*}; s=${t##*:} ;;
+        *:*)   m=${t%%:*}; s=${t##*:} ;;
+        *)     s=$t ;;
+    esac
+    # 소수부는 정확히 두 자리로 맞춘다(.5 → 50, .123 → 12). 빈 필드는 10#"" 산술 즉사라 다 막는다.
+    case "$frac" in '') frac=0 ;; ?) frac="${frac}0" ;; ??) ;; *) frac=${frac%"${frac#??}"} ;; esac
+    for t in "$d" "$h" "$m" "$s" "$frac"; do
+        case "$t" in ''|*[!0-9]*) return 1 ;; esac
+    done
+    TT_CPU_CS=$(( ((10#$d * 24 + 10#$h) * 3600 + 10#$m * 60 + 10#$s) * 100 + 10#$frac ))
+    return 0
+}
+
+# utime+stime 센티초 → 전역 TT_CPU_CS, 분해능 → TT_CPU_Q. rc 1 = 못 읽음(권한·프로세스 소멸).
+#   리눅스는 /proc 을 직접 읽어 **포크 0**이다(실측 회당 0.5ms). 화면 판정은 세션당 포크 3개다 —
+#   CPU 판정이 한 자릿수 싸다. 그래서 CPU 를 화면보다 앞에 두면 팝업이 오히려 빨라진다.
+#   comm 은 괄호 안이고 공백·괄호를 품을 수 있다 → `##*') '` 오른쪽 최장매치로 잘라야 안 깨진다.
+#   자른 나머지의 1번째가 state 이므로 utime(원본 14번)=arr[11], stime(15번)=arr[12].
+#   ⛔ cutime/cstime(16·17번)은 **절대 더하지 마라**: 자식이 회수되는 순간 그 자식의 생애 CPU 가
+#      부모 카운터로 통째로 점프해 한 창에서 수백 cs/s 짜리 가짜 스파이크를 만든다. 맥의
+#      `ps -o time=` 도 자식을 안 세니 이렇게 해야 양 플랫폼이 정확히 같은 것을 잰다.
+#   USER_HZ 는 100 고정으로 박는다(이 파이 getconf CLK_TCK=100 확인). getconf 를 부르면 포크가
+#   하나 늘고, 1024인 alpha/ia64 는 fmux 대상이 아니다.
+#   TT_PROC 는 테스트 주입용이다 — 가짜 /proc 을 물려 실제 프로세스 없이 전 경로를 잰다.
+tt_cpu_read() {
+    TT_CPU_CS=""; TT_CPU_Q=1
+    local pid="${1:-0}" f line rest u s g
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pid" -gt 0 ] || return 1
+    f="${TT_PROC:-/proc}/$pid/stat"
+    if [ -r "$f" ]; then
+        line=""
+        read -r line < "$f" 2>/dev/null || return 1
+        rest=${line##*') '}
+        [ "$rest" != "$line" ] || return 1        # comm 괄호가 없다 = /proc stat 형식이 아니다
+        local arr
+        g=0; case $- in *f*) g=1 ;; esac          # 필드는 전부 숫자지만 글롭을 원천 차단한다
+        set -f
+        arr=( $rest )
+        [ "$g" = 1 ] || set +f
+        u="${arr[11]:-}"; s="${arr[12]:-}"
+        case "$u" in ''|*[!0-9]*) return 1 ;; esac
+        case "$s" in ''|*[!0-9]*) return 1 ;; esac
+        TT_CPU_CS=$(( u + s ))
+        TT_CPU_Q=1                                # 1틱 = 1cs
+        return 0
+    fi
+    tt_cpu_cs_ps "$pid"
+}
+
+# 스냅샷 파일 회전. 포맷은 한 줄 5필드 "<pid> <ts1> <cs1> <ts2> <cs2>" (hook-<sid> 와 같은 모양).
+#   왜 표본이 **둘**인가 — 이게 설계의 핵심 트릭이다. 하나만 두면 "창 길이 하한(3초)"과
+#   "갱신 주기(5초)"가 충돌한다: 상태바가 덮어쓰고 나면 읽는 쪽이 만나는 창이 0~5초라 절반쯤은
+#   하한을 못 넘는다. 둘을 들고 있으면 최신 것이 너무 어릴 때 그 이전 것을 쓰면 되고, 어떤
+#   호출 타이밍에도 유효한 창이 항상 하나는 있다(실제 궤적: 최신 0~5초 / 이전 5~10초).
+#   ROTATE 안에 다시 불리면 파일을 아예 안 건드린다 — 팝업 연타로 창이 0초로 짜부라지지도,
+#   SD 카드에 쓰기가 몰리지도 않는다.
+#   now 를 인자로 받는 이유: 호출부(--list·--status)는 이미 date 를 한 번 불렀다. 안 넘기면 여기서 부른다.
+tt_cpu_sample() {
+    local sid="${1:-}" pid="${2:-0}" now="${3:-}" f cpid ts1 cs1 ts2 cs2 tmp
+    [ -n "$sid" ] || return 0
+    case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$pid" -gt 0 ] || return 0
+    case "$now" in ''|*[!0-9]*) now=$(date +%s) ;; esac
+    f="$STATE/cpu-$sid"
+    ts2=0; cs2=0
+    if [ -f "$f" ]; then
+        cpid=""; ts1=""; cs1=""
+        read -r cpid ts1 cs1 _ _ < "$f" 2>/dev/null || true
+        case "${cpid:-}" in ''|*[!0-9]*) cpid=0 ;; esac
+        case "${ts1:-}" in ''|*[!0-9]*) ts1=0 ;; esac
+        case "${cs1:-}" in ''|*[!0-9]*) cs1=0 ;; esac
+        # pid 가 다르면 옛 표본을 통째로 버린다(pid 재사용·에이전트 재기동 방어)
+        if [ "$cpid" = "$pid" ] && [ "$ts1" -gt 0 ]; then
+            if [ $(( now - ts1 )) -lt "$TT_CPU_ROTATE" ]; then return 0; fi
+            ts2=$ts1; cs2=$cs1
+        fi
+    fi
+    tt_cpu_read "$pid" || return 0
+    mkdir -p "$STATE" 2>/dev/null || return 0
+    # tmp+mv — 읽는 쪽이 반쯤 쓰인 줄을 만나지 않게. $$ 로 갈라 --status 와 --list 가 겹쳐도 안전.
+    tmp="$f.$$"
+    if printf '%s %s %s %s %s\n' "$pid" "$now" "$TT_CPU_CS" "$ts2" "$cs2" > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp"
+    else
+        rm -f "$tmp"
+    fi
+    return 0
+}
+
+# CPU 델타 판정. rc 0 = 작업중 / rc 1 = 작업중 아님 / **rc 2 = 판정불가**.
+#   rc 2 가 나는 경우를 전부 열거한다 — 파일이 썩어도 옛 값으로 오판하지 않기 위함이다:
+#     스냅샷 없음(웜업) · pid 없음/불일치 · 필드가 숫자가 아님 · 창 < 최소 · 창 > MAXWIN ·
+#     델타 음수(카운터 리셋) · /proc 도 ps 도 못 읽음(프로세스 소멸·권한).
+#   판정은 정수 곱셈뿐이다 — 나눗셈·소수 없음(bash 3.2 안전).
+#   창은 벽시계(date)이고 카운터는 CPU 시간이다 → NTP 점프·서스펜드가 창을 왜곡한다.
+#   음수 창과 MAXWIN 초과를 둘 다 막아 그 경우 판정불가로 떨어뜨린다(다음 틱에 정상화).
+tt_cpu_busy() {
+    local sid="${1:-}" pid="${2:-0}" now="${3:-}" f cpid ts1 cs1 ts2 cs2 win minwin oldcs d
+    [ -n "$sid" ] || return 2
+    case "$pid" in ''|*[!0-9]*) return 2 ;; esac
+    [ "$pid" -gt 0 ] || return 2
+    f="$STATE/cpu-$sid"
+    [ -f "$f" ] || return 2
+    cpid=""; ts1=""; cs1=""; ts2=""; cs2=""
+    read -r cpid ts1 cs1 ts2 cs2 < "$f" 2>/dev/null || return 2
+    case "$cpid" in ''|*[!0-9]*) return 2 ;; esac
+    [ "$cpid" = "$pid" ] || return 2
+    case "$ts1" in ''|*[!0-9]*) return 2 ;; esac
+    case "$cs1" in ''|*[!0-9]*) return 2 ;; esac
+    case "${ts2:-}" in ''|*[!0-9]*) ts2=0 ;; esac
+    case "${cs2:-}" in ''|*[!0-9]*) cs2=0 ;; esac
+    case "$now" in ''|*[!0-9]*) now=$(date +%s) ;; esac
+    tt_cpu_read "$pid" || return 2
+    # 최소 창 = max(MINWIN, 분해능/임계값). 분해능이 1초(ps)면 유휴 프로세스가 눈금 하나를 넘기는
+    # 순간 3초 창에서 33 cs/s 로 읽혀 오탐이 난다 → 그때만 창을 20초로 늘린다.
+    minwin=$TT_CPU_MINWIN
+    if [ "${TT_CPU_Q:-1}" -gt 1 ] && [ "$TT_CPU_MINWIN_COARSE" -gt "$minwin" ]; then
+        minwin=$TT_CPU_MINWIN_COARSE
+    fi
+    oldcs=""
+    win=$(( now - ts1 ))
+    if [ "$win" -ge "$minwin" ] && [ "$win" -le "$TT_CPU_MAXWIN" ]; then
+        oldcs=$cs1                                  # 최신 표본으로 충분히 긴 창이 선다
+    elif [ "$ts2" -gt 0 ]; then
+        win=$(( now - ts2 ))                        # 최신이 너무 어리다 → 이전 표본으로 창을 넓힌다
+        if [ "$win" -ge "$minwin" ] && [ "$win" -le "$TT_CPU_MAXWIN" ]; then oldcs=$cs2; fi
+    fi
+    [ -n "$oldcs" ] || return 2
+    d=$(( TT_CPU_CS - oldcs ))
+    [ "$d" -ge 0 ] || return 2                      # 카운터가 뒤로 갔다 = pid 재사용/리셋
+    if [ "$d" -ge $(( TT_CPU_BUSY * win )) ]; then return 0; fi
+    return 1
 }
 
 # ── 공유 헬퍼 ────────────────────────────────────────────────────────────────
@@ -198,14 +395,16 @@ tt_sweep_hooks() {
         [ -n "$sid" ] || continue
         live="$live${sid#\$}=${created:-0} "
     done <<< "$lsout"
+    #   CPU 스냅샷(cpu-<id>)도 같이 지운다 — 훅 파일의 수명에 종속시켜야 "지웠는데 또 믿는"
+    #   모순이 안 난다. 접두사가 달라 위 hook-* 글롭에는 안 걸린다.
     for hf in "$STATE"/hook-*; do
         [ -f "$hf" ] || continue
         id=${hf##*/hook-}
         case "$live" in
             *" $id="*)
                 created=${live#*" $id="}; created=${created%% *}
-                tt_hook_valid "$hf" "${created:-0}" || rm -f "$hf" ;;   # ② 유령
-            *) rm -f "$hf" ;;                                           # ① 고아
+                tt_hook_valid "$hf" "${created:-0}" || rm -f "$hf" "$STATE/cpu-$id" ;;   # ② 유령
+            *) rm -f "$hf" "$STATE/cpu-$id" ;;                                           # ① 고아
         esac
     done
     return 0
