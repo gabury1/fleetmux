@@ -53,6 +53,7 @@ check: $(OUT)
 	else \
 		echo "shellcheck not installed — skipped"; \
 	fi
+	@./test/run.sh
 
 # 분할 검증: src/*.sh 를 이어붙인 결과가 커밋된 bin/fmux 와 바이트 동일한지 본다.
 # 차이가 하나라도 있으면 이 분할은 move-only 가 아니다.
