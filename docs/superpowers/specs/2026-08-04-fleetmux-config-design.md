@@ -16,6 +16,7 @@ fmux 는 지금까지 한 사람의 기계에서만 돌았다. 그래서 취향�
 - 튜닝: 최근 임계, ✓ 배지 유지, 강조색, 로그 회전 크기
 - 단축키 재매핑: 팝업 내부 키 전부 + 팝업 소환키
 - 설정을 **팝업 안에서** 바꿀 수 있을 것 (`tt` 를 벗어나지 않는다)
+- 떠날 때(터미널 닫힘·detach·세션 종료) 함대를 한 번 더 기록할 것
 
 ## 비목표 (YAGNI)
 
@@ -69,6 +70,7 @@ key_new=ctrl-t
 |---|---|---|---|
 | `rc` | `on` | `TT_RC` | rc 자동복구 단계를 통째로 건너뛴다. `⊘` 배지도 계산하지 않는다 |
 | `snapshot` | `on` | `TT_SNAPSHOT` | `--cron` 이 매니페스트를 기록하지 않는다 |
+| `snapshot_on_exit` | `on` | `TT_SNAPSHOT_ON_EXIT` | 떠날 때(detach·세션 닫힘) 기록하지 않는다 |
 | `boot_restore` | `on` | `TT_BOOT_RESTORE` | `--boot-restore` 가 즉시 return |
 | `recent_hours` | `6` | `TT_RECENT_HOURS` | 이름을 굵게 쓰는 기준 시간 |
 | `unseen_minutes` | `10` | `TT_UNSEEN_MINUTES` | 상태바 `✓name` 유지 시간 |
@@ -139,7 +141,7 @@ source-file ~/.config/fleetmux/tmux.conf
 
 ### 7. 팝업 설정 화면
 
-- 진입 둘: 어디서나 `key_settings`(기본 `ctrl-,`), 목록 하단 `⚙ settings` 항목
+- 진입 둘: 어디서나 `key_settings`(기본 `ctrl-o`), 목록 하단 `⚙ settings` 항목
 - 화면은 fzf 재호출(`tt --config-view`). 각 줄 `키 · 현재값 · 한 줄 설명`
 - Enter:
   - boolean → 즉시 토글·저장·reload
@@ -147,6 +149,39 @@ source-file ~/.config/fleetmux/tmux.conf
   - `key_*` → **실제로 눌러서 캡처**. `execute()` 안에서 `read -rsn1 </dev/tty` 로 받아
     `ctrl-n` 형태로 역매핑한다. "누르세요"가 "ctrl-n 이라고 적으세요"보다 낫다
 - Esc → 세션 목록 복귀. 색 변경은 다음 렌더부터 반영
+
+### 8. 떠날 때 스냅샷
+
+지금 기록 기회는 `--cron` 1분 주기와 팝업 열기 둘뿐이다. `snapshot=off` 로 크론을 끈 사람에게는
+기록이 아예 없어진다 — 끄기를 열어주는 순간 **떠날 때 한 번**이 필요해진다.
+
+트리거는 tmux 훅으로 잡는다. 실측(2026-08-04, tmux 3.5a, 별도 소켓):
+
+| 상황 | 발화 훅 | 확인 |
+|---|---|---|
+| 붙어 있던 터미널이 강제로 죽음(창 닫힘·SSH 끊김) | `client-detached` | ✅ 클라이언트 SIGKILL 로 재현 |
+| `kill-server`·마지막 세션 종료 | `session-closed` | ✅ 서버가 무너지는 중에도 `run-shell` 이 실행됨 |
+
+```tmux
+# ~/.config/fleetmux/tmux.conf — fmux 가 소유하는 파일 (소환키와 같은 자리)
+set-hook -g client-detached 'run-shell -b "tt --snapshot >/dev/null 2>&1"'
+set-hook -g session-closed  'run-shell "tt --snapshot >/dev/null 2>&1"'
+```
+
+- `client-detached` 는 `-b`(백그라운드). 떠나는 사람을 스냅샷이 붙잡으면 안 된다.
+- `session-closed` 는 **동기**. 서버가 내려가는 중이라 백그라운드로 던지면 실행 전에 사라질 수 있다.
+- 서버 붕괴 중 세션 열거가 0줄이어도 안전하다 — `--snapshot` 은 살아있는 세션이 0이면 아예
+  쓰지 않는다(`70-fleet.sh:103`). 대장이 가장 필요한 순간에 증발하는 경로는 이미 막혀 있다.
+- 동시 실행은 매니페스트 flock 이 직렬화한다(크론 틱과 겹쳐도 안전).
+
+설정 키를 하나 더 둔다 — 크론과 종료 훅은 원하는 사람이 다르다:
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `snapshot` | `on` | `--cron` 의 1분 주기 기록 |
+| `snapshot_on_exit` | `on` | 떠날 때(detach·세션 닫힘) 기록 |
+
+`snapshot_on_exit=off` 면 스니펫 생성 시 두 `set-hook` 줄을 빼고, tmux 안이면 즉시 반영한다.
 
 ## 끄기의 의미 (문서에 명시)
 
