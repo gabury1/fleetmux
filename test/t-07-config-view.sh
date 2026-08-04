@@ -23,6 +23,24 @@ TAB=$'\t'
 # 셸이 미리 진짜 ESC 바이트로 바꿔 넘긴다.
 TT_DEANSI=$'s/\033\\[[0-9;]*m//g'
 
+# ── ⛔ PATH 가드 — 이 파일의 어떤 단언보다 먼저 선다 ────────────────────────
+# 아래 ③이 진짜 `--list` 를 부른다. 가짜 tmux 를 PATH 앞에 세우는 코드가 그보다 뒤에 있으면
+# 그 구간은 개발자 기계의 **진짜 tmux 서버**를 향해 나간다. 오늘은 tt_test_sandbox 의 이중
+# 격리(TMUX_TMPDIR 교체 + unset TMUX)가 소켓을 못 찾게 막아 무해하지만, 그건 환경변수 하나가
+# 새면 무너지는 방어다 — 이 저장소에서 실제로 kill-server 사고가 났던 계열이라 순서를 못박는다.
+# (단언은 하나도 안 바뀌었다. 설치 위치만 위로 올렸다.)
+mkdir -p "$TTROOT/bin"
+cat > "$TTROOT/bin/tmux" <<'SHIM'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TT_TMUX_LOG"
+exit 1
+SHIM
+chmod +x "$TTROOT/bin/tmux"
+export TT_TMUX_LOG="$TTROOT/tmux-calls.log"
+: > "$TT_TMUX_LOG"
+REALPATH_SAVED="$PATH"
+export PATH="$TTROOT/bin:$PATH"
+
 # ── ① --config-list ────────────────────────────────────────────────────────
 : > "$CONF"
 out=$("$TTBIN" --config-list)
@@ -126,18 +144,8 @@ assert_contains "$out" "SOURCE" "값이 어디서 왔는지도 같이 보여준�
 out=$("$TTBIN" --do-broadcast "$SENT" 2>/dev/null) || true
 assert_eq "$out" "" "설정 행만 찍힌 ^B 는 아무 말 없이 끝난다"
 assert_rc 0 "$TTBIN" --do-broadcast "$SENT"
-# 그리고 그 사이 tmux 를 한 번도 부르지 않는다 — 가짜 tmux 로 잰다.
-mkdir -p "$TTROOT/bin"
-cat > "$TTROOT/bin/tmux" <<'SHIM'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TT_TMUX_LOG"
-exit 1
-SHIM
-chmod +x "$TTROOT/bin/tmux"
-export TT_TMUX_LOG="$TTROOT/tmux-calls.log"
+# 그리고 그 사이 tmux 를 한 번도 부르지 않는다 — 가짜 tmux 로 잰다(설치는 파일 맨 위에서 끝냈다).
 : > "$TT_TMUX_LOG"
-REALPATH_SAVED="$PATH"
-export PATH="$TTROOT/bin:$PATH"
 "$TTBIN" --do-broadcast "$SENT" >/dev/null 2>&1 || true
 assert_eq "$(cat "$TT_TMUX_LOG")" "" "설정 행 브로드캐스트는 tmux 를 부르지 않는다"
 : > "$TT_TMUX_LOG"
@@ -205,6 +213,19 @@ if command -v setsid >/dev/null 2>&1; then
         "세션이 하나라도 있으면 피커가 뜬다"
     assert_contains "$(cat "$TT_FZF_DIR/in.1" 2>/dev/null || true)" "fmuxcv1" "그 피커에 세션이 들어 있다"
     assert_contains "$(cat "$TT_FZF_DIR/in.1" 2>/dev/null || true)" "$SENT" "그리고 설정 행도 같이 들어 있다"
+
+    # (다) ★M2 — 살아 있는 세션이 딱 하나이고 그게 **지금 붙어 있는 세션**인 경우.
+    #   80-view.sh 가 TT_CUR 을 목록에서 빼므로 --list 에는 설정 행만 남는다. 판정을
+    #   "행이 있나"로 하면 여기서 부트스트랩으로 새어 "no sessions yet" 온보딩이 뜬다 —
+    #   세션이 멀쩡히 있는데. maintainer가 세션 하나만 켠 채 ^O 로 설정 화면을 보러 갈 때의
+    #   경로가 정확히 이것이라, 설정으로 갈 문이 하필 그때 사라진다.
+    #   기준은 "세션이 하나라도 있나"다: CUR 이 있으면 세션이 최소 하나이므로 피커를 띄운다.
+    rm -f "$TT_FZF_DIR/count" "$TT_FZF_DIR"/in.*    # in.* 도 지운다 — 앞 케이스의 잔존물로 통과하면 안 된다
+    TT_FAKE_SESSION="" setsid "$TTBIN" --from "cur1" </dev/null >/dev/null 2>&1 || true
+    assert_eq "$(cat "$TT_FZF_DIR/count" 2>/dev/null || echo 0)" "1" \
+        "★붙어 있는 세션이 유일해 목록이 설정 행뿐이어도 피커를 띄운다(부트스트랩으로 안 샌다)"
+    assert_contains "$(cat "$TT_FZF_DIR/in.1" 2>/dev/null || true)" "$SENT" \
+        "그 피커에는 설정 행이 들어 있다 — 설정으로 갈 문이 남는다"
 else
     printf '  --   setsid 없음 — 부트스트랩 판정은 건너뜀\n'
 fi

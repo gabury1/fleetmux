@@ -161,7 +161,33 @@ tt_cpu_sample s1 4242 $((NOW + 2))
 assert_eq "$(cat "$STATE/cpu-s1")" "4242 $NOW 1234 0 0" '★ROTATE 안에 다시 불리면 파일 미접촉(창이 0초로 짜부라지지 않게)'
 tt_cpu_sample s1 4242 $((NOW + 3))
 assert_eq "$(cat "$STATE/cpu-s1")" "4242 $((NOW + 3)) 2234 $NOW 1234" 'ROTATE 경과 후: 옛 표본이 이전 자리로 밀린다'
+# ★시계 역행 동결 — 회복 경로가 없는 유일한 자리라 여기서 가장 크게 잰다.
+#   파일에 미래 시각이 박히면(NTP 보정·수동 시각 변경·서스펜드) now-ts1 이 음수가 되고,
+#   음수는 `-lt ROTATE` 가 **영원히 참**이라 샘플러가 매번 즉시 return 한다 → 파일이 다시는
+#   안 갱신되고, tt_cpu_busy 는 창이 음수라 계속 rc 2 → CPU 델타 판정이 통째로 죽는다.
+#   가드는 "음수면 옛 표본을 버리고 지금 값으로 갈아엎는다" 이다.
+rm -f "$STATE/cpu-s1"
+fake_proc 4242 1000 234                                  # cs = 1234
+snap 4242 $((NOW + 3600)) 9999 $((NOW + 3500)) 8888      # 한 시간 미래가 박혔다
+tt_cpu_sample s1 4242 "$NOW"
+assert_eq "$(cat "$STATE/cpu-s1")" "4242 $NOW 1234 0 0" \
+    '★시계 역행(미래 시각이 박힘)이면 샘플러가 동결되지 않고 지금 값으로 갈아엎는다'
+assert_eq "$(rc_of tt_cpu_busy s1 4242 $((NOW + 5)))" "1" \
+    '★갈아엎은 표본으로 즉시 판정이 선다 — 동결이면 미래 시각이 그대로 남아 영원히 rc 2 다'
+fake_proc 4242 1100 234                                  # +100cs
+tt_cpu_sample s1 4242 $((NOW + 5))                       # ROTATE(3s) 경과 → 회전한다
+assert_eq "$(cat "$STATE/cpu-s1")" "4242 $((NOW + 5)) 1334 $NOW 1234" \
+    '★역행 다음 틱에는 정상 회전이 돌아온다(동결이면 여기서 파일이 그대로다)'
+fake_proc 4242 1500 234                                  # 다시 +400cs
+assert_eq "$(rc_of tt_cpu_busy s1 4242 $((NOW + 10)))" "0" \
+    '★그리고 작업중 판정까지 돌아온다 — 400cs/5s = 80 cs/s'
+
 # pid 가 바뀌면 옛 표본을 물려주지 않는다
+rm -f "$STATE/cpu-s1"
+fake_proc 4242 1000 234
+tt_cpu_sample s1 4242 "$NOW"
+fake_proc 4242 2000 234
+tt_cpu_sample s1 4242 $((NOW + 3))
 fake_proc 777 50 0
 tt_cpu_sample s1 777 $((NOW + 10))
 assert_eq "$(cat "$STATE/cpu-s1")" "777 $((NOW + 10)) 50 0 0" '★pid 가 바뀌면 옛 표본을 물려주지 않는다(카운터 리셋 오판 차단)'

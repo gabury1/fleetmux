@@ -61,7 +61,10 @@ TT_CONF_LOADED=0
 tt_conf_load() {
     [ "$TT_CONF_LOADED" = 1 ] && return 0
     TT_CONF_LOADED=1
-    [ -f "$TT_CONF" ] || return 0
+    # -r 이지 -f 가 아니다. 파일이 있는데 못 읽으면(퍼미션·ACL) 아래 `done < "$TT_CONF"` 의
+    # 리다이렉트가 실패하고, set -e 가 그걸 물어 프로세스가 통째로 죽는다 — 크론(매분)과
+    # @reboot 부팅복원이 이유도 안 남기고 즉사한다. 못 읽으면 그냥 기본값으로 간다.
+    [ -r "$TT_CONF" ] || return 0
     local line k v
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|'#'*|' '*'#'*) continue ;; esac

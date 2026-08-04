@@ -77,8 +77,8 @@ run_cases() {
         '말줄임표가 ASCII 세 점으로 떨어진 경우 — 옛 패턴은 U+2026 만 받았다'
     pat_case MATCH '✶ Sautéeing… (2m · ↑ 5k tokens)' \
         '초 없이 분만 뜨는 타이머 + 상향 화살표 — 옛 [0-9]+m?s 가 s 를 강제해 통째로 놓쳤다'
-    pat_case MATCH '✻ Sautéed for 1h 10m 46s' \
-        'EVIDENCE 가 지목한 괄호 없는 형태 — 시(h) 단위가 유일한 판별자다(⑤ 대안, 고위험)'
+    pat_case no '✻ Sautéed for 1h 10m 46s' \
+        '★EVIDENCE 가 스피너로 지목한 형태 — 어느 캡처에도 없다(grep 0건). 잡으려던 ⑤ 대안이 완료줄을 같이 잡아 제거했다'
     pat_case MATCH '✻ Waiting for 1 dynamic workflow to finish' \
         'WORKING 캡처 9행 실물 — 진행형이라 완료줄과 문법으로 갈린다'
     pat_case MATCH '✻ Composing… (12s · esc to interrupt · ctrl+t to show todos)' \
@@ -119,20 +119,32 @@ LOCTAG='UTF-8'; export LC_ALL=en_US.UTF-8; run_cases
 LOCTAG='C';     export LC_ALL=C;           run_cases
 export LC_ALL=en_US.UTF-8
 
-# ── ②-b ★알려진 미해결 오탐 (닫히지 않았다) ────────────────────────────────
-# 설계자 케이스 24번은 `✻ Baked for 1h 5m 3s` 를 "안 걸려야 한다"로 냈다. 지금은 걸린다.
-# 글자만으로는 못 가른다 — 유휴 캡처의 `✻ Baked for 11m 42s` 와 문법이 완전히 같고, ⑤ 대안이
-# `✻ Sautéed for 1h 10m 46s`(EVIDENCE 가 스피너로 지목)를 잡으려고 시(h) 단위를 판별자로 쓰기 때문이다.
-# 그래서 여기서는 "고쳐졌다"고 거짓말하지 않고 **현재 동작을 못박는다**.
-#   터지는 경로: 한 시간 넘게 돈 턴이 끝나 노는 세션에 80-view.sh 가 ✻ 를 새로 붙인다.
-#   닫는 방법: 패턴으로는 못 닫는다. CPU 델타 판정(t-09)이 들어왔지만 이것도 못 닫는다 —
-#   ⑤가 터지는 자리는 80-view.sh 의 훅 없는 분기라 잴 pid 가 없고, CPU 는 훅이 working 인
-#   경로에만 선다. 닫으려면 그 분기에 pane pid → 에이전트 pid 해석을 먼저 붙여야 한다.
-#   그 작업이 끝나면 이 단언이 실패한다 — 실패하면 그게 정답이니 아래 두 줄을 no 로 뒤집어라.
+# ── ②-b ★닫힌 오탐 — 시(h) 단위 완료줄 ─────────────────────────────────────
+# 설계자 케이스 24번(`✻ Baked for 1h 5m 3s` 는 안 걸려야 한다)이 이제 지켜진다.
+# 한때 걸렸던 이유: ⑤ 대안 `(글리프) [^ ]+ for [0-9]+h` 가 `✻ Sautéed for 1h 10m 46s` 를
+# 잡으려고 "시(h) 단위"를 진행/완료의 판별자로 썼다. 그 전제가 실측으로 무너졌다 —
+#   · 캡처 어디에도 시 단위 진행형 for 줄이 없다(`grep -al 'Saut' …` = 0건). 이득이 0이었다.
+#   · 캡처의 for 줄은 전부 과거형 완료줄이다(`✻ Baked for 11m 42s` 가 device-refactor 의
+#     실제 선택줄이다). 시 단위로만 커지면 문법이 완전히 같아 글자로는 못 가른다.
+#   · 그리고 "훅 없는 분기에서만 터진다"던 옛 서술이 틀렸다: 80-view.sh 의 working 분기도
+#     훅 stale + CPU rc0 아님이면 화면 판정으로 내려온다. 완료줄은 다음 턴까지 화면에 남아
+#     ✻ 가 스스로 안 꺼진다 → 박제 방지 가드가 통째로 무력화됐다.
+# 그래서 ⑤를 제거했다. 아래 두 줄이 그 결정을 못박는다 — MATCH 로 되돌리면 박제가 돌아온다.
 got=no
 printf '%s\n' '✻ Baked for 1h 5m 3s' | grep -qaE "$WORKING_PAT" && got=MATCH
+assert_eq "$got" "no" \
+    '★1시간 넘게 돈 턴의 완료줄은 잡지 않는다(⑤ 대안 제거 — 되살리면 유휴 세션에 ✻ 가 영구 박제된다)'
+# ⑤를 빼도 잃는 게 없다는 근거: 유일하게 실재하던 진행형 for 줄은 ④가 그대로 받는다.
+got=no
+printf '%s\n' '✻ Waiting for 1 dynamic workflow to finish' | grep -qaE "$WORKING_PAT" && got=MATCH
 assert_eq "$got" "MATCH" \
-    '★알려진 구멍: 1시간 넘게 돈 턴의 완료줄은 아직 오탐이다(CPU 델타 도입 시 ⑤ 대안 제거·AND 로 닫을 것)'
+    '⑤ 제거 후에도 진행형 for 줄(WORKING 캡처 9행 실물)은 ④ 대안이 받는다'
+# 패턴 자체에 ⑤가 다시 들어오는 것을 구조로 막는다 — 위 두 케이스만으로는 "시 단위"를
+# 다른 모양으로 되살린 변형을 놓칠 수 있다.
+case "$WORKING_PAT" in
+    *'for [0-9]+h'*) got=yes ;; *) got=no ;;
+esac
+assert_eq "$got" "no" '★시(h) 단위 for 게이트를 패턴에 다시 넣지 않는다(완료줄과 구별 불가)'
 
 # ── ③ 실캡처 회귀 — tt_working 전 경로 ──────────────────────────────────────
 # 여기서는 한 줄이 아니라 화면 뭉치를 통째로 먹인다. 줄 고르는 awk(구분선·빈 줄 건너뛰기)까지

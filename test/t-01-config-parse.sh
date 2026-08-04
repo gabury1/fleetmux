@@ -72,4 +72,25 @@ _warn=$("$TTBIN" config 2>&1 >/dev/null)
 _count=$(printf '%s\n' "$_warn" | grep -c "모르는 키: unknown_key")
 assert_eq "$_count" "1" "config 목록도 키마다 서브셸을 포크하지만 경고는 한 번만"
 
+# ⑧ ★설정 파일이 있는데 **못 읽히면** 기본값으로 간다 — 죽지 않는다.
+#    tt_conf_load 가 `-f` 로만 검사하면 존재 검사를 통과한 뒤 `done < "$TT_CONF"` 의
+#    리다이렉트가 실패하고, 00-header 의 set -e 가 그걸 물어 **프로세스가 통째로 죽는다**.
+#    그 경로에 매달린 것이 크론(매분 --cron)과 @reboot(--boot-restore)이다: 설정 파일 퍼미션
+#    하나가 함대 복원과 rc 복구를 이유도 안 남기고 정지시킨다. `-r` 한 글자가 그 전부를 막는다.
+if [ "$(id -u)" = 0 ]; then
+    printf '  --   root 로 도는 중 — 읽기 권한 검사는 건너뜀(root 는 0000 도 읽는다)\n'
+else
+    printf 'rc=off\n' > "$CONF"
+    chmod 000 "$CONF"
+    assert_rc 0 "$TTBIN" config get rc
+    assert_eq "$("$TTBIN" config get rc 2>/dev/null)" "on" \
+        "★못 읽는 설정 파일은 기본값으로 접는다(파싱해서 얻은 off 가 아니라 default 인 on)"
+    assert_eq "$("$TTBIN" config source rc 2>/dev/null)" "default" "출처도 default 라고 정직하게 답한다"
+    # 목록·CLI 진입점도 같이 산다 — 여기가 죽으면 설정 화면 전체가 안 열린다
+    assert_rc 0 "$TTBIN" config
+    chmod 644 "$CONF"
+    assert_eq "$("$TTBIN" config get rc)" "off" "권한을 돌려주면 다시 파일 값을 읽는다(가드가 파일을 무시하는 게 아니다)"
+    : > "$CONF"
+fi
+
 tt_test_done
