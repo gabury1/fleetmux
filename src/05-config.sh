@@ -134,22 +134,3 @@ tt_conf_on() {
         *) return 1 ;;
     esac
 }
-
-# 설정 조회 진입점(최소). 나머지 하위명령은 85-config-cli.sh 가 맡는다.
-#   여러 키를 한 호출로 받는다 — 진입점 맨 앞에서 tt_conf_load 를 맨 statement 로(=명령치환
-#   으로 감싸지 않고) 한 번 태워두면, 아래 키마다 도는 `v=$(tt_conf_get ...)` 들은 이미
-#   1로 세팅된 캐시 상태를 fork 시점에 물려받아 다시 파싱하거나 다시 경고하지 않는다.
-if [ "${1:-}" = "config" ] && { [ "${2:-}" = "get" ] || [ "${2:-}" = "source" ]; }; then
-    [ -n "${3:-}" ] || { echo "usage: tt config ${2} <key> [key...]" >&2; exit 1; }
-    tt_conf_load
-    st=0
-    for k in "${@:3}"; do
-        if [ "$2" = get ]; then
-            v=$(tt_conf_get "$k") || { echo "모르는 키: $k" >&2; st=1; continue; }
-        else
-            v=$(tt_conf_source "$k") || { echo "모르는 키: $k" >&2; st=1; continue; }
-        fi
-        printf '%s\n' "$v"
-    done
-    exit "$st"
-fi
