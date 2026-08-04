@@ -130,7 +130,10 @@ tt_broadcast() {
     shift
     for s in "$@"; do
         [ -n "$s" ] || continue
-        case "$s" in ─*) continue ;; esac
+        # 구분선 줄과 설정 행은 세션이 아니다 — 마지막 방어선이라 여기서도 턴다.
+        #   설정 행을 안 거르면 tt_is_agent 가 없는 세션에 tmux 를 두 번 묻고 실패한 뒤
+        #   "skipped 1 tool sessions: --settings--" 라는 사실과 다른 줄을 뱉는다.
+        case "$s" in ─*|"$TT_SETTINGS_ROW") continue ;; esac
         if ! tt_is_agent "$s"; then
             skipped=$((skipped + 1)); names="$names $s"; continue
         fi

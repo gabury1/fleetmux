@@ -34,6 +34,15 @@ SELF=$(tt_self)
 # 셸 문자열(fzf --bind·훅 커맨드)에 끼워 넣을 안전한 인용형 — 경로에 공백·따옴표가 있어도 안 깨진다
 SELFQ="'${SELF//\'/\'\\\'\'}'"
 
+# ── 설정 행 센티넬 ───────────────────────────────────────────────────────────
+# --list 맨 끝에 붙는 '⚙ settings' 행의 1번 필드(=이름 자리)다. 화면에 보이는 문자열과
+# 코드가 비교하는 문자열을 일부러 분리했다: 목록을 먹는 곳이 여섯 군데인데(--preview,
+# --do-broadcast, --do-rename, --do-kill, 브로드캐스트 대상 수집, 빈 목록 부트스트랩)
+# 전부 이 값을 문자열 그대로 비교한다. 이모지를 이름 자리에 쓰면 그 여섯 곳에서 유니코드
+# 바이트열을 정확히 맞춰야 하고, 한 곳만 어긋나도 tmux 가 없는 세션을 찾아 헤맨다.
+# 한 곳에 두는 이유도 같다 — 리터럴을 여섯 번 베껴 쓰면 언젠가 한 번 오타가 난다.
+TT_SETTINGS_ROW='--settings--'
+
 # ── 설정 ────────────────────────────────────────────────────────────────────
 # 우선순위: 환경변수 > 설정 파일 > 코드 기본값.
 #
@@ -436,7 +445,10 @@ tt_broadcast() {
     shift
     for s in "$@"; do
         [ -n "$s" ] || continue
-        case "$s" in ─*) continue ;; esac
+        # 구분선 줄과 설정 행은 세션이 아니다 — 마지막 방어선이라 여기서도 턴다.
+        #   설정 행을 안 거르면 tt_is_agent 가 없는 세션에 tmux 를 두 번 묻고 실패한 뒤
+        #   "skipped 1 tool sessions: --settings--" 라는 사실과 다른 줄을 뱉는다.
+        case "$s" in ─*|"$TT_SETTINGS_ROW") continue ;; esac
         if ! tt_is_agent "$s"; then
             skipped=$((skipped + 1)); names="$names $s"; continue
         fi
@@ -1704,7 +1716,17 @@ if [ "${1:-}" = "--list" ]; then
             else
                 printf '%s\t\033[2m%s\033[0m \033[36m%s\033[0m %s %s %s\n' "$name" "$name" "$attached" "$mark" "$umark" "$rcmark"
             fi
-        done
+        done || true
+    # 설정 행 — 항상 목록 맨 끝의 한 줄.
+    #   위 파이프라인 *밖*에 둔다. 안에 끼워 넣으면 중간 포맷(grp\tunread\tts\tsid\tattached\tname)의
+    #   필드 수가 안 맞아 sort 키와 두 번째 while 의 read 가 통째로 밀린다.
+    #   파이프라인에 `|| true` 를 붙인 이유: tmux 서버가 없으면 tmux ls 가 죽고 pipefail 이
+    #   그걸 그대로 물려받아 set -e 가 여기까지 오기 전에 스크립트를 끝낸다 — 그러면 세션이
+    #   0개일 때 설정 행도 같이 사라진다. 목록이 비었을 때야말로 설정으로 갈 문이 필요하다.
+    #   1번 필드가 ASCII '--settings--' 인 이유: 이 값은 --preview·브로드캐스트·부트스트랩
+    #   판정에서 문자열 그대로 비교된다. 표시용 이모지를 그 자리에 쓰면 비교하는 곳마다
+    #   유니코드 바이트열을 정확히 맞춰야 한다 — 보이는 것과 비교하는 것을 분리한다.
+    printf '%s\t%s\n' "$TT_SETTINGS_ROW" $'\033[2m⚙ settings\033[0m'
     exit 0
 fi
 
@@ -1832,6 +1854,143 @@ if [ "${1:-}" = "config" ]; then
             echo "usage: tt config [list|get|source|set|unset|path]" >&2; exit 1 ;;
     esac
 fi
+# ── 팝업 안 설정 화면 ────────────────────────────────────────────────────────
+# 팝업을 벗어나지 않고 설정을 바꾼다. 진입로는 둘 — 팝업의 ^O, 그리고 목록 맨 끝의 ⚙ 행.
+#
+# 한 줄의 모양은 --list 와 똑같이 "<키>\t<사람이 보는 표시>" 다. fzf 가 --with-nth 로 1번
+# 필드를 감추고, 우리는 {1} 대신 고른 줄의 탭 앞을 직접 잘라 쓴다(--list 와 같은 규율).
+
+# 불린 키 — Enter 로 즉시 뒤집을 수 있는 키. 나머지는 값을 입력받아야 한다.
+#   목록은 tt_conf_validate 의 불린 분기(85-config-cli.sh)와 반드시 같아야 한다.
+tt_conf_is_bool() {
+    case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore) return 0 ;; *) return 1 ;; esac
+}
+
+# 이 키가 실제 동작에 물려 있나 — "(미배선)" 표시의 근거다.
+#   거짓말하는 토글을 주지 않기 위한 장치다: 켜고 꺼도 아무 일이 안 일어나는 키를 아무 표시
+#   없이 늘어놓으면, 사용자는 자기가 끈 기능이 꺼진 줄 안다. 그건 설정 화면이 할 수 있는
+#   가장 나쁜 거짓말이다.
+#   여기 적힌 세 키는 60-rc.sh:83/164/173 · 70-fleet.sh:29/346 이 tt_conf_on 으로 실제 판정한다.
+#   ★ 새 키를 코드에 물릴 때 이 목록에 같이 넣어라. 안 넣으면 표시가 거짓이 된다.
+tt_conf_wired() {
+    case "${1:-}" in rc|snapshot|boot_restore) return 0 ;; *) return 1 ;; esac
+}
+
+# 한 줄 설명. 괄호를 피한다 — 이 문자열이 언젠가 fzf --bind 의 execute/reload 인자 안으로
+# 들어가면 닫는 괄호가 바인딩을 잘라먹는다(80-view.sh:58 과 같은 이유).
+tt_conf_desc() {
+    case "${1:-}" in
+        rc)               printf '원격제어 링크 자동복구' ;;
+        snapshot)         printf '팝업·크론마다 함대 기록' ;;
+        snapshot_on_exit) printf '떠날 때 함대 기록' ;;
+        boot_restore)     printf '부팅 시 자동 복원' ;;
+        recent_hours)     printf '이름을 굵게 쓰는 기준 시간' ;;
+        unseen_minutes)   printf '상태바 ✓ 유지 분' ;;
+        accent)           printf '강조색 256색 번호' ;;
+        log_max)          printf '훅 로그 회전 임계 바이트' ;;
+        key_new)          printf '팝업 키 — 새 세션' ;;
+        key_rename)       printf '팝업 키 — 이름 변경' ;;
+        key_kill)         printf '팝업 키 — 세션 삭제' ;;
+        key_reload)       printf '팝업 키 — 목록 갱신' ;;
+        key_detach)       printf '팝업 키 — tmux 탈출' ;;
+        key_broadcast)    printf '팝업 키 — 브로드캐스트' ;;
+        key_help)         printf '팝업 키 — 도움말' ;;
+        key_settings)     printf '팝업 키 — 이 설정 화면' ;;
+        key_summon)       printf 'tmux 소환키 — prefix 뒤' ;;
+        key_summon_fast)  printf 'tmux 소환키 — 무prefix, 공백으로 여러 개' ;;
+        *)                printf '' ;;
+    esac
+}
+
+# 설정 화면 한 판: 한 번 그리고 한 번 고른다.
+#   rc 1 로 돌아오면 호출자가 루프를 끝낸다(Esc/← = 세션 목록으로).
+#   목록은 매번 자식 프로세스로 새로 뽑는다 — 방금 바꾼 값이 그 자리에서 보여야 하는데,
+#   이 프로세스의 tt_conf_load 캐시는 시작 시점의 파일에 멈춰 있기 때문이다.
+tt_conf_view_once() {
+    local line k rc nv
+    line=$("$SELF" --config-list \
+        | fzf --ansi --reverse --cycle --info=hidden --prompt='설정 ❯ ' --pointer='▶' \
+              --delimiter=$'\t' --with-nth='2..' \
+              --header='Enter 바꾸기    Esc·← 세션 목록으로' \
+              --color='pointer:#4ec9b0,prompt:#4ec9b0,hl:#56b6c2,hl+:#56b6c2,bg+:#18221e,fg+:regular,header:#4a5a52,border:#4a5a52,label:#4ec9b0' \
+              --bind 'left:abort' \
+              --bind 'esc:abort') || return 1
+    k=${line%%$'\t'*}
+    [ -n "$k" ] || return 1
+    rc=0
+    "$SELF" --config-toggle "$k" || rc=$?
+    [ "$rc" = 0 ] && return 0            # 불린이었다 — 뒤집어 저장했다. 다시 그린다.
+    if [ "$rc" != 2 ]; then               # 토글 자체를 거절했다(사유는 이미 stderr 로 나갔다)
+        printf '  아무 키나 누르면 돌아간다' >/dev/tty
+        read -rsn1 </dev/tty 2>/dev/null || true
+        return 0
+    fi
+    # rc 2 = 불린이 아니다 → 값을 입력받는다. 검증은 tt config set 에 그대로 맡긴다.
+    printf '\n%s 의 새 값 — 지금은 %s. 그냥 Enter 면 안 바꾼다: ' \
+        "$k" "$("$SELF" config get "$k")" >/dev/tty
+    IFS= read -r nv </dev/tty || return 0
+    [ -n "$nv" ] || return 0
+    if ! "$SELF" config set "$k" "$nv" >/dev/tty 2>&1; then
+        printf '  거절됐다 — 값은 그대로 둔다. 아무 키나 누르면 돌아간다' >/dev/tty
+        read -rsn1 </dev/tty 2>/dev/null || true
+    fi
+    return 0
+}
+
+# 설정 화면용 목록. 한 줄 = "<키>\t<표시>".
+if [ "${1:-}" = "--config-list" ]; then
+    # 계약(05-config.sh:53): 아래 루프는 키마다 tt_conf_get/tt_conf_source 를 $(...) 로 부른다 —
+    # 전부 서브셸이라, 여기서 맨 statement 로 한 번 태워두지 않으면 깨진 설정 줄 하나가
+    # 키 개수만큼 경고를 반복한다. 이 목록은 화면을 다시 그릴 때마다 도는 경로다.
+    tt_conf_load
+    for k in $TT_CONF_KEYS; do
+        v=$(tt_conf_get "$k")
+        # 빈 값도 유효한 값이다(key_summon_fast 의 기본값이 그렇다) — 자리를 비워두면 열이
+        # 무너지니 '-' 로 채운다. 폭 맞춤은 %-16s 라 ASCII 로 써야 한다.
+        [ -n "$v" ] || v='-'
+        # env 로 고정된 키는 파일에 뭘 써도 안 먹는다 — 그 사실을 값 옆에 붙인다.
+        [ "$(tt_conf_source "$k")" = env ] && v="$v @env"
+        d=$(tt_conf_desc "$k")
+        if tt_conf_wired "$k"; then
+            printf '%s\t%-18s %-16s %s\n' "$k" "$k" "$v" "$d"
+        else
+            printf '%s\t%-18s %-16s \033[2m미배선 · %s\033[0m\n' "$k" "$k" "$v" "$d"
+        fi
+    done
+    exit 0
+fi
+
+# 불린이면 뒤집어 저장하고 rc 0. 불린이 아니면 rc 2 — "호출자가 값을 입력받아라"는 신호다.
+# 그 밖의 거절(모르는 키·env 고정)은 rc 1 이고 사유가 stderr 로 나간다.
+if [ "${1:-}" = "--config-toggle" ]; then
+    tt_conf_load
+    k="${2:-}"
+    tt_conf_default "$k" >/dev/null 2>&1 || { echo "모르는 키: $k" >&2; exit 1; }
+    # env 가 이기는 키는 파일에 뭘 써도 값이 안 바뀐다 — 딱 그 "거짓말하는 토글"이라 막는다.
+    #   불린 판정보다 먼저다: 값을 입력받는 키도 마찬가지로 안 먹으니, 입력을 받아놓고
+    #   버리느니 애초에 묻지 않는 게 맞다.
+    #   log_max 가 지금 항상 여기 걸린다 — 10-util.sh:21 이 TT_LOG_MAX 를 스스로 세우기
+    #   때문이다. 그 키를 tt_conf_get 경유로 바꾸는 순간(임계값 배선) 여기서 풀린다.
+    if [ "$(tt_conf_source "$k")" = env ]; then
+        echo "$k 는 환경변수 $(tt_conf_envname "$k") 가 이긴다 — 설정 파일에 써도 안 먹는다" >&2
+        exit 1
+    fi
+    tt_conf_is_bool "$k" || exit 2
+    if tt_conf_on "$k"; then nv=off; else nv=on; fi
+    # 검증·쓰기를 이 프로세스에서 직접 한다(85-config-cli.sh 의 함수들). `$SELF config set` 으로
+    # 포크하면 그 자식이 설정 파일을 한 번 더 파싱해, 깨진 줄 하나가 토글 한 번에 경고 두 번이 된다.
+    tt_conf_validate "$k" "$nv" || exit 1
+    tt_conf_write "$k" "$nv" set || exit 1
+    exit 0
+fi
+
+# 설정 화면. 한 판씩 돌다가 Esc/← 로 빠져나온다.
+if [ "${1:-}" = "--config-view" ]; then
+    while :; do
+        tt_conf_view_once || break
+    done
+    exit 0
+fi
 # 입력 프롬프트: Esc=취소(rc 1) · Enter=확정 · 백스페이스 지원 — read는 Esc 취소가 안 돼서 자작
 tt_prompt() {
     local p="$1" s="" c
@@ -1886,6 +2045,16 @@ fi
 # 브로드캐스트 (팝업 ^B): 선택 세션들에게 프롬프트 일괄 주입 (도구 세션은 tt_broadcast가 걸러낸다)
 if [ "${1:-}" = "--do-broadcast" ]; then
     shift
+    # ^B 는 fzf {+1} 을 그대로 넘긴다 — Tab 으로 설정 행까지 찍혀 있으면 그것도 섞여 온다.
+    # tt_broadcast 안에도 같은 가드가 있지만 여기서 먼저 턴다: 안 그러면 아래 "targets:" 줄이
+    # 존재하지도 않는 세션 이름을 사용자에게 보여주고, 하나만 찍은 경우 프롬프트까지 물어본 뒤
+    # 아무 데도 안 보내는 헛걸음이 된다.
+    bargs=()
+    for a in "$@"; do
+        case "$a" in "$TT_SETTINGS_ROW") continue ;; esac
+        bargs+=("$a")
+    done
+    set -- ${bargs[@]+"${bargs[@]}"}
     [ $# -ge 1 ] || exit 0
     echo "targets: $*"
     m=$(tt_prompt "broadcast prompt (Esc to cancel): ") || exit 0
@@ -1902,6 +2071,10 @@ fi
 #   별도 서브커맨드로 뺀 이유: fzf --preview 문자열 안에서 인용을 겹치지 않아도 된다.
 if [ "${1:-}" = "--preview" ]; then
     n="${2:-}"; [ -n "$n" ] || exit 0
+    # 설정 행 위에 커서가 얹히면 tmux 화면 대신 지금 설정을 보여준다. 가드가 없으면
+    # capture-pane 이 없는 타깃을 찾다 실패하고 프리뷰 창이 그냥 텅 빈다 — 크래시가 없어서
+    # 더 나쁘다. 무엇을 볼 창인지 모른 채 빈 화면만 보게 된다.
+    if [ "$n" = "$TT_SETTINGS_ROW" ]; then "$SELF" config list; exit 0; fi
     lines="${FZF_PREVIEW_LINES:-40}"                       # fzf가 프리뷰 창 높이를 넣어준다
     case "$lines" in ''|*[!0-9]*) lines=40 ;; esac
     tmux capture-pane -ep -t "=$n:" 2>/dev/null | awk -v n="$lines" '
@@ -1920,6 +2093,10 @@ fi
 #   -t 접두 매칭으로 같은 접두의 다른 세션이 죽을 수 있었다 — 이름을 인자 하나로 받는다
 if [ "${1:-}" = "--do-kill" ]; then
     n="${2:-}"; [ -n "$n" ] || exit 0
+    # 설정 행에 커서를 둔 채 ^X — "설정을 죽이나?" 하는 프롬프트를 띄우느니 그냥 말한다.
+    if [ "$n" = "$TT_SETTINGS_ROW" ]; then
+        echo "설정 행은 세션이 아니다 — Enter 로 설정 화면을 연다"; sleep 1; exit 0
+    fi
     read -rp "kill $n? [y/N] " a </dev/tty || exit 0
     [ "$a" = y ] && tmux kill-session -t "=$n"
     exit 0
@@ -1928,6 +2105,9 @@ fi
 # 세션 개명 (팝업 ^E): 검증 → tmux 개명 → Claude 세션이면 /rename도 주입해 제목 동기화
 if [ "${1:-}" = "--do-rename" ]; then
     old="${2:-}"; [ -n "$old" ] || exit 0
+    if [ "$old" = "$TT_SETTINGS_ROW" ]; then
+        echo "설정 행은 세션이 아니다 — Enter 로 설정 화면을 연다"; sleep 1; exit 0
+    fi
     n=$(tt_prompt "rename $old to (Esc to cancel): ") || exit 0
     [ -n "$n" ] || exit 0
     printf %s "$n" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
@@ -2012,6 +2192,12 @@ if [ "${1:-}" = "--help" ]; then
   ${T}manage${R}
     ^N  new session     ^E  rename     ^X  kill     ^R  refresh
 
+  ${T}settings${R}
+    ^O  open settings — or pick the ${D}⚙ settings${R} row at the bottom of the list
+    Enter flips a switch on the spot; number/text keys ask for a value and validate it
+    ${D}rows marked 미배선 are not wired to any behaviour yet — the toggle would be a lie${R}
+    tt config list   ${D}the same table from the shell; tt config path shows the file${R}
+
   ${T}broadcast${R}
     Tab-mark multiple sessions, then Enter — send one prompt to all
     ${D}tool sessions are skipped — a prompt typed into a shell or TUI runs as a command${R}
@@ -2059,7 +2245,10 @@ export TT_CUR="$CUR"
 ( "$SELF" --snapshot >/dev/null 2>&1 & ) 2>/dev/null || true
 
 # 빈 상태 부트스트랩: 갈 세션이 하나도 없으면 만들어서 바로 진입 — tt가 tmux의 정문
-if [ -z "$("$SELF" --list)" ]; then
+#   설정 행은 무조건 한 줄 붙으니 --list 는 이제 절대 빈 문자열이 될 수 없다. 그대로 두면
+#   이 판정이 영영 거짓이 되어, 진짜로 세션이 0개인 함대에서도 온보딩 프롬프트 대신 '⚙ settings'
+#   한 줄짜리 피커가 뜬다 — 만들 세션이 없는데 만들 방법도 안 알려주는 화면이다. 그래서 뺀다.
+if [ -z "$("$SELF" --list | grep -v "^$TT_SETTINGS_ROW"$'\t' || true)" ]; then
     read -rp "no sessions yet. name for a new one: " n </dev/tty || exit 0
     [ -n "$n" ] || exit 0
     if [ -n "${TMUX:-}" ]; then
@@ -2073,6 +2262,7 @@ fi
 # --delimiter/--with-nth: 1번 필드(순수 이름)는 감추고 2번 필드(색칠된 표시줄)만 보여준다.
 #   그래서 {1}·{+1}은 공백이 들어간 이름도 잘리지 않은 채로 tt에 전달된다.
 # 프리뷰는 tail — 중요한 건 화면 하단(입력창·스피너·승인 프롬프트)인데 전체를 흘려보내면 잘린다.
+# ^O(설정 화면)는 아직 리터럴이다 — 단축키 재매핑(tt_key)이 들어오면 key_settings 를 여기로 문다.
 session=$("$SELF" --list \
     | fzf --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
           --delimiter=$'\t' --with-nth='2..' \
@@ -2088,10 +2278,21 @@ session=$("$SELF" --list \
           --bind "ctrl-n:execute($SELFQ --do-new </dev/tty >/dev/tty 2>&1)+clear-query+reload($SELFQ --list)" \
           --bind "ctrl-e:execute($SELFQ --do-rename {1} </dev/tty >/dev/tty 2>&1)+clear-query+reload($SELFQ --list)" \
           --bind "ctrl-x:execute($SELFQ --do-kill {1} </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)" \
-          --bind "ctrl-b:execute($SELFQ --do-broadcast {+1} </dev/tty >/dev/tty 2>&1)+deselect-all+clear-query") || exit 0
+          --bind "ctrl-b:execute($SELFQ --do-broadcast {+1} </dev/tty >/dev/tty 2>&1)+deselect-all+clear-query" \
+          --bind "ctrl-o:execute($SELFQ --config-view </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)") || exit 0
 
 session=$(printf '%s\n' "$session" | grep -v '^─' || true)   # 구분선 줄은 선택 불가 취급
 [ -z "$session" ] && exit 0
+
+# 설정 행을 골랐다 — 세션 진입 대신 설정 화면을 열고, 닫으면 목록으로 돌아온다.
+#   다중선택 카운트를 세기 *전*이어야 한다. 뒤에 두면 head -1 을 지나 tmux switch-client -t
+#   '=--settings--' 까지 흘러가고, 이 경로는 stderr 를 안 죽여서 tmux 에러가 화면에 그대로 찍힌다.
+#   여기 검사는 첫 줄만 본다 — 설정 행이 다른 세션과 함께 Tab 다중선택된 경우는 아래
+#   targets 수집 루프의 가드가 잡는다.
+if [ "${session%%$'\t'*}" = "$TT_SETTINGS_ROW" ]; then
+    "$SELF" --config-view
+    exec "$SELF" --from "$CUR"
+fi
 
 # Tab으로 2개 이상 찍고 Enter/→ = 브로드캐스트 (1개 이하 = 평소처럼 진입)
 count=$(printf '%s\n' "$session" | grep -c . || true)
@@ -2099,8 +2300,12 @@ if [ "${count:-0}" -ge 2 ]; then
     targets=()
     while IFS= read -r line; do
         [ -n "$line" ] || continue
+        # 설정 행에는 프롬프트를 보내지 않는다. grep -v '^─' 는 이걸 못 거른다 — 저건 줄이
+        # 박스드로잉 대시로 시작할 때만 걸리는 필터고, 설정 행은 '-' 로 시작한다.
+        case "${line%%$'\t'*}" in "$TT_SETTINGS_ROW") continue ;; esac
         targets+=("${line%%$'\t'*}")   # 탭 앞 = 순수 이름 (공백 안전)
     done <<< "$session"
+    [ "${#targets[@]}" -ge 1 ] || exit 0   # 걸러내고 나니 보낼 데가 없다 (bash 3.2: 빈 배열 + set -u 방어)
     printf 'targets: %s\n' "${targets[*]}"
     m=$(tt_prompt "broadcast prompt (Esc to cancel): ") || exit 0
     [ -n "$m" ] || exit 0

@@ -19,6 +19,7 @@
 #   70-fleet.sh    tt_conv_of·--snapshot·--forget·--restore
 #   80-view.sh     --list
 #   85-config-cli.sh 설정 CLI — 검증·원자적 쓰기·tt config 하위명령
+#   86-config-view.sh 팝업 안 설정 화면 — --config-list/--config-toggle/--config-view
 #   90-main.sh     tt_prompt·--do-*·--preview·--hooks-json·--codex-hooks·--help·진입점(fzf 팝업)
 #
 # 셔뱅은 00-header.sh 에만 있어야 한다 — 다른 파일에 넣으면 합친 결과 한가운데 셔뱅이 박힌다.
@@ -35,6 +36,7 @@ SRC = src/00-header.sh \
       src/70-fleet.sh \
       src/80-view.sh \
       src/85-config-cli.sh \
+      src/86-config-view.sh \
       src/90-main.sh
 
 OUT    = bin/fmux

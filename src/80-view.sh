@@ -210,7 +210,17 @@ if [ "${1:-}" = "--list" ]; then
             else
                 printf '%s\t\033[2m%s\033[0m \033[36m%s\033[0m %s %s %s\n' "$name" "$name" "$attached" "$mark" "$umark" "$rcmark"
             fi
-        done
+        done || true
+    # 설정 행 — 항상 목록 맨 끝의 한 줄.
+    #   위 파이프라인 *밖*에 둔다. 안에 끼워 넣으면 중간 포맷(grp\tunread\tts\tsid\tattached\tname)의
+    #   필드 수가 안 맞아 sort 키와 두 번째 while 의 read 가 통째로 밀린다.
+    #   파이프라인에 `|| true` 를 붙인 이유: tmux 서버가 없으면 tmux ls 가 죽고 pipefail 이
+    #   그걸 그대로 물려받아 set -e 가 여기까지 오기 전에 스크립트를 끝낸다 — 그러면 세션이
+    #   0개일 때 설정 행도 같이 사라진다. 목록이 비었을 때야말로 설정으로 갈 문이 필요하다.
+    #   1번 필드가 ASCII '--settings--' 인 이유: 이 값은 --preview·브로드캐스트·부트스트랩
+    #   판정에서 문자열 그대로 비교된다. 표시용 이모지를 그 자리에 쓰면 비교하는 곳마다
+    #   유니코드 바이트열을 정확히 맞춰야 한다 — 보이는 것과 비교하는 것을 분리한다.
+    printf '%s\t%s\n' "$TT_SETTINGS_ROW" $'\033[2m⚙ settings\033[0m'
     exit 0
 fi
 
