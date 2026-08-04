@@ -45,4 +45,16 @@ assert_contains "$out" "rc" "목록에 rc 가 있다"
 assert_contains "$out" "file" "목록이 출처를 보여준다"
 assert_contains "$out" "key_summon" "목록에 key_summon 이 있다"
 
+# ⑨ set 의 키 충돌 검사(tt_conf_validate 의 `for other in $TT_CONF_KEYS ...
+#    $(tt_conf_get "$other")`)도 키마다 서브셸을 포크한다 — 여기서도 malformed 줄이
+#    있으면 경고가 키 개수만큼 반복될 수 있었다. `config` 진입점 맨 위의 bare
+#    tt_conf_load 하나가 list 뿐 아니라 이 경로도 함께 지킨다.
+cat > "$CONF" <<'EOF'
+rc=off
+unknown_key=1
+EOF
+_warn=$("$TTBIN" config set key_new ctrl-t 2>&1 >/dev/null)
+_count=$(printf '%s\n' "$_warn" | grep -c "모르는 키: unknown_key")
+assert_eq "$_count" "1" "set 의 충돌 검사 루프도 경고는 한 번만"
+
 tt_test_done

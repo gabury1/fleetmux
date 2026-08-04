@@ -58,12 +58,18 @@ assert_eq "$("$TTBIN" config get rc)" "off" "'=' 없는 줄이 있어도 다른 
 
 # ⑦ 같은 프로세스에서 여러 키를 조회해도 경고는 한 번만 — 전엔 조회한 키 수만큼
 #    같은 경고가 반복됐다(고침 라운드 1, 지적 1). 개수를 직접 센다(존재만 보면 재발을 못 잡는다).
+#    `config get <key>` 는 키 하나만 받아 서브셸을 한 번만 포크하니 이 시나리오를 재현
+#    못 한다(고침 라운드 2 지적) — 실제로 키 개수만큼 서브셸을 포크하는 건 `config`
+#    (인자 없는 목록) 다. 85-config-cli.sh 의 list 분기가 TT_CONF_KEYS 를 훑으며
+#    `$(tt_conf_get "$k")`/`$(tt_conf_source "$k")` 를 키마다 새 서브셸로 부른다 — 그
+#    서브셸이 매번 TT_CONF_LOADED=0 을 새로 물려받으면 파일을 다시 파싱해 경고를 반복한다.
 cat > "$CONF" <<'EOF'
 rc=off
+accent=150
 unknown_key=1
 EOF
-_warn=$("$TTBIN" config get rc recent_hours key_summon accent 2>&1 >/dev/null)
+_warn=$("$TTBIN" config 2>&1 >/dev/null)
 _count=$(printf '%s\n' "$_warn" | grep -c "모르는 키: unknown_key")
-assert_eq "$_count" "1" "같은 프로세스에서 여러 키를 조회해도 경고는 한 번만"
+assert_eq "$_count" "1" "config 목록도 키마다 서브셸을 포크하지만 경고는 한 번만"
 
 tt_test_done
