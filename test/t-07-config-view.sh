@@ -240,5 +240,71 @@ if command -v setsid >/dev/null 2>&1; then
     assert_eq "$got" "no" "설정 행은 브로드캐스트 대상에서 빠진다"
 fi
 
+# ── ⑦ 센티넬은 예약 이름이다 — 세션을 만드는 문에서 미리 막는다 ────────────
+# 위 ④ 가드들은 "1번 필드가 --settings-- 면 세션이 아니다"로 판정한다. 그래서 진짜 세션이
+# 그 이름을 가지면 가드가 전부 그 세션을 오판한다 — 프리뷰는 설정표를 그리고 ^X·^E 는
+# "세션이 아니다"라며 거절해, tt 로는 죽일 수도 개명할 수도 없는 세션이 하나 생긴다.
+# 그래서 이름을 받는 문 셋(^N·^E·빈 목록 부트스트랩)에서 예약어를 막는다.
+#
+# 이 문 셋은 전부 /dev/tty 에서 읽는다(tt_prompt·read -rp) — 파이프로는 못 민다. 진짜 pty 를
+# 붙여 흉내낸다. script 의 문법이 리눅스(util-linux)와 맥(BSD)이 달라 둘 다 시도하고,
+# 어느 쪽도 안 되면 건너뛴다(setsid 와 같은 규율).
+#   가드가 깨졌을 때 프롬프트가 다음 입력을 계속 기다리면 pty 가 안 닫혀 영영 멈춘다.
+#   회귀가 make check 를 통째로 멎게 하는 건 실패로 떨어지는 것보다 나쁘다 — 그래서
+#   ① 가드가 없을 때도 끝까지 흘러갈 만큼 입력을 넉넉히 먹이고 ② timeout 이 있으면 덧씌운다.
+tt_pty() {                      # tt_pty <먹일입력> <명령문자열>
+    local run="$2"
+    command -v timeout >/dev/null 2>&1 && run="timeout 10 $run"
+    if [ "${TT_PTY:-}" = util-linux ]; then
+        printf '%s' "$1" | script -qec "$run" /dev/null 2>&1
+    else
+        printf '%s' "$1" | script -q /dev/null /usr/bin/env bash -c "$run" 2>&1
+    fi
+}
+TT_PTY=""
+if command -v script >/dev/null 2>&1; then
+    if printf 'x\n' | script -qec 'read -r c </dev/tty' /dev/null >/dev/null 2>&1; then
+        TT_PTY=util-linux
+    elif printf 'x\n' | script -q /dev/null /usr/bin/env bash -c 'read -r c </dev/tty' >/dev/null 2>&1; then
+        TT_PTY=bsd
+    fi
+fi
+
+if [ -n "$TT_PTY" ]; then
+    TTQ="'${TTBIN//\'/\'\\\'\'}'"
+
+    # (가) ^N 으로 예약어를 새 세션 이름으로 주면 거절하고 tmux 를 부르지 않는다
+    #      빈 줄을 하나 더 먹인다 — 가드가 깨졌을 때 뒤따르는 "시작 명령" 프롬프트가
+    #      입력을 기다리며 멈추지 않고 끝까지 흘러가 실패로 잡히게 하려는 것이다.
+    : > "$TT_TMUX_LOG"
+    out=$(tt_pty "$SENT"$'\n\n' "$TTQ --do-new") || true
+    assert_contains "$out" "예약 이름" "^N 은 예약 이름으로 세션을 만들지 않는다"
+    case "$(cat "$TT_TMUX_LOG")" in *new-session*) got=yes ;; *) got=no ;; esac
+    assert_eq "$got" "no" "거절했으니 tmux new-session 까지 가지 않는다"
+
+    # (나) 그렇다고 멀쩡한 이름까지 막으면 안 된다 — 가드가 과한지 반대편도 잰다
+    #      두 줄을 먹인다: 이름, 그리고 시작 명령(빈 줄 = 그냥 셸).
+    : > "$TT_TMUX_LOG"
+    tt_pty $'fmuxok1\n\n' "$TTQ --do-new" >/dev/null 2>&1 || true
+    case "$(cat "$TT_TMUX_LOG")" in *"new-session -d -s fmuxok1"*) got=yes ;; *) got=no ;; esac
+    assert_eq "$got" "yes" "멀쩡한 이름은 그대로 만들어진다"
+
+    # (다) ^E 로 예약어로 개명하는 것도 막는다 — 개명은 살아 있는 세션을 삼키는 경로다
+    : > "$TT_TMUX_LOG"
+    out=$(tt_pty "$SENT"$'\n' "$TTQ --do-rename fmuxcv1") || true
+    assert_contains "$out" "예약 이름" "^E 는 예약 이름으로 개명하지 않는다"
+    case "$(cat "$TT_TMUX_LOG")" in *rename-session*) got=yes ;; *) got=no ;; esac
+    assert_eq "$got" "no" "거절했으니 tmux rename-session 까지 가지 않는다"
+
+    # (라) 빈 목록 부트스트랩도 같은 문이다 — 첫 세션 이름을 여기서 받는다
+    : > "$TT_TMUX_LOG"
+    out=$(TT_FAKE_SESSION="" tt_pty "$SENT"$'\n' "$TTQ --from ''") || true
+    assert_contains "$out" "예약 이름" "부트스트랩도 예약 이름을 거절한다"
+    case "$(cat "$TT_TMUX_LOG")" in *new-session*) got=yes ;; *) got=no ;; esac
+    assert_eq "$got" "no" "그 자리에서 멈추고 세션을 만들지 않는다"
+else
+    printf '  --   pty 를 붙일 script 가 없다 — 예약 이름 가드는 건너뜀\n'
+fi
+
 export PATH="$REALPATH_SAVED"
 tt_test_done

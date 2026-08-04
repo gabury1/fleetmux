@@ -26,6 +26,10 @@ if [ "${1:-}" = "--do-new" ]; then
     [ -n "$n" ] || exit 0
     printf %s "$n" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
         || { echo "broken bytes in name (IME mid-composition?) — retry in English mode"; sleep 2; exit 0; }
+    if tt_name_reserved "$n"; then
+        echo "'$n' 은 설정 행이 쓰는 예약 이름이다 — 그 이름으로 만들면 tt 로 지울 수 없다"
+        sleep 2; exit 0
+    fi
     cmd=$(tt_prompt "start command (empty = plain shell, e.g. claude): ") || exit 0
     tmux new-session -d -s "$n" || exit 0
     if [ -n "$cmd" ]; then
@@ -119,6 +123,10 @@ if [ "${1:-}" = "--do-rename" ]; then
     [ -n "$n" ] || exit 0
     printf %s "$n" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
         || { echo "broken bytes in name (IME mid-composition?) — retry in English mode"; sleep 2; exit 0; }
+    if tt_name_reserved "$n"; then
+        echo "'$n' 은 설정 행이 쓰는 예약 이름이다 — 그 이름으로 바꾸면 tt 로 되돌릴 수 없다"
+        sleep 2; exit 0
+    fi
     tmux rename-session -t "=$old" "$n" || exit 0
     tt_mf_rename "$old" "$n" || true   # 대장의 키도 따라간다 — 안 그러면 복원 때 옛 이름이 부활한다
     # /rename 주입은 claude 전용 — codex엔 해당 슬래시 명령이 없다 (활성 pane이 정확히 claude일 때만)
@@ -258,6 +266,9 @@ export TT_CUR="$CUR"
 if [ -z "$("$SELF" --list | grep -v "^$TT_SETTINGS_ROW"$'\t' || true)" ]; then
     read -rp "no sessions yet. name for a new one: " n </dev/tty || exit 0
     [ -n "$n" ] || exit 0
+    if tt_name_reserved "$n"; then
+        echo "'$n' 은 설정 행이 쓰는 예약 이름이다 — 다른 이름으로 다시 열어라"; exit 0
+    fi
     if [ -n "${TMUX:-}" ]; then
         tmux new-session -d -s "$n"
         exec tmux switch-client -t "=$n"
