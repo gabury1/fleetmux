@@ -209,4 +209,31 @@ case "$out" in *미배선*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "배선 근거를 못 얻으면 미배선 표시를 아예 안 붙인다"
 assert_contains "$out" "key_new" "그래도 표 자체는 정상으로 나온다"
 
+# ── ⑥ --help 첫 화면은 지금 이 기계의 설정을 말한다 (게이트 B7) ─────────────
+# installer 가 마지막에 "tt --help 가 전부 설명한다"로 팀원을 보낸다 — 설치 직후 가장 먼저
+# 읽는 화면이다. 예전엔 여기가 Option+← 와 6h/10 min 을 하드코딩했다. 기본값은 무prefix 키를
+# 하나도 안 걸므로(key_summon_fast 가 빈 값) 그 첫 줄은 **없는 키를 가르치는 거짓말**이었다.
+: > "$CONF"
+h=$("$TTBIN" --help 2>/dev/null)
+assert_eq "$(printf '%s' "$h" | grep -c 'Option+←' || true)" "0" "안 걸린 키를 가르치지 않는다"
+assert_contains "$h" "prefix + F"          "기본 소환키를 설정에서 읽어 보여준다"
+assert_contains "$h" "no prefix-less key"  "무prefix 키가 없으면 없다고 말한다"
+assert_contains "$h" "key_summon_fast"     "켜는 방법을 그 자리에 적는다"
+assert_contains "$h" "talked within 6h"    "기본 recent_hours 를 읽어 쓴다"
+assert_contains "$h" "or 10 min"           "기본 unseen_minutes 를 읽어 쓴다"
+
+printf 'key_summon=T\nkey_summon_fast=C-Left M-Left\nrecent_hours=3\nunseen_minutes=45\n' > "$CONF"
+h=$("$TTBIN" --help 2>/dev/null)
+assert_contains "$h" "prefix + T"      "바꾼 key_summon 이 화면에 나온다"
+assert_contains "$h" "C-Left M-Left"   "바꾼 key_summon_fast 가 화면에 나온다"
+assert_eq "$(printf '%s' "$h" | grep -c 'no prefix-less key' || true)" "0" "걸렸으면 없다고 안 한다"
+assert_contains "$h" "talked within 3h" "바꾼 recent_hours 가 화면에 나온다"
+assert_contains "$h" "or 45 min"        "바꾼 unseen_minutes 가 화면에 나온다"
+assert_eq "$(printf '%s' "$h" | grep -c 'talked within 6h' || true)" "0" "옛 하드코딩 값이 남아 있지 않다"
+
+# 소환키를 아예 다 비운 사람에게도 정직해야 한다
+printf 'key_summon=\nkey_summon_fast=\n' > "$CONF"
+h=$("$TTBIN" --help 2>/dev/null)
+assert_contains "$h" "key_summon is empty" "prefix 키까지 비면 그 사실을 말한다"
+
 tt_test_done

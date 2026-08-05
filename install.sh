@@ -413,51 +413,97 @@ pick_tmux_conf() {
 }
 
 # 이미 source 하고 있나 — 주석 줄은 세지 않는다.
+#   판정은 **줄 앞머리 한정 + 인자 정확 일치**여야 한다. 예전엔 `*source*<경로>*` 부분일치라,
+#   개행 없이 끝난 파일에 append 해 깨진 줄("set -g mouse onsource-file …")까지 "이미 설정됨"
+#   으로 통과시켰다 — 재실행이 자가치유를 못 하고 파손이 영구히 가려졌다(게이트 B2).
+#   fmux 쪽 판정(87-tmux-conf.sh 의 tt_tmux_conf_linked)과 같은 규칙이어야 한다.
 already_sourced() {   # $1=설정파일  $2=스니펫경로
-    local line
+    local line rest
     [ -r "$1" ] || return 1
     while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in ''|'#'*) continue ;; esac
-        case "$line" in *source*"$2"*) return 0 ;; esac
+        while :; do case "$line" in [[:blank:]]*) line=${line#?} ;; *) break ;; esac; done
+        case "$line" in
+            'source-file '*) rest=${line#source-file } ;;
+            'source '*)      rest=${line#source } ;;
+            *) continue ;;
+        esac
+        # 앞의 플래그(-q 등)를 걷고, 뒤 공백·인용부호를 벗긴 뒤 정확히 비교한다.
+        # 낱말 분해로 돌지 않는 이유: 남의 설정 줄에 있는 * 가 파일명으로 펴진다.
+        while :; do case "$rest" in '-'*' '*) rest=${rest#* } ;; *) break ;; esac; done
+        while :; do case "$rest" in *[[:blank:]]) rest=${rest%?} ;; *) break ;; esac; done
+        case "$rest" in '"'*'"'|"'"*"'") rest=${rest#?}; rest=${rest%?} ;; esac
+        [ "$rest" = "$2" ] && return 0
     done < "$1"
     return 1
 }
 
+# 남의 파일에 한 줄 붙이는 유일한 자리 — 여기만큼은 과하게 조심한다(게이트 B1).
+#   ① 고치기 전에 원본을 통째로 백업하고 그 경로를 사람에게 말한다.
+#   ② 마지막 바이트가 개행이 아니면 개행부터 넣는다. `>>` 만 쓰면 사용자의 마지막 줄에
+#      우리 줄이 그대로 이어붙어 그 줄이 파괴된다(그리고 rc 0 "성공"으로 보고된다).
+#   `tail -c 1` 은 POSIX 다(GNU 전용 아님). 명령치환은 끝의 개행을 지우므로,
+#   결과가 비어 있으면 마지막 바이트가 개행이라는 뜻이다.
+append_source_line() {   # $1=설정파일  $2=스니펫경로  → rc 0 이면 넣었다
+    local f="$1" snip="$2" last
+    if [ -s "$f" ]; then
+        cp "$f" "$f.fmux-bak" || { warn "$f 를 백업하지 못했다 — 아무것도 안 고친다"; return 1; }
+        ok "백업해 뒀다: $f.fmux-bak  (되돌리려면 이 파일을 되돌려 놓으면 된다)"
+        last=$(tail -c 1 "$f" 2>/dev/null) || last=''
+        if [ -n "$last" ]; then
+            note "$f 가 개행으로 끝나지 않는다 — 마지막 줄이 깨지지 않게 개행부터 넣는다"
+            printf '\n' >> "$f" || return 1
+        fi
+    fi
+    printf 'source-file %s\n' "$snip" >> "$f" || return 1
+    return 0
+}
+
+# 순서가 규율이다(게이트 B5): **동의 → 남의 파일 한 줄 → 우리 스니펫 쓰기**.
+#   예전엔 스니펫을 먼저 썼다. 그 write 는 tmux 안이면 살아있는 서버에 source-file 을 쏘므로,
+#   "넣을까요?" 를 묻기도 전에 이미 적용되고, n 을 눌러도 안내문은 "안 넣었다"고 말했다.
+#   지금은 fmux 쪽에도 게이트가 있다(tt_tmux_conf_linked) — 사용자 설정에 줄이 있을 때만
+#   반영한다. 그래서 이 순서면 "동의한 사람만 이번 서버에도 반영된다"가 양쪽에서 성립한다.
 install_snippet() {
     step 4/8 "tmux 스니펫"
-    SNIP=$(snip_path)
+    SNIP=$(snip_path)          # 파일을 안 쓰고 경로만 묻는다(--write 아님)
     TMUXCONF=$(pick_tmux_conf)
+    local linked=0 out
 
+    if already_sourced "$TMUXCONF" "$SNIP"; then
+        linked=1
+        ok "$TMUXCONF 가 이미 이 파일을 source 한다 — 아무것도 안 넣는다"
+    else
+        printf '  넣을 줄: source-file %s\n' "$SNIP"
+        printf '  넣을 곳: %s\n' "$TMUXCONF"
+        if ask_yn "$TMUXCONF 에 이 한 줄을 넣을까?"; then
+            if is_dry; then
+                plan "$TMUXCONF 를 $TMUXCONF.fmux-bak 로 백업한 뒤 source-file $SNIP 한 줄 추가"
+            else
+                append_source_line "$TMUXCONF" "$SNIP" || die "$TMUXCONF 에 못 썼다"
+                linked=1
+                did "$TMUXCONF 에 source-file 한 줄"
+                ok "$TMUXCONF 에 한 줄 넣었다"
+                note "이미 tmux 안이라면 prefix + : 로 'source-file $TMUXCONF' 를 한 번 쳐라(또는 새 tmux 서버)"
+            fi
+        else
+            note "안 넣었다. 위 한 줄을 직접 $TMUXCONF 에 넣으면 소환키가 산다."
+            note "  넣기 전까지는 우리 스니펫이 어떤 tmux 서버에도 반영되지 않는다 — 파일만 만들어 둔다."
+        fi
+    fi
+
+    # 이제 스니펫을 쓴다. 이 파일은 우리 것이라 동의 없이 만들어도 되지만, 살아있는 서버에
+    # 반영되는 것은 위에서 linked 가 된 사람뿐이다(fmux 안의 게이트가 같은 판정을 한다).
     if is_dry; then
         plan "$FMUX --tmux-conf --write   → $SNIP"
     else
-        local out
         out=$("$FMUX" --tmux-conf --write) || die "스니펫을 쓸 수 없다: $SNIP"
         [ -n "$out" ] && SNIP="$out"
         did "$SNIP (tmux 스니펫)"
         ok "$SNIP"
     fi
     note "이 파일은 fmux 것이다 — 소환키·떠날 때 스냅샷 훅이 들어 있고, 설정을 바꾸면 다시 쓰인다."
-
-    if already_sourced "$TMUXCONF" "$SNIP"; then
-        ok "$TMUXCONF 가 이미 이 파일을 source 한다 — 아무것도 안 넣는다"
-        return 0
-    fi
-
-    printf '  넣을 줄: source-file %s\n' "$SNIP"
-    printf '  넣을 곳: %s\n' "$TMUXCONF"
-    if ask_yn "$TMUXCONF 에 이 한 줄을 넣을까?"; then
-        if is_dry; then
-            plan "printf 'source-file %s\\n' >> $TMUXCONF"
-        else
-            printf 'source-file %s\n' "$SNIP" >> "$TMUXCONF" || die "$TMUXCONF 에 못 썼다"
-            did "$TMUXCONF 에 source-file 한 줄"
-            ok "$TMUXCONF 에 한 줄 넣었다"
-            note "이미 tmux 안이라면 prefix + : 로 'source-file $TMUXCONF' 를 한 번 쳐라(또는 새 tmux 서버)"
-        fi
-    else
-        note "안 넣었다. 위 한 줄을 직접 $TMUXCONF 에 넣으면 소환키가 산다."
-    fi
+    [ "$linked" = 1 ] || note "아직 아무 tmux 설정도 이 파일을 안 읽는다 — 소환키는 연결한 뒤에 산다."
+    return 0
 }
 
 # ── ⑤ 소환키 프리셋 ────────────────────────────────────────────────────────
@@ -565,11 +611,21 @@ install_skill() {
 
     if [ -e "$SKILL_DST" ]; then
         note "$SKILL_DST 가 이미 있다 → 덮어쓴다(우리가 넣은 파일만)"
+        note "  덮기 전에 $SKILL_DST.fmux-bak 로 통째로 백업한다"
     fi
     if ask_yn "에이전트 스킬을 $SKILL_DST 에 깔까?"; then
         if is_dry; then
             plan "mkdir -p $SKILL_DST && cp -R skills/fleetmux/. $SKILL_DST/"
         else
+            # 남의 파일을 되돌릴 수 없게 덮지 않는다 — 우리 이름과 같은 스킬을 이미 쓰던
+            # 사람에게 --yes 는 "제안된 기본값 수락"이지 "네 스킬을 버려라"가 아니다(권고 N1).
+            if [ -e "$SKILL_DST" ]; then
+                rm -rf "$SKILL_DST.fmux-bak"
+                cp -R "$SKILL_DST" "$SKILL_DST.fmux-bak" \
+                    || die "$SKILL_DST 를 백업하지 못했다 — 덮지 않고 멈춘다"
+                did "$SKILL_DST.fmux-bak (덮기 전 백업)"
+                ok "백업해 뒀다: $SKILL_DST.fmux-bak"
+            fi
             mkdir -p "$SKILL_DST" || die "$SKILL_DST 를 만들 수 없다"
             cp -R "$SKILL_SRC/." "$SKILL_DST/" || die "$SKILL_DST 로 못 복사했다"
             did "$SKILL_DST/"
@@ -622,6 +678,8 @@ summary() {
     printf "  %s 의 'source-file %s' 줄 삭제\n" "$TMUXCONF" "$SNIP"
     [ -n "$SKILL_DST" ] && printf '  rm -rf %s\n' "$SKILL_DST"
     printf '  crontab 에 넣은 줄이 있으면 crontab -e 로 직접 지운다\n'
+    printf '  ※ 위 줄을 그대로 치기 전에 그 자리에 네 파일이 섞여 있지 않은지 한 번 봐라.\n'
+    printf '    우리가 덮기 전에 남긴 백업은 전부 <원본>.fmux-bak 이다.\n'
 }
 
 # ── 본체 ────────────────────────────────────────────────────────────────────

@@ -171,6 +171,10 @@ if [ "${1:-}" = "--rc" ]; then
     # 표를 그리는 첫 tmux 호출(아래 while)보다 앞에서 나간다 — 자동복구를 끈 사람에게
     # rc 현황표는 "왜 전부 OFF 인가"만 되묻게 만드는 표다.
     tt_conf_on rc || { printf 'rc=off — 자동복구가 꺼져 있다 (tt config set rc on)\n'; exit 0; }
+    # rc 판정 전체가 /proc/<pid>/stat 에 매달려 있다(rc_procstart). /proc 이 없는 기계(macOS)
+    # 에서는 rc_target 이 항상 실패해 아래 표가 **전 행 '?'** 가 된다 — 고장이 아니라 미지원인데,
+    # 표만 보면 구분이 안 된다. 그 한 줄을 여기서 말한다(README 의 macOS 절과 같은 사실).
+    [ -d /proc ] || printf 'note: rc 자동복구는 /proc/<pid>/stat 이 필요하다 — 이 기계엔 /proc 이 없다(macOS 미지원). 아래는 전 행 ? 가 된다\n'
     printf '%-18s %-5s %s\n' SESSION RC URL
     while read -r sid name; do
         if ! t=$(rc_target "$sid"); then

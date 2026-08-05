@@ -199,13 +199,24 @@ if [ "${1:-}" = "--help" ]; then
     tt_conf_load
     acc=$(tt_conf_num accent 255)
     T=$'\033[38;5;'"$acc"'m'; D=$'\033[2m'; R=$'\033[0m'; B=$'\033[1m'
+    # 첫 화면은 **지금 이 기계의 설정**을 읽어서 말한다. 예전엔 Option+← 와 6h/10 min 이
+    # 하드코딩이었는데, 기본값은 무prefix 키를 하나도 안 걸므로(key_summon_fast 가 빈 값)
+    # 설치 직후 팀원이 가장 먼저 읽는 화면이 없는 키를 가르쳤다(팀 배포 게이트 B7).
+    hsum=$(tt_conf_get key_summon)
+    hfast=$(tt_conf_get key_summon_fast)
+    hrecent=$(tt_conf_num recent_hours)
+    hunseen=$(tt_conf_num unseen_minutes)
+    if [ -n "$hsum" ]; then hsummon="prefix + $hsum"; else hsummon="(key_summon is empty)"; fi
+    if [ -n "$hfast" ]; then hsummon="$hsummon  ·  $hfast  ${D}prefix-less${R}"
+    else hsummon="$hsummon  ${D}· no prefix-less key — tt config set key_summon_fast 'C-Left M-Left'${R}"
+    fi
     cat << EOF
 
   ${B}tt — tmux session manager${R}  ${D}works with claude & codex sessions${R}
 
   ${T}navigate${R}
-    →/Enter    enter session          ←/Esc    close
-    Option+←   summon from anywhere   ^D       detach tmux (back to shell)
+    →/Enter    enter session          ←/Esc    close    ^D  detach tmux (back to shell)
+    summon     $hsummon
 
   ${T}manage${R}
     ^N  new session     ^E  rename     ^X  kill     ^R  refresh
@@ -242,14 +253,14 @@ if [ "${1:-}" = "--help" ]; then
     ${D}manifest keeps 3 backup generations: manifest.bak .bak2 .bak3${R}
 
   ${T}reading the list${R}
-    ${B}bold name${R}   talked within 6h          ${D}dim name${R}   quiet session
+    ${B}bold name${R}   talked within ${hrecent}h          ${D}dim name${R}   quiet session
     ${T}teal name${R}   tool session (alphabetical, bottom)
     ● attached    ✻ working    ⏸ awaiting approval    ✓ unseen result
     ⊘ remote control dropped — retried every minute; ${B}red ⊘${R} = gave up after 3 tries
 
   ${T}status bar${R}
     ⏸n ✻n — fleet tally: sessions awaiting you / working right now
-    ✓name — finished while you were away. clears on visit or 10 min
+    ✓name — finished while you were away. clears on visit or ${hunseen} min
 
   ${T}korean IME tip${R}
     if keys after tmux prefix get eaten, keep holding Ctrl (^B ^D = detach)
@@ -278,7 +289,8 @@ export TT_CUR="$CUR"
 #   팝업(^O)으로 설정 화면을 보러 가면 정확히 이 경로다: 설정으로 갈 문이 그때 사라진다.
 #   그래서 CUR 이 있으면(= 우리가 어떤 세션 안에서 열렸다 = 세션 ≥ 1) 부트스트랩으로 안 샌다.
 #   세션이 0개일 때만 온보딩으로 가고, 그 외에는 설정 행만 남았더라도 피커를 띄운다.
-if [ -z "$CUR" ] && [ -z "$("$SELF" --list | grep -v "^$TT_SETTINGS_ROW"$'\t' || true)" ]; then
+mkdir -p "$STATE" 2>/dev/null || true    # 아래 두 곳이 --list 의 stderr 를 여기 흘린다
+if [ -z "$CUR" ] && [ -z "$("$SELF" --list 2>>"$STATE/hook.log" | grep -v "^$TT_SETTINGS_ROW"$'\t' || true)" ]; then
     read -rp "no sessions yet. name for a new one: " n </dev/tty || exit 0
     [ -n "$n" ] || exit 0
     if tt_name_reserved "$n"; then
@@ -296,7 +308,9 @@ fi
 #   그래서 {1}·{+1}은 공백이 들어간 이름도 잘리지 않은 채로 tt에 전달된다.
 # 프리뷰는 tail — 중요한 건 화면 하단(입력창·스피너·승인 프롬프트)인데 전체를 흘려보내면 잘린다.
 # ^O(설정 화면)는 아직 리터럴이다 — 단축키 재매핑(tt_key)이 들어오면 key_settings 를 여기로 문다.
-session=$("$SELF" --list \
+# 목록 생산자의 stderr 는 화면이 아니라 hook.log 로 간다 — 설정 파일에 깨진 줄이 있으면
+# 그 경고가 fzf 화면 위에 덧칠돼 관제탑을 못 읽게 만든다. 버리지 않는 이유는 86 과 같다(권고 N3).
+session=$("$SELF" --list 2>>"$STATE/hook.log" \
     | fzf --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
           --delimiter=$'\t' --with-nth='2..' \
           --footer='? help' \

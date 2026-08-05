@@ -2,7 +2,8 @@
 # fleetmux (tt) — AI 에이전트 함대를 위한 tmux 관제탑
 #   claude·codex 세션의 상태를 훅으로 추적하고, 골라 들어가고, 뿌리고, 되살린다
 #   →/Enter: 세션 진입   ←/Esc: 닫기   Ctrl-N: 새 세션   Ctrl-E: 이름변경   Ctrl-X: 삭제   Ctrl-R: 갱신   Ctrl-D: tmux 탈출
-#   tmux 안에서는 Option+← (M-b/M-Left) 로 팝업 소환 (.tmux.conf 바인딩)
+#   소환키는 설정에서 온다 — 기본은 prefix + F 하나뿐이고, 무prefix 키는 기본값이 비어 있다
+#   (아무 키도 안 뺏는다). tt config set key_summon_fast 로 켠다 — 87-tmux-conf.sh 가 스니펫에 박는다.
 set -euo pipefail
 export LC_ALL=en_US.UTF-8   # cron엔 로케일이 없음 — 유니코드 글리프 정규식 오작동 방지
 

@@ -57,4 +57,27 @@ _warn=$("$TTBIN" config set key_new ctrl-t 2>&1 >/dev/null)
 _count=$(printf '%s\n' "$_warn" | grep -c "모르는 키: unknown_key")
 assert_eq "$_count" "1" "set 의 충돌 검사 루프도 경고는 한 번만"
 
+# ⑩ 손으로 고친 무효값을 실효값처럼 보여주지 않는다 (권고 N4)
+# `tt config set` 은 무효값을 거절하지만 README 는 파일 손편집도 정상 경로로 안내한다.
+# 그 경로로 들어온 값은 소비자마다 다르게 접힌다 — 표가 그걸 안 밝히면 두 화면이 서로
+# 다른 진실을 말한다("설정엔 6h 라 적혀 있는데 왜 6시간으로 안 도나").
+cat > "$CONF" <<'EOF'
+recent_hours=6h
+rc=maybe
+key_summon=a/b
+EOF
+out=$("$TTBIN" config list 2>/dev/null)
+assert_contains "$out" "무효값" "무효값에 표시를 붙인다"
+assert_contains "$(printf '%s\n' "$out" | grep '^recent_hours ')" "기본값 6 로 돈다" \
+    "숫자 키는 기본값으로 접힌다고 말한다"
+assert_contains "$(printf '%s\n' "$out" | grep '^rc ')" "꺼짐으로 돈다" \
+    "불린 키는 꺼짐으로 접힌다고 말한다 — 기본값(on)으로 돌아가는 게 아니다"
+assert_contains "$(printf '%s\n' "$out" | grep '^key_summon ')" "스니펫에서 그 키는 빠진다" \
+    "소환키는 스니펫에서 빠진다고 말한다"
+# 성한 값에는 아무 표시도 안 붙는다 — 안 그러면 표시가 소음이 된다
+assert_eq "$(printf '%s\n' "$out" | grep -c '^snapshot .*무효값' || true)" "0" "멀쩡한 값에는 안 붙인다"
+: > "$CONF"
+assert_eq "$("$TTBIN" config list 2>/dev/null | grep -c '무효값' || true)" "0" \
+    "기본값만 있는 새 설치에는 무효값 표시가 하나도 없다"
+
 tt_test_done

@@ -109,6 +109,22 @@ tt_conf_validate() {
     return 0
 }
 
+# 손으로 고친 무효값의 "실제 동작"을 한 줄로. 유효하면 아무것도 안 찍는다.
+#   `tt config set` 은 무효값을 거절하지만 README:168 은 파일 손편집도 정상 경로로 안내한다 —
+#   그 경로로 들어온 값은 소비자마다 다르게 접힌다(숫자는 기본값으로, 불린은 꺼짐으로,
+#   소환키는 스니펫에서 빠짐). 표가 그 값을 실효값처럼 보여주면 두 화면이 서로 다른 진실을
+#   말하게 된다(권고 N4). 검증은 이미 있는 tt_conf_validate 를 그대로 쓰고 사유만 삼킨다.
+tt_conf_lie() {
+    tt_conf_validate "${1:-}" "${2:-}" 2>/dev/null && return 0
+    case "${1:-}" in
+        rc|snapshot|snapshot_on_exit|boot_restore)  printf '← 무효값 · 꺼짐으로 돈다' ;;
+        recent_hours|unseen_minutes|accent|log_max) printf '← 무효값 · 기본값 %s 로 돈다' "$(tt_conf_default "$1")" ;;
+        key_summon|key_summon_fast)                 printf '← 무효값 · 스니펫에서 그 키는 빠진다' ;;
+        *)                                          printf '← 무효값' ;;
+    esac
+    return 0
+}
+
 # 원자적 쓰기. 있는 줄은 값만 교체하고, 없으면 끝에 붙인다(주석·순서 보존).
 tt_conf_write() {
     local k="${1:-}" v="${2:-}" mode="${3:-set}" tmp line seen=0
@@ -157,17 +173,21 @@ if [ "${1:-}" = "config" ]; then
             # 팝업 설정화면과 같은 정직함이 여기에도 있어야 한다 — CLI 만 보고 설정하는
             # 사람이 "저장됐다"는 말만 듣고 안 도는 기능을 켠 줄 알면 안 된다.
             printf '%-18s %-14s %s\n' 'KEY' 'VALUE' 'SOURCE'
-            unwired=0
+            unwired=0; bogus=0
             for k in $TT_CONF_KEYS; do
+                v=$(tt_conf_get "$k")
+                lie=$(tt_conf_lie "$k" "$v")
+                [ -n "$lie" ] && bogus=1
+                [ -z "$lie" ] || lie=" $lie"
                 if tt_conf_wired "$k"; then
-                    printf '%-18s %-14s %s\n' "$k" "$(tt_conf_get "$k")" "$(tt_conf_source "$k")"
+                    printf '%-18s %-14s %s%s\n' "$k" "$v" "$(tt_conf_source "$k")" "$lie"
                 else
                     unwired=1
-                    printf '%-18s %-14s %-9s%s\n' "$k" "$(tt_conf_get "$k")" "$(tt_conf_source "$k")" \
-                        '← 미배선'
+                    printf '%-18s %-14s %-9s%s%s\n' "$k" "$v" "$(tt_conf_source "$k")" '← 미배선' "$lie"
                 fi
             done
             [ "$unwired" = 1 ] && printf '\n미배선 = 값은 저장되지만 아직 아무 코드도 그 값을 읽지 않는다 — 바꿔도 동작은 그대로다.\n'
+            [ "$bogus" = 1 ] && printf '무효값 = 파일에 저장은 돼 있지만 코드가 못 쓰는 값이다 — 위에 적힌 대로 접혀서 돈다.\n'
             exit 0 ;;
         get|source)
             [ -n "${3:-}" ] || { echo "usage: tt config $2 <key>" >&2; exit 1; }

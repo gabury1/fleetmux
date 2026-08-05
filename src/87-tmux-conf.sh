@@ -6,22 +6,21 @@
 #  그 편집이 한 번이라도 어긋나면 사용자의 tmux 가 안 뜬다 — 그 위험을 아예 안 진다.)
 TT_TMUX_CONF="$TT_CONF_DIR/tmux.conf"
 
-# 이전 판이 걸어둔 무prefix 바인딩을 걷어내기 위한 후보 목록.
+# 걷어낼 무prefix 키 목록을 stdout 에(공백 구분, 중복 제거).
 # tmux 는 "설정에 없으면 알아서 사라지는" 모델이 아니다 — 한 번 bind 하면 서버가 죽을
 # 때까지 남는다. 그래서 설정에서 키를 지워도, unbind 를 같이 내지 않으면 지운 키가 계속 산다.
 #
-# 물리 키 하나가 터미널마다 다른 바이트로 온다. macOS 의 Option+← 는 Ghostty 가
-# macos-option-as-alt 여도 ESC b 를 보내 M-b 로 도착한다 — 그래서 key_summon_fast 는
-# 값 하나가 아니라 공백으로 나눈 목록이고, 이 후보 목록도 같은 물리 키의 이형을 함께 담는다.
-TT_TMUX_UNBIND_CANDIDATES='C-Left M-Left M-b C-Right M-Right M-f'
-
-# 걷어낼 무prefix 키 목록을 stdout 에(공백 구분, 중복 제거).
-#   ① 코드가 아는 후보  ② 지금 걸 키(재적용을 멱등하게)  ③ 이전 판 스니펫에 실제로 남은 키
-# ③ 이 있어야 후보 목록 밖의 키를 사용자가 지웠을 때도 그 바인딩이 따라 죽는다.
+# 근거는 딱 둘이다 — 둘 다 "fmux 가 실제로 걸었던 키"다:
+#   ① 지금 걸 키(재적용을 멱등하게)  ② 이전 판 스니펫에 남아 있는 `bind -n` 줄
+# 예전엔 여기에 정적 후보 목록(C-Left M-Left M-b C-Right M-Right M-f)이 하나 더 있었다.
+# 그건 기본(safe) 프리셋 — 우리가 키를 하나도 안 건 상태 — 에서도 그 여섯 개를 unbind 해
+# **남이 걸어둔 바인딩을 우리가 지웠다**. README 의 "steals no key until you say so" 와
+# 정면으로 어긋나고, 사용자에게 고지된 적도 없다(팀 배포 게이트 B3). 우리가 안 건 키는
+# 우리 것이 아니다 — ② 가 있으므로 우리가 걸었던 키는 이름이 무엇이든 스스로 따라 죽는다.
 tt_tmux_conf_unbind_list() {
     local seen=' ' k line fast
     fast=$(tt_conf_get key_summon_fast)
-    for k in $TT_TMUX_UNBIND_CANDIDATES $fast; do
+    for k in $fast; do
         case "$seen" in *" $k "*) continue ;; esac
         tt_conf_is_tmux_key "$k" || continue
         seen="$seen$k "
@@ -92,7 +91,35 @@ tt_tmux_conf_render() {
     fi
 }
 
-# 스니펫을 원자적으로 쓴다. tmux 안이면 즉시 반영한다.
+# 사용자 설정이 이 스니펫을 실제로 source 하고 있나 — 살아있는 tmux 서버에 반영해도 되는지의
+# 유일한 근거다. "우리 파일을 쓴다"와 "남의 서버에 적용한다"는 서로 다른 동의다(팀 배포 게이트 B4).
+#   판정 규칙은 install.sh 의 already_sourced 와 같아야 한다: **줄 앞머리 한정 + 인자 정확 일치**.
+#   부분일치로 보면 주석 줄이나 개행 없이 이어붙어 깨진 줄("set -g mouse onsource-file …")까지
+#   "연결됨"이 된다. 후보 파일은 install.sh 의 pick_tmux_conf 와 같은 둘이다.
+tt_tmux_conf_linked() {
+    local f line rest
+    for f in "$HOME/.tmux.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"; do
+        [ -r "$f" ] || continue
+        while IFS= read -r line || [ -n "$line" ]; do
+            while :; do case "$line" in [[:blank:]]*) line=${line#?} ;; *) break ;; esac; done
+            case "$line" in
+                'source-file '*) rest=${line#source-file } ;;
+                'source '*)      rest=${line#source } ;;
+                *) continue ;;
+            esac
+            # 앞의 플래그(-q 등)를 걷고, 뒤 공백·인용부호를 벗긴 뒤 정확히 비교한다.
+            # 낱말 분해($rest 를 for 로 도는 것)는 안 쓴다 — 글롭이 켜진 셸에서 남의 설정
+            # 줄에 있는 * 가 파일명으로 펴진다.
+            while :; do case "$rest" in '-'*' '*) rest=${rest#* } ;; *) break ;; esac; done
+            while :; do case "$rest" in *[[:blank:]]) rest=${rest%?} ;; *) break ;; esac; done
+            case "$rest" in '"'*'"'|"'"*"'") rest=${rest#?}; rest=${rest%?} ;; esac
+            [ "$rest" = "$TT_TMUX_CONF" ] && return 0
+        done < "$f"
+    done
+    return 1
+}
+
+# 스니펫을 원자적으로 쓴다. 사용자가 이 파일을 자기 설정에 걸어뒀고 지금 tmux 안이면 즉시 반영한다.
 tt_tmux_conf_write() {
     local tmp
     mkdir -p "$TT_CONF_DIR" 2>/dev/null || true
@@ -103,8 +130,12 @@ tt_tmux_conf_write() {
     # 조용해야 하는 호출부(tt_conf_resnip)는 자기가 2>/dev/null 로 감싼다.
     tt_tmux_conf_render > "$tmp" || { rm -f "$tmp"; return 1; }
     mv -f "$tmp" "$TT_TMUX_CONF" || { rm -f "$tmp"; return 1; }
-    # tmux 밖이면 다음 tmux 시작 때 사용자의 source-file 이 읽는다.
-    if [ -n "${TMUX:-}" ]; then
+    # 살아있는 서버에 반영하는 조건은 둘 다 참일 때뿐이다:
+    #   ① 지금 tmux 안이다  ② 사용자 설정에 이 파일을 source 하는 줄이 실제로 있다
+    # ② 를 안 보면 "아직 연결 안 한 사람"의 서버에까지 우리 바인딩이 들어간다 —
+    # 스니펫을 눈으로 보려고 `tt --tmux-conf --write` 를 친 것만으로 키가 바뀌는 셈이다.
+    # 연결 안 한 사람에게는 다음 tmux 시작도, 이번 서버도 아무 일이 없다(우리 파일만 최신).
+    if [ -n "${TMUX:-}" ] && tt_tmux_conf_linked; then
         tmux source-file "$TT_TMUX_CONF" 2>/dev/null || true
     fi
     return 0

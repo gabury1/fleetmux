@@ -95,7 +95,12 @@ if [ "${1:-}" = "--hook" ]; then
             # 오탐은 다음 working/idle 훅이 즉시 자기교정하지만, 미탐은 부재중 대기를 영영 못 본다.
             # 페이로드를 못 읽으면(빈 stdin) 판단 근거가 없으니 무시 — 예전과 같은 보수적 동작.
             # (payload는 위에서 한 번만 읽어둔다 — 매니페스트 기록도 같은 걸 쓴다)
-            case "${payload,,}" in
+            # 소문자 접기는 tr 로 한다 — ${payload,,} 는 bash 4.0 전용 문법이고, 맥 기본
+            # /bin/bash 는 3.2 다. 파싱은 통과하고 **확장 시점에** 죽어서, 증상이
+            # "설치도 되고 목록도 뜨는데 ⏸ 만 영영 안 뜬다" 라는 침묵이 된다(팀 배포 게이트 B6).
+            # 05-config.sh 의 tt_conf_envname 이 같은 이유로 ${var^^} 를 피한다 — 이 레포의 관례다.
+            # t-14 가 src/*.sh 전체에서 bash4 전용 문법을 다시 잡는다(재발 방지).
+            case "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" in
                 "") ;;                                                 # 근거 없음 → 무시
                 *"waiting for your input"*|*"waiting for input"*) ;;    # 단순 유휴 → ⏸ 아님
                 *) echo "waiting $(date +%s) $cpid" > "$hf" ;;

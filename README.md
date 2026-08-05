@@ -72,6 +72,11 @@ which makes same-cwd sessions clone each other. Ask us how we know.
 
 ## Keeping Remote Control alive
 
+> **Linux only.** This one feature needs `/proc/<pid>/stat` (`src/60-rc.sh`) to tie a
+> Claude session file to a live process without falling for PID reuse. macOS has no
+> `/proc`, so on a Mac the whole rc path is a no-op: `tt --rc` prints `?` for every
+> row and the minute cron never injects anything. See [macOS](#macos--what-works-and-what-does-not).
+
 Claude Code's Remote Control bridge drops silently (idle timeouts, after compaction,
 overnight). The official fix is "run `/remote-control` again". fmux does it for you —
 only when `bridgeSessionId` is actually empty, never while the session is busy, and
@@ -107,22 +112,30 @@ tt config set key_summon_fast 'C-Left M-Left'   # rewrites the tmux snippet on t
 tt config unset key_summon_fast                 # back to prefix-only
 ```
 
-What actually works where:
+What to bind where. **The rows are bindings (tmux key names), not physical keys** —
+that distinction is the whole problem: one physical key arrives under a different
+tmux name on each platform.
 
-| platform / terminal | prefix + `F` | `C-Left` | `M-Left` | `M-b` |
-|---|---|---|---|---|
-| Linux (most terminals) | yes | usually | usually | yes |
-| macOS, Option+← | yes | — | **no** | **yes** — this is the one |
-| macOS, Ctrl+← | yes | often eaten by Mission Control | — | — |
-| Windows Terminal → WSL2 | yes | yes | **no** — Alt+Arrow moves WT panes | no |
+| binding you would write | Linux | macOS | Windows Terminal → WSL2 |
+|---|---|---|---|
+| `prefix + F` — the default | reaches tmux | reaches tmux | reaches tmux |
+| `bind -n C-Left` | usually reaches tmux | Ctrl+← is often eaten by Mission Control first | reaches tmux |
+| `bind -n M-Left` | usually reaches tmux | Option+← does **not** arrive under this name | Alt+← never arrives — WT moves its own panes |
+| `bind -n M-b` | fires on Alt+b — it is not an arrow key here | this is what **Option+←** arrives as | fires on Alt+b |
 
 - **macOS Option+←/→ arrives as `M-b`/`M-f`, not `M-Left`/`M-Right`.** The terminal
-  sends `ESC b` for Terminal.app compatibility — Ghostty does this too, even with
-  `macos-option-as-alt` set. Bind `M-b`, not `M-Left`.
+  sends `ESC b` for Terminal.app compatibility — Ghostty is reported to do this too,
+  even with `macos-option-as-alt` set. Bind `M-b`, not `M-Left`.
 - **macOS Ctrl+arrow** is a Mission Control shortcut by default; it may never reach
   tmux. Turn it off in System Settings or pick another key.
 - **Windows Terminal** claims `Alt+Arrow` for its own pane navigation before WSL sees
   it. `C-Left` survives.
+
+> **How much of this is measured?** Only the Linux column — this build has never run
+> on macOS or under WSL2. The macOS and WSL rows are *reported* behaviour (terminal
+> documentation and user reports), not something we reproduced. If you are the first
+> to install on either, you are the first measurement: run `./install.sh --dry-run`
+> first, and tell us what the keys actually did.
 
 That is why the default is `prefix + F`: it is the only binding that works on every
 platform without taking a key away from something else. `./install.sh` offers presets
@@ -175,7 +188,7 @@ the env var for `recent_hours` is `TT_RECENT_HOURS`, and so on.
 
 | key | default | what reads it |
 |---|---|---|
-| `rc` | `on` | `--cron`: auto-repair of dropped Remote Control links |
+| `rc` | `on` | `--cron`: auto-repair of dropped Remote Control links — **Linux only**, see [macOS](#macos--what-works-and-what-does-not) |
 | `snapshot` | `on` | `--snapshot`, and the once-a-minute snapshot inside `--cron` |
 | `snapshot_on_exit` | `on` | the tmux snippet's `client-detached` / `session-closed` hooks |
 | `boot_restore` | `on` | `--boot-restore` |
@@ -206,17 +219,35 @@ done, and it does not touch anything outside fmux.
   attached; fmux simply stops re-running `/remote-control` for sessions whose bridge
   went empty. The `⊘` badges disappear because nobody is judging any more, not
   because the sessions recovered. `tt --rc` says `rc=off` and prints no table.
-- **`snapshot=off`** means the manifest stops being updated — so it ages. When you
-  later run `--boot-restore`, `~/.cache/tt/boot.log` may say
-  `manifest is older than 7 days — restoring it anyway`. That warning is **the
-  consequence of the switch, not a bug**. Restore still runs, and each line is
-  re-validated (live conversation, transcript present, cwd exists) before it is used.
+- **`snapshot=off`** stops the *sweeps*, not every write. What stops: `--snapshot`
+  itself, the once-a-minute snapshot inside `--cron`, the one the popup fires when it
+  opens, and the on-exit tmux hooks — i.e. every path that rewrites the manifest
+  **wholesale** from the live session list. What keeps going: the hook path. Every
+  agent event (`src/50-hook.sh`) ends in an unconditional `tt_mf_upsert`, outside the
+  switch, so any session with a live claude/codex in it keeps its row — name, cwd,
+  command, conversation id — up to date. Measured in `test/t-15-hook.sh`: with
+  `snapshot=off` and no manifest at all, one `--hook working` creates one.
+  So the switch does not freeze the manifest. What actually goes stale is everything
+  the hooks cannot see: tool sessions, sessions renamed or moved from outside, and
+  rows for sessions that have since died (nothing prunes them any more).
+- **The 7-day warning is not this switch.** If `~/.cache/tt/boot.log` says
+  `manifest is older than 7 days — restoring it anyway`, read it as *nothing has been
+  writing the manifest at all* — usually the minute cron line was never installed.
+  Restore still runs, and each line is re-validated (live conversation, transcript
+  present, cwd exists) before it is used.
 - **`boot_restore=off`** makes `--boot-restore` exit early. `--restore`, which you run
   by hand, is unaffected — the switch guards the automatic path only.
+- **`snapshot_on_exit=off`** takes the two `set-hook` lines out of the tmux snippet,
+  so a *new* tmux server never gets them. A server that is already running keeps the
+  hooks it was given until it restarts — the snippet does not un-set them, because
+  `set-hook -gu` would also delete a hook of yours that we never installed. Cost of
+  the leftover: one extra manifest write when you detach.
 - **Your crontab is never touched.** Neither fmux nor `./install.sh` writes to it; the
-  installer only prints the two lines for you to paste. With `rc=off` the minute
-  cron job still fires, it just returns almost immediately. If you want the job gone,
-  remove it yourself with `crontab -e`.
+  installer only prints the two lines for you to paste. With `rc=off` the minute cron
+  job still fires and is **not** cheap: `rc=off` skips only the rc round; the snapshot
+  in the same tick still runs, and that is the part that talks to tmux the most. If
+  you want the tick to be nearly free, turn `snapshot` off too — and if you want the
+  job gone, remove it yourself with `crontab -e`.
 - For a one-off skip of the next boot restore, without changing config:
   `touch ~/.cache/tt/no-autorestore`.
 
@@ -240,15 +271,38 @@ report their state through the hook wrapper; they just cannot load this document
 - `flock` is optional. Without it the duplicate-run guard is off (cron rounds can
   overlap, boot restore can double-fire). macOS has no `flock` by default —
   `brew install flock` if you want it.
-- Linux and macOS. Windows only through WSL2, with caveats — see below.
-- State lives in `~/.cache/tt/`. Delete it and you lose nothing but history.
+- Linux and macOS — but **one feature is Linux-only** (Remote Control auto-repair);
+  see [macOS](#macos--what-works-and-what-does-not). Windows only through WSL2, with
+  caveats — see below.
+- State lives in `~/.cache/tt/`. Delete it and you lose the manifest with it — the
+  restore table — so what you lose is the next reboot's recovery, not just history.
 
 ## Install
 
+**1. Get the repo.** There is no published remote yet, so clone the URL you were given
+(or copy the directory over) — then run the installer from inside it:
+
 ```bash
-git clone https://github.com/<you>/fleetmux
-cd fleetmux && ./install.sh
+cd fleetmux
+./install.sh --dry-run      # optional: changes nothing, prints exactly what it would do
+./install.sh
 ```
+
+**2. Put it on your `PATH`.** The installer does not edit your shell startup file; it
+prints this line at the end and leaves it to you. Add it to `~/.bashrc`
+(`~/.bash_profile` for bash on macOS, `~/.zshrc` for zsh), then open a **new** shell:
+
+```bash
+export PATH="$HOME/.local/libexec/tt:$HOME/.local/bin:$PATH"
+```
+
+Order matters. `~/.local/bin` is where `fmux` and the `tt` symlink land;
+`~/.local/libexec/tt` must come **first**, because that is the hook shim — put it after
+the real `claude` and the status marks never appear. Skipping this step is why `tt`
+says *command not found*.
+
+**3. Check it.** `tt config list` prints the settings table; `tt` inside tmux opens the
+popup.
 
 ```
 ./install.sh --dry-run      change nothing, just print what it would do
@@ -259,8 +313,10 @@ cd fleetmux && ./install.sh
 
 Eight steps: dependencies → `~/.local/bin/fmux` (+ the `tt` symlink) → hook shims in
 `~/.local/libexec/tt/` → the tmux snippet → summon-key preset → agent skill → cron
-instructions → summary. It asks before touching `~/.tmux.conf`, and it **never**
-edits your crontab; it prints the lines and leaves them to you:
+instructions → summary. It asks before touching `~/.tmux.conf`, copies the file to
+`~/.tmux.conf.fmux-bak` before adding the line, and starts a fresh line if yours did
+not end in one. It **never** edits your crontab; it prints the lines and leaves them
+to you:
 
 ```cron
 * * * * * ~/.local/bin/fmux --cron >/dev/null 2>&1
@@ -268,6 +324,37 @@ edits your crontab; it prints the lines and leaves them to you:
 ```
 
 Re-running the installer is safe. If it stops, it tells you exactly how far it got.
+
+## macOS — what works and what does not
+
+Honest boundary, read from the code rather than guessed:
+
+**Works.** The popup and the list, hook state (`✻` working, `⏸` waiting, `✓` unseen),
+the status-bar tally, broadcast, `tt config`, the summon key, the manifest, and
+`--restore` / `--boot-restore`. `bash` is fine: macOS still ships bash 3.2 as
+`/bin/bash`, and fmux is written to 3.2 — `test/t-14-bash3.sh` scans every source file
+for bash-4-only syntax so it stays that way.
+
+**Does not work: Remote Control auto-repair (`rc`).** `src/60-rc.sh` identifies the
+claude process behind a session with `/proc/<pid>/stat` (field 22, `starttime`) so a
+recycled PID cannot be mistaken for the original. macOS has no `/proc`, so that lookup
+always fails and everything built on it silently gives up:
+
+- `tt --rc` prints `? no claude found` for every row — that is *unsupported*, not
+  broken. It now says so in a line above the table.
+- the minute cron never injects `/remote-control`, and the `⊘` badge never appears.
+- Everything else in the same cron tick — the fleet snapshot — still runs normally.
+
+**Partly affected: how a conversation id is discovered.** `--snapshot` learns
+conversation ids through the same `/proc` lookup, so on macOS it cannot discover a
+*new* one. The hook path can, and does: Claude Code's hook payload carries
+`session_id` and `cwd`, and `src/50-hook.sh` records both on every event. So an agent
+started inside tmux through the `PATH` shim is recorded and comes back with
+`--resume`. An agent that never fired a hook (started outside tmux, or before you
+installed fmux) keeps `-` in the manifest and will be restored as a plain session.
+
+Fixing rc for macOS is a real port (`ps -o lstart=` instead of `/proc`), not a
+one-liner — it is not in this release.
 
 ## Windows (WSL2) — best effort
 

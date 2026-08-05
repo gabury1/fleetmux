@@ -187,6 +187,49 @@ run_inst "$STUB_OK" --yes
 assert_eq "$(cnt "$TMUXCONF" '^source-file')" "1" "주석 줄은 source 로 안 친다"
 cp "$TTROOT/tmuxconf.sourced" "$TMUXCONF"
 
+# ── ⑥-b 개행으로 끝나지 않는 남의 파일 (게이트 B1) ─────────────────────────
+# `>>` 만 쓰면 사용자의 **마지막 줄이 파괴된다** — 그리고 rc 0 "성공"으로 보고된다.
+# printf 에 \n 을 안 붙여 진짜로 그런 파일을 만든다(에디터로 저장하면 흔한 모양이다).
+rm -f "$TMUXCONF.fmux-bak"
+printf 'set -g mouse on\nset -g status-position top' > "$TMUXCONF"     # ← 개행 없음(의도적)
+cp "$TMUXCONF" "$TTROOT/tmuxconf.nonl"
+assert_eq "$(tail -c 1 "$TMUXCONF" | od -An -c | tr -d ' \n')" "p" "재현: 마지막 바이트가 개행이 아니다"
+
+run_inst "$STUB_OK" --yes
+assert_eq "$RC" "0" "개행 없는 파일에도 rc 0"
+assert_eq "$(cnt "$TMUXCONF" '^set -g status-position top$')" "1" "사용자의 마지막 줄이 그대로 살아 있다"
+assert_eq "$(cnt "$TMUXCONF" '^source-file')" "1" "우리 줄은 자기 줄에서 시작한다"
+assert_eq "$(cnt "$TMUXCONF" 'topsource-file')" "0" "두 줄이 한 줄로 이어붙지 않았다"
+# 백업이 있고, 그 내용이 고치기 전 원본과 바이트 동일하다 — 되돌릴 수 있어야 한다
+assert_eq "$(ex "$TMUXCONF.fmux-bak")" "yes" "고치기 전 백업을 남긴다"
+assert_rc 0 cmp -s "$TTROOT/tmuxconf.nonl" "$TMUXCONF.fmux-bak"
+assert_eq "$(has "$OUT" "$TMUXCONF.fmux-bak")" "yes" "백업 경로를 사람에게 말한다"
+assert_eq "$(has "$OUT" '개행으로 끝나지 않는다')" "yes" "왜 개행부터 넣었는지 말한다"
+
+# 그 파일을 tmux 가 실제로 읽을 수 있는 모양인지도 본다 — 우리 줄 앞에 남의 토큰이 없어야 한다
+assert_eq "$(grep -c '^source-file ' "$TMUXCONF" || true)" "1" "source-file 이 줄 첫 토큰이다"
+
+# ── ⑥-c 이미 깨진 줄은 "이미 설정됨"이 아니다 (게이트 B2) ──────────────────
+# 예전 판(B1 미수정)이 만든 파손 모양을 그대로 만든다. 부분일치 판정이면 이걸 보고
+# "이미 source 한다"며 넘어가 — 재실행이 자가치유를 못 하고 파손이 영구히 가려진다.
+printf 'set -g mouse onsource-file %s\n' "$SNIP" > "$TMUXCONF"
+run_inst "$STUB_OK" --yes
+assert_eq "$(has "$OUT" '이미 이 파일을 source')" "no" "깨진 줄을 '이미 설정됨'으로 오판하지 않는다"
+assert_eq "$(grep -c '^source-file ' "$TMUXCONF" || true)" "1" "성한 줄을 새로 넣어 자가치유한다"
+
+# 앞에 공백이 있어도, -q 플래그가 붙어도, 따옴표를 써도 같은 줄로 본다(정확 일치는 지킨다)
+printf '  source-file -q "%s"\n' "$SNIP" > "$TMUXCONF"
+run_inst "$STUB_OK" --yes
+assert_eq "$(has "$OUT" '이미 이 파일을 source')" "yes" "들여쓰기·플래그·따옴표가 있어도 같은 줄로 본다"
+assert_eq "$(cnt "$TMUXCONF" 'source-file')" "1" "그때는 줄을 더 넣지 않는다"
+
+# 다른 파일을 source 하는 줄은 우리 줄이 아니다
+printf 'source-file %s.other\n' "$SNIP" > "$TMUXCONF"
+run_inst "$STUB_OK" --yes
+assert_eq "$(cnt "$TMUXCONF" 'source-file')" "2" "다른 경로를 source 하는 줄은 우리 것으로 안 친다"
+
+cp "$TTROOT/tmuxconf.sourced" "$TMUXCONF"
+
 # ── ⑦ 소환키 프리셋 ────────────────────────────────────────────────────────
 run_inst "$STUB_OK" --yes --preset mac
 assert_eq "$RC" "0" "--preset mac 은 rc 0"
@@ -278,6 +321,62 @@ run_inst "$STUB_OK" --prefix "$NOPREFIX"
 assert_eq "$RC" "1" "설치할 수 없는 자리면 멈춘다"
 assert_eq "$(has "$OUT" '설치를 멈춘다')" "yes" "멈췄다고 말한다"
 assert_rc 0 test -f "$NOPREFIX"
+
+# ── ⑫-b 동의가 먼저다 — 묻기 전에 남의 서버에 반영하지 않는다 (게이트 B5) ──
+# 여기서만 TMUX 를 채워 "tmux 안에서 설치한다"를 만든다. 스텁은 이 절 전용 로그로 받아 적어
+# ⑬ 의 봉인 판정과 섞이지 않게 한다(source-file 은 -V 가 아니므로 STUB_OK 였다면 LEAK 이다).
+TIN="$TTROOT/stub-tmuxin"
+TIN_LOG="$TTROOT/tmuxin-calls.log"
+mkdir -p "$TIN"
+{
+    printf '#!/usr/bin/env bash\n'
+    printf 'printf "%%s\\n" "tmux $*" >> "%s"\n' "$TIN_LOG"
+    printf 'if [ "${1:-}" = "-V" ]; then echo "tmux 3.5a"; fi\n'
+    printf 'exit 0\n'
+} > "$TIN/tmux"
+chmod +x "$TIN/tmux"
+cp "$STUB_OK/fzf" "$TIN/fzf"
+
+# 프리셋은 두 번 다 safe 로 고정한다 — 값이 안 바뀌면 5단계가 스니펫을 다시 쓰지 않으므로,
+# 이 절에서 나가는 source-file 은 오직 4단계(스니펫)의 것이다. 안 그러면 5단계의 재작성이
+# 4단계의 순서 오류를 가려버린다(옛 순서로 되돌려도 통과하는 그물이 된다).
+# ① 동의 없음(터미널 아님) — 연결도 안 돼 있다. 살아있는 서버는 한 글자도 안 바뀌어야 한다.
+: > "$TIN_LOG"
+printf 'set -g mouse on\n' > "$TMUXCONF"
+RC=0
+OUT=$(PATH="$TIN:$SEAL" TMUX="/fake/socket,0,0" bash "$INST" --preset safe < /dev/null 2>&1) || RC=$?
+assert_eq "$RC" "0" "tmux 안에서 돌려도 설치는 rc 0"
+assert_eq "$(cnt "$TMUXCONF" 'source-file')" "0" "동의 없으면 남의 설정에 줄이 안 들어간다"
+assert_eq "$(cnt "$TIN_LOG" 'source-file')" "0" "동의 전에는 살아있는 서버에 source-file 을 쏘지 않는다"
+assert_eq "$(ex "$SNIP")" "yes" "그래도 우리 파일은 최신으로 만들어 둔다"
+assert_eq "$(has "$OUT" '아직 아무 tmux 설정도 이 파일을 안 읽는다')" "yes" "안내문이 사실과 같은 방향이다"
+
+# ② 동의함 — 그제서야 이번 서버에도 반영된다.
+: > "$TIN_LOG"
+RC=0
+OUT=$(PATH="$TIN:$SEAL" TMUX="/fake/socket,0,0" bash "$INST" --yes --preset safe < /dev/null 2>&1) || RC=$?
+assert_eq "$RC" "0" "--yes 도 rc 0"
+assert_eq "$(cnt "$TMUXCONF" '^source-file')" "1" "동의하면 줄이 들어간다"
+assert_contains "$(cat "$TIN_LOG")" "source-file $SNIP" "동의한 뒤에는 이번 서버에도 반영한다"
+
+# ── ⑫-c 남의 스킬을 백업 없이 덮지 않는다 (권고 N1) ────────────────────────
+rm -rf "$HOME/.claude"
+mkdir -p "$HOME/.claude/skills/fleetmux"
+printf '내 스킬이다\n' > "$HOME/.claude/skills/fleetmux/SKILL.md"
+printf '내 메모\n'     > "$HOME/.claude/skills/fleetmux/mine.md"
+cp -R "$HOME/.claude/skills/fleetmux" "$TTROOT/skill.before"
+RC=0
+OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" --yes < /dev/null 2>&1) || RC=$?
+assert_eq "$(ex "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md")" "no" "스킬이 없는 레포는 백업도 안 만든다"
+mkdir -p "$REPO2/skills/fleetmux"
+printf -- '---\nname: fleetmux\n---\n테스트용 스킬\n' > "$REPO2/skills/fleetmux/SKILL.md"
+RC=0
+OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" --yes < /dev/null 2>&1) || RC=$?
+assert_eq "$RC" "0" "이미 스킬이 있어도 rc 0"
+assert_rc 0 cmp -s "$TTROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md"
+assert_rc 0 cmp -s "$TTROOT/skill.before/mine.md"  "$HOME/.claude/skills/fleetmux.fmux-bak/mine.md"
+assert_eq "$(has "$OUT" 'fmux-bak')" "yes" "백업 경로를 사람에게 말한다"
+assert_contains "$(cat "$HOME/.claude/skills/fleetmux/SKILL.md")" "테스트용 스킬" "그러고 나서 우리 것을 깐다"
 
 # ── ⑬ 진짜 tmux 가 샜나 ────────────────────────────────────────────────────
 assert_eq "$(ex "$LEAK")" "no" "가짜 tmux/fzf 가 -V 말고 다른 인자로 불린 적이 없다"

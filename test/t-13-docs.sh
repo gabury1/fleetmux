@@ -143,11 +143,51 @@ assert_contains "$(cat install.sh)" '.claude/skills/fleetmux'   "install.sh 의 
 
 # ── ④ 소환키 문서 ──────────────────────────────────────────────────────────
 # 플랫폼별 제약은 코드가 아니라 사실이라 코드로 못 잰다. 다만 README 가 근거로 든
-# 키 이름이 스니펫 생성기가 아는 이름인지는 잴 수 있다.
+# 키 이름이 설치기가 실제로 내주는 프리셋 값인지는 잴 수 있다 — 팀원이 그 이름을 얻는 문이
+# install.sh 의 프리셋이기 때문이다.
+INST_SH=$(cat install.sh)
 for k in 'M-b' 'C-Left' 'M-Left'; do
-    assert_contains "$RM"  "$k" "README 가 $k 를 설명한다"
-    assert_contains "$SRC" "$k" "$k 가 스니펫 생성기의 후보 목록에 있다"
+    assert_contains "$RM"      "$k" "README 가 $k 를 설명한다"
+    assert_contains "$INST_SH" "$k" "$k 를 install.sh 프리셋이 실제로 내준다"
 done
+
+# 스니펫 생성기에는 **정적 후보 목록이 없어야 한다**(게이트 B3). 있으면 기본(safe) 프리셋에서도
+# 그 키들을 unbind 해 — 우리가 안 건 키를, 즉 남의 바인딩을 지운다. README 는 바로 옆에서
+# "steals no key until you say so" 를 약속한다.
+assert_eq "$(grep -c 'TT_TMUX_UNBIND_CANDIDATES' src/*.sh install.sh | grep -v ':0$' | wc -l | tr -d ' ')" "0" \
+    "무prefix 키 정적 후보 목록이 코드에 없다"
+assert_contains "$RM" 'steals no key' "README 의 약속 문구가 그대로 있다"
+
+# ── ④-b 문서가 자기 검증 상태를 밝히는가 (게이트 B10) ───────────────────────
+# 이 레포는 맥·WSL 에서 한 번도 돈 적이 없다. 그 표를 단정형으로 적으면 팀원의 첫 키 선택을
+# 검증 안 된 주장이 좌우한다.
+assert_contains "$RM" 'How much of this is measured?'  "README 가 표의 검증 상태를 밝힌다"
+assert_contains "$RM" 'not something we reproduced'    "미검증 행을 재현 못 했다고 적는다"
+assert_contains "$RM" 'reported' "미검증 행을 '보고된 것'이라고 표시한다"
+assert_contains "$RM" 'bindings (tmux key names), not physical keys' "표가 무엇을 재는지 밝힌다"
+
+# ── ④-c rc 는 리눅스 전용이라고 적는가 (게이트 B8) ──────────────────────────
+# 코드가 /proc 에 매달려 있다는 사실과 문서가 붙어 있어야 한다.
+assert_contains "$SRC" '/proc/$1/stat' "rc 판정이 실제로 /proc 에 매달려 있다"
+assert_contains "$RM"  'Linux only'    "README 가 rc 를 리눅스 전용이라고 적는다"
+assert_contains "$RM"  '/proc'         "README 가 그 이유(/proc)를 적는다"
+assert_contains "$RM"  'macOS — what works and what does not' "맥에서 되는 것·안 되는 것을 나눠 적는다"
+assert_contains "$SRC" '/proc 이 없다(macOS 미지원)' "tt --rc 도 그 경계를 화면에서 말한다"
+
+# ── ④-d snapshot=off 서술이 코드와 맞는가 (게이트 B9) ───────────────────────
+# 훅 경로의 upsert 는 스위치 **밖**이다 — 그래서 매니페스트는 늙지 않는다. 옛 문장은 반증됐다.
+assert_eq "$(grep -c 'the manifest stops being updated' "$README" || true)" "0" \
+    "반증된 문장('manifest stops being updated')이 README 에 없다"
+assert_contains "$RM" 'unconditional `tt_mf_upsert`' "README 가 실제 동작을 근거로 적는다"
+assert_contains "$SRC" 'tt_mf_upsert "$sname"' "그 upsert 가 훅 경로에 실제로 있다"
+
+# ── ④-e 설치 절이 실제로 따라갈 수 있는가 (게이트 B11) ──────────────────────
+assert_eq "$(grep -c '<you>' "$README" || true)" "0" "복사할 수 없는 자리표시자가 없다"
+assert_contains "$RM" 'no published remote yet' "원격이 아직 없다는 사실을 적는다"
+assert_contains "$RM" 'export PATH="$HOME/.local/libexec/tt:$HOME/.local/bin:$PATH"' \
+    "README 가 PATH 넣는 줄을 그대로 적는다"
+assert_contains "$INST_SH" 'export PATH="%s:%s:$PATH"' "install.sh 가 같은 줄을 찍는다"
+assert_contains "$RM" 'command not found' "PATH 를 안 고치면 무슨 일이 나는지 적는다"
 assert_contains "$RM" 'Mission Control' "macOS Ctrl+화살표가 뺏길 수 있다고 적는다"
 assert_contains "$RM" 'Windows Terminal' "Windows Terminal 이 Alt+화살표를 먼저 먹는다고 적는다"
 assert_contains "$RM" 'best effort' "WSL 은 best-effort 라고 적는다"

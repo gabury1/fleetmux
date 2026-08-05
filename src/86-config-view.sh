@@ -47,7 +47,11 @@ tt_conf_desc() {
 #   이 프로세스의 tt_conf_load 캐시는 시작 시점의 파일에 멈춰 있기 때문이다.
 tt_conf_view_once() {
     local line k rc nv
-    line=$("$SELF" --config-list \
+    # 자식의 stderr 는 화면이 아니라 로그로 보낸다. 손으로 고친 설정에 깨진 줄이 있으면
+    # 경고가 fzf 가 그린 화면 위에 덧칠돼 설정 화면이 읽을 수 없게 된다. 버리지는 않는다 —
+    # 그 경고는 사용자가 언젠가 봐야 할 진짜 정보다(권고 N3).
+    mkdir -p "$STATE" 2>/dev/null || true
+    line=$("$SELF" --config-list 2>>"$STATE/conf.log" \
         | fzf --ansi --reverse --cycle --info=hidden --prompt='설정 ❯ ' --pointer='▶' \
               --delimiter=$'\t' --with-nth='2..' \
               --header='Enter 바꾸기    Esc·← 세션 목록으로' \

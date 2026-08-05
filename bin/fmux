@@ -2,7 +2,8 @@
 # fleetmux (tt) — AI 에이전트 함대를 위한 tmux 관제탑
 #   claude·codex 세션의 상태를 훅으로 추적하고, 골라 들어가고, 뿌리고, 되살린다
 #   →/Enter: 세션 진입   ←/Esc: 닫기   Ctrl-N: 새 세션   Ctrl-E: 이름변경   Ctrl-X: 삭제   Ctrl-R: 갱신   Ctrl-D: tmux 탈출
-#   tmux 안에서는 Option+← (M-b/M-Left) 로 팝업 소환 (.tmux.conf 바인딩)
+#   소환키는 설정에서 온다 — 기본은 prefix + F 하나뿐이고, 무prefix 키는 기본값이 비어 있다
+#   (아무 키도 안 뺏는다). tt config set key_summon_fast 로 켠다 — 87-tmux-conf.sh 가 스니펫에 박는다.
 set -euo pipefail
 export LC_ALL=en_US.UTF-8   # cron엔 로케일이 없음 — 유니코드 글리프 정규식 오작동 방지
 
@@ -1024,7 +1025,12 @@ if [ "${1:-}" = "--hook" ]; then
             # 오탐은 다음 working/idle 훅이 즉시 자기교정하지만, 미탐은 부재중 대기를 영영 못 본다.
             # 페이로드를 못 읽으면(빈 stdin) 판단 근거가 없으니 무시 — 예전과 같은 보수적 동작.
             # (payload는 위에서 한 번만 읽어둔다 — 매니페스트 기록도 같은 걸 쓴다)
-            case "${payload,,}" in
+            # 소문자 접기는 tr 로 한다 — ${payload,,} 는 bash 4.0 전용 문법이고, 맥 기본
+            # /bin/bash 는 3.2 다. 파싱은 통과하고 **확장 시점에** 죽어서, 증상이
+            # "설치도 되고 목록도 뜨는데 ⏸ 만 영영 안 뜬다" 라는 침묵이 된다(팀 배포 게이트 B6).
+            # 05-config.sh 의 tt_conf_envname 이 같은 이유로 ${var^^} 를 피한다 — 이 레포의 관례다.
+            # t-14 가 src/*.sh 전체에서 bash4 전용 문법을 다시 잡는다(재발 방지).
+            case "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" in
                 "") ;;                                                 # 근거 없음 → 무시
                 *"waiting for your input"*|*"waiting for input"*) ;;    # 단순 유휴 → ⏸ 아님
                 *) echo "waiting $(date +%s) $cpid" > "$hf" ;;
@@ -1323,6 +1329,10 @@ if [ "${1:-}" = "--rc" ]; then
     # 표를 그리는 첫 tmux 호출(아래 while)보다 앞에서 나간다 — 자동복구를 끈 사람에게
     # rc 현황표는 "왜 전부 OFF 인가"만 되묻게 만드는 표다.
     tt_conf_on rc || { printf 'rc=off — 자동복구가 꺼져 있다 (tt config set rc on)\n'; exit 0; }
+    # rc 판정 전체가 /proc/<pid>/stat 에 매달려 있다(rc_procstart). /proc 이 없는 기계(macOS)
+    # 에서는 rc_target 이 항상 실패해 아래 표가 **전 행 '?'** 가 된다 — 고장이 아니라 미지원인데,
+    # 표만 보면 구분이 안 된다. 그 한 줄을 여기서 말한다(README 의 macOS 절과 같은 사실).
+    [ -d /proc ] || printf 'note: rc 자동복구는 /proc/<pid>/stat 이 필요하다 — 이 기계엔 /proc 이 없다(macOS 미지원). 아래는 전 행 ? 가 된다\n'
     printf '%-18s %-5s %s\n' SESSION RC URL
     while read -r sid name; do
         if ! t=$(rc_target "$sid"); then
@@ -2209,6 +2219,22 @@ tt_conf_validate() {
     return 0
 }
 
+# 손으로 고친 무효값의 "실제 동작"을 한 줄로. 유효하면 아무것도 안 찍는다.
+#   `tt config set` 은 무효값을 거절하지만 README:168 은 파일 손편집도 정상 경로로 안내한다 —
+#   그 경로로 들어온 값은 소비자마다 다르게 접힌다(숫자는 기본값으로, 불린은 꺼짐으로,
+#   소환키는 스니펫에서 빠짐). 표가 그 값을 실효값처럼 보여주면 두 화면이 서로 다른 진실을
+#   말하게 된다(권고 N4). 검증은 이미 있는 tt_conf_validate 를 그대로 쓰고 사유만 삼킨다.
+tt_conf_lie() {
+    tt_conf_validate "${1:-}" "${2:-}" 2>/dev/null && return 0
+    case "${1:-}" in
+        rc|snapshot|snapshot_on_exit|boot_restore)  printf '← 무효값 · 꺼짐으로 돈다' ;;
+        recent_hours|unseen_minutes|accent|log_max) printf '← 무효값 · 기본값 %s 로 돈다' "$(tt_conf_default "$1")" ;;
+        key_summon|key_summon_fast)                 printf '← 무효값 · 스니펫에서 그 키는 빠진다' ;;
+        *)                                          printf '← 무효값' ;;
+    esac
+    return 0
+}
+
 # 원자적 쓰기. 있는 줄은 값만 교체하고, 없으면 끝에 붙인다(주석·순서 보존).
 tt_conf_write() {
     local k="${1:-}" v="${2:-}" mode="${3:-set}" tmp line seen=0
@@ -2257,17 +2283,21 @@ if [ "${1:-}" = "config" ]; then
             # 팝업 설정화면과 같은 정직함이 여기에도 있어야 한다 — CLI 만 보고 설정하는
             # 사람이 "저장됐다"는 말만 듣고 안 도는 기능을 켠 줄 알면 안 된다.
             printf '%-18s %-14s %s\n' 'KEY' 'VALUE' 'SOURCE'
-            unwired=0
+            unwired=0; bogus=0
             for k in $TT_CONF_KEYS; do
+                v=$(tt_conf_get "$k")
+                lie=$(tt_conf_lie "$k" "$v")
+                [ -n "$lie" ] && bogus=1
+                [ -z "$lie" ] || lie=" $lie"
                 if tt_conf_wired "$k"; then
-                    printf '%-18s %-14s %s\n' "$k" "$(tt_conf_get "$k")" "$(tt_conf_source "$k")"
+                    printf '%-18s %-14s %s%s\n' "$k" "$v" "$(tt_conf_source "$k")" "$lie"
                 else
                     unwired=1
-                    printf '%-18s %-14s %-9s%s\n' "$k" "$(tt_conf_get "$k")" "$(tt_conf_source "$k")" \
-                        '← 미배선'
+                    printf '%-18s %-14s %-9s%s%s\n' "$k" "$v" "$(tt_conf_source "$k")" '← 미배선' "$lie"
                 fi
             done
             [ "$unwired" = 1 ] && printf '\n미배선 = 값은 저장되지만 아직 아무 코드도 그 값을 읽지 않는다 — 바꿔도 동작은 그대로다.\n'
+            [ "$bogus" = 1 ] && printf '무효값 = 파일에 저장은 돼 있지만 코드가 못 쓰는 값이다 — 위에 적힌 대로 접혀서 돈다.\n'
             exit 0 ;;
         get|source)
             [ -n "${3:-}" ] || { echo "usage: tt config $2 <key>" >&2; exit 1; }
@@ -2351,7 +2381,11 @@ tt_conf_desc() {
 #   이 프로세스의 tt_conf_load 캐시는 시작 시점의 파일에 멈춰 있기 때문이다.
 tt_conf_view_once() {
     local line k rc nv
-    line=$("$SELF" --config-list \
+    # 자식의 stderr 는 화면이 아니라 로그로 보낸다. 손으로 고친 설정에 깨진 줄이 있으면
+    # 경고가 fzf 가 그린 화면 위에 덧칠돼 설정 화면이 읽을 수 없게 된다. 버리지는 않는다 —
+    # 그 경고는 사용자가 언젠가 봐야 할 진짜 정보다(권고 N3).
+    mkdir -p "$STATE" 2>/dev/null || true
+    line=$("$SELF" --config-list 2>>"$STATE/conf.log" \
         | fzf --ansi --reverse --cycle --info=hidden --prompt='설정 ❯ ' --pointer='▶' \
               --delimiter=$'\t' --with-nth='2..' \
               --header='Enter 바꾸기    Esc·← 세션 목록으로' \
@@ -2446,22 +2480,21 @@ fi
 #  그 편집이 한 번이라도 어긋나면 사용자의 tmux 가 안 뜬다 — 그 위험을 아예 안 진다.)
 TT_TMUX_CONF="$TT_CONF_DIR/tmux.conf"
 
-# 이전 판이 걸어둔 무prefix 바인딩을 걷어내기 위한 후보 목록.
+# 걷어낼 무prefix 키 목록을 stdout 에(공백 구분, 중복 제거).
 # tmux 는 "설정에 없으면 알아서 사라지는" 모델이 아니다 — 한 번 bind 하면 서버가 죽을
 # 때까지 남는다. 그래서 설정에서 키를 지워도, unbind 를 같이 내지 않으면 지운 키가 계속 산다.
 #
-# 물리 키 하나가 터미널마다 다른 바이트로 온다. macOS 의 Option+← 는 Ghostty 가
-# macos-option-as-alt 여도 ESC b 를 보내 M-b 로 도착한다 — 그래서 key_summon_fast 는
-# 값 하나가 아니라 공백으로 나눈 목록이고, 이 후보 목록도 같은 물리 키의 이형을 함께 담는다.
-TT_TMUX_UNBIND_CANDIDATES='C-Left M-Left M-b C-Right M-Right M-f'
-
-# 걷어낼 무prefix 키 목록을 stdout 에(공백 구분, 중복 제거).
-#   ① 코드가 아는 후보  ② 지금 걸 키(재적용을 멱등하게)  ③ 이전 판 스니펫에 실제로 남은 키
-# ③ 이 있어야 후보 목록 밖의 키를 사용자가 지웠을 때도 그 바인딩이 따라 죽는다.
+# 근거는 딱 둘이다 — 둘 다 "fmux 가 실제로 걸었던 키"다:
+#   ① 지금 걸 키(재적용을 멱등하게)  ② 이전 판 스니펫에 남아 있는 `bind -n` 줄
+# 예전엔 여기에 정적 후보 목록(C-Left M-Left M-b C-Right M-Right M-f)이 하나 더 있었다.
+# 그건 기본(safe) 프리셋 — 우리가 키를 하나도 안 건 상태 — 에서도 그 여섯 개를 unbind 해
+# **남이 걸어둔 바인딩을 우리가 지웠다**. README 의 "steals no key until you say so" 와
+# 정면으로 어긋나고, 사용자에게 고지된 적도 없다(팀 배포 게이트 B3). 우리가 안 건 키는
+# 우리 것이 아니다 — ② 가 있으므로 우리가 걸었던 키는 이름이 무엇이든 스스로 따라 죽는다.
 tt_tmux_conf_unbind_list() {
     local seen=' ' k line fast
     fast=$(tt_conf_get key_summon_fast)
-    for k in $TT_TMUX_UNBIND_CANDIDATES $fast; do
+    for k in $fast; do
         case "$seen" in *" $k "*) continue ;; esac
         tt_conf_is_tmux_key "$k" || continue
         seen="$seen$k "
@@ -2532,7 +2565,35 @@ tt_tmux_conf_render() {
     fi
 }
 
-# 스니펫을 원자적으로 쓴다. tmux 안이면 즉시 반영한다.
+# 사용자 설정이 이 스니펫을 실제로 source 하고 있나 — 살아있는 tmux 서버에 반영해도 되는지의
+# 유일한 근거다. "우리 파일을 쓴다"와 "남의 서버에 적용한다"는 서로 다른 동의다(팀 배포 게이트 B4).
+#   판정 규칙은 install.sh 의 already_sourced 와 같아야 한다: **줄 앞머리 한정 + 인자 정확 일치**.
+#   부분일치로 보면 주석 줄이나 개행 없이 이어붙어 깨진 줄("set -g mouse onsource-file …")까지
+#   "연결됨"이 된다. 후보 파일은 install.sh 의 pick_tmux_conf 와 같은 둘이다.
+tt_tmux_conf_linked() {
+    local f line rest
+    for f in "$HOME/.tmux.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"; do
+        [ -r "$f" ] || continue
+        while IFS= read -r line || [ -n "$line" ]; do
+            while :; do case "$line" in [[:blank:]]*) line=${line#?} ;; *) break ;; esac; done
+            case "$line" in
+                'source-file '*) rest=${line#source-file } ;;
+                'source '*)      rest=${line#source } ;;
+                *) continue ;;
+            esac
+            # 앞의 플래그(-q 등)를 걷고, 뒤 공백·인용부호를 벗긴 뒤 정확히 비교한다.
+            # 낱말 분해($rest 를 for 로 도는 것)는 안 쓴다 — 글롭이 켜진 셸에서 남의 설정
+            # 줄에 있는 * 가 파일명으로 펴진다.
+            while :; do case "$rest" in '-'*' '*) rest=${rest#* } ;; *) break ;; esac; done
+            while :; do case "$rest" in *[[:blank:]]) rest=${rest%?} ;; *) break ;; esac; done
+            case "$rest" in '"'*'"'|"'"*"'") rest=${rest#?}; rest=${rest%?} ;; esac
+            [ "$rest" = "$TT_TMUX_CONF" ] && return 0
+        done < "$f"
+    done
+    return 1
+}
+
+# 스니펫을 원자적으로 쓴다. 사용자가 이 파일을 자기 설정에 걸어뒀고 지금 tmux 안이면 즉시 반영한다.
 tt_tmux_conf_write() {
     local tmp
     mkdir -p "$TT_CONF_DIR" 2>/dev/null || true
@@ -2543,8 +2604,12 @@ tt_tmux_conf_write() {
     # 조용해야 하는 호출부(tt_conf_resnip)는 자기가 2>/dev/null 로 감싼다.
     tt_tmux_conf_render > "$tmp" || { rm -f "$tmp"; return 1; }
     mv -f "$tmp" "$TT_TMUX_CONF" || { rm -f "$tmp"; return 1; }
-    # tmux 밖이면 다음 tmux 시작 때 사용자의 source-file 이 읽는다.
-    if [ -n "${TMUX:-}" ]; then
+    # 살아있는 서버에 반영하는 조건은 둘 다 참일 때뿐이다:
+    #   ① 지금 tmux 안이다  ② 사용자 설정에 이 파일을 source 하는 줄이 실제로 있다
+    # ② 를 안 보면 "아직 연결 안 한 사람"의 서버에까지 우리 바인딩이 들어간다 —
+    # 스니펫을 눈으로 보려고 `tt --tmux-conf --write` 를 친 것만으로 키가 바뀌는 셈이다.
+    # 연결 안 한 사람에게는 다음 tmux 시작도, 이번 서버도 아무 일이 없다(우리 파일만 최신).
+    if [ -n "${TMUX:-}" ] && tt_tmux_conf_linked; then
         tmux source-file "$TT_TMUX_CONF" 2>/dev/null || true
     fi
     return 0
@@ -2764,13 +2829,24 @@ if [ "${1:-}" = "--help" ]; then
     tt_conf_load
     acc=$(tt_conf_num accent 255)
     T=$'\033[38;5;'"$acc"'m'; D=$'\033[2m'; R=$'\033[0m'; B=$'\033[1m'
+    # 첫 화면은 **지금 이 기계의 설정**을 읽어서 말한다. 예전엔 Option+← 와 6h/10 min 이
+    # 하드코딩이었는데, 기본값은 무prefix 키를 하나도 안 걸므로(key_summon_fast 가 빈 값)
+    # 설치 직후 팀원이 가장 먼저 읽는 화면이 없는 키를 가르쳤다(팀 배포 게이트 B7).
+    hsum=$(tt_conf_get key_summon)
+    hfast=$(tt_conf_get key_summon_fast)
+    hrecent=$(tt_conf_num recent_hours)
+    hunseen=$(tt_conf_num unseen_minutes)
+    if [ -n "$hsum" ]; then hsummon="prefix + $hsum"; else hsummon="(key_summon is empty)"; fi
+    if [ -n "$hfast" ]; then hsummon="$hsummon  ·  $hfast  ${D}prefix-less${R}"
+    else hsummon="$hsummon  ${D}· no prefix-less key — tt config set key_summon_fast 'C-Left M-Left'${R}"
+    fi
     cat << EOF
 
   ${B}tt — tmux session manager${R}  ${D}works with claude & codex sessions${R}
 
   ${T}navigate${R}
-    →/Enter    enter session          ←/Esc    close
-    Option+←   summon from anywhere   ^D       detach tmux (back to shell)
+    →/Enter    enter session          ←/Esc    close    ^D  detach tmux (back to shell)
+    summon     $hsummon
 
   ${T}manage${R}
     ^N  new session     ^E  rename     ^X  kill     ^R  refresh
@@ -2807,14 +2883,14 @@ if [ "${1:-}" = "--help" ]; then
     ${D}manifest keeps 3 backup generations: manifest.bak .bak2 .bak3${R}
 
   ${T}reading the list${R}
-    ${B}bold name${R}   talked within 6h          ${D}dim name${R}   quiet session
+    ${B}bold name${R}   talked within ${hrecent}h          ${D}dim name${R}   quiet session
     ${T}teal name${R}   tool session (alphabetical, bottom)
     ● attached    ✻ working    ⏸ awaiting approval    ✓ unseen result
     ⊘ remote control dropped — retried every minute; ${B}red ⊘${R} = gave up after 3 tries
 
   ${T}status bar${R}
     ⏸n ✻n — fleet tally: sessions awaiting you / working right now
-    ✓name — finished while you were away. clears on visit or 10 min
+    ✓name — finished while you were away. clears on visit or ${hunseen} min
 
   ${T}korean IME tip${R}
     if keys after tmux prefix get eaten, keep holding Ctrl (^B ^D = detach)
@@ -2843,7 +2919,8 @@ export TT_CUR="$CUR"
 #   팝업(^O)으로 설정 화면을 보러 가면 정확히 이 경로다: 설정으로 갈 문이 그때 사라진다.
 #   그래서 CUR 이 있으면(= 우리가 어떤 세션 안에서 열렸다 = 세션 ≥ 1) 부트스트랩으로 안 샌다.
 #   세션이 0개일 때만 온보딩으로 가고, 그 외에는 설정 행만 남았더라도 피커를 띄운다.
-if [ -z "$CUR" ] && [ -z "$("$SELF" --list | grep -v "^$TT_SETTINGS_ROW"$'\t' || true)" ]; then
+mkdir -p "$STATE" 2>/dev/null || true    # 아래 두 곳이 --list 의 stderr 를 여기 흘린다
+if [ -z "$CUR" ] && [ -z "$("$SELF" --list 2>>"$STATE/hook.log" | grep -v "^$TT_SETTINGS_ROW"$'\t' || true)" ]; then
     read -rp "no sessions yet. name for a new one: " n </dev/tty || exit 0
     [ -n "$n" ] || exit 0
     if tt_name_reserved "$n"; then
@@ -2861,7 +2938,9 @@ fi
 #   그래서 {1}·{+1}은 공백이 들어간 이름도 잘리지 않은 채로 tt에 전달된다.
 # 프리뷰는 tail — 중요한 건 화면 하단(입력창·스피너·승인 프롬프트)인데 전체를 흘려보내면 잘린다.
 # ^O(설정 화면)는 아직 리터럴이다 — 단축키 재매핑(tt_key)이 들어오면 key_settings 를 여기로 문다.
-session=$("$SELF" --list \
+# 목록 생산자의 stderr 는 화면이 아니라 hook.log 로 간다 — 설정 파일에 깨진 줄이 있으면
+# 그 경고가 fzf 화면 위에 덧칠돼 관제탑을 못 읽게 만든다. 버리지 않는 이유는 86 과 같다(권고 N3).
+session=$("$SELF" --list 2>>"$STATE/hook.log" \
     | fzf --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
           --delimiter=$'\t' --with-nth='2..' \
           --footer='? help' \
