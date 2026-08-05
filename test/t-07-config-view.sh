@@ -63,23 +63,27 @@ plain=$("$TTBIN" --config-list | sed "$TT_DEANSI")
 assert_contains "$plain" "rc                 on" "설정이 없으면 기본값이 보인다"
 
 # ── ①-b "미배선" 표시가 정직한가 ───────────────────────────────────────────
-# T4 가 물린 세 키(rc·snapshot·boot_restore)와 T6 이 tmux 스니펫에 물린 세 키
-# (key_summon·key_summon_fast·snapshot_on_exit)에는 표시가 없어야 하고, 나머지엔 있어야 한다.
+# T4 가 물린 셋(rc·snapshot·boot_restore), T6 이 tmux 스니펫에 물린 셋
+# (key_summon·key_summon_fast·snapshot_on_exit), T5 가 물린 넷(recent_hours·unseen_minutes·
+# accent·log_max)에는 표시가 없어야 하고, 나머지엔 있어야 한다.
 # 이 판정을 뒤집는 순간 설정 화면은 "끈 줄 알았는데 안 꺼진" 토글을 팔게 된다.
-for k in rc snapshot boot_restore snapshot_on_exit key_summon key_summon_fast; do
+for k in rc snapshot boot_restore snapshot_on_exit key_summon key_summon_fast \
+         recent_hours unseen_minutes accent log_max; do
     row=$(printf '%s\n' "$plain" | grep "^$k$TAB")
     case "$row" in *미배선*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "no" "$k 은 실제로 물려 있으니 미배선 표시가 없다"
 done
-for k in recent_hours unseen_minutes accent log_max key_new key_settings; do
+for k in key_new key_settings; do
     row=$(printf '%s\n' "$plain" | grep "^$k$TAB")
     case "$row" in *미배선*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "yes" "$k 은 아직 안 물렸으니 미배선 표시가 붙는다"
 done
-# 배선 판정의 근거는 코드다 — tt_conf_on 으로 실제 판정하거나(rc·snapshot·boot_restore),
-# 87-tmux-conf.sh 가 스니펫에 실제로 박는 키(key_summon·key_summon_fast·snapshot_on_exit)만
-# 배선된 것으로 친다. 이 개수가 늘면 tt_conf_wired 도 같이 늘어야 한다는 뜻이다.
-assert_eq "$(printf '%s\n' "$plain" | grep -vc 미배선)" "6" "지금 배선된 키는 정확히 6개다"
+# 배선 판정의 근거는 코드다 — tt_conf_wired 가 합쳐진 스크립트에서 "리터럴 키를 넘기는
+# 조회 호출"을 직접 긁어 뽑는다. 그래서 새 키를 물리면 이 화면은 저절로 따라온다.
+#   이 개수는 그 자동 판정의 **감시자**다: 단축키 재매핑(T7)이 여덟 키를 물리는 날
+#   여기가 먼저 터져야 한다 — "물렸는데 표시가 안 바뀐"도, "안 물렸는데 표시가 사라진"도
+#   둘 다 이 한 줄에 걸린다.
+assert_eq "$(printf '%s\n' "$plain" | grep -vc 미배선)" "10" "지금 배선된 키는 정확히 10개다"
 
 # ── ② --config-toggle ──────────────────────────────────────────────────────
 : > "$CONF"
@@ -106,12 +110,14 @@ out=$(TT_RC=on "$TTBIN" --config-toggle rc 2>&1) || rc=$?
 assert_eq "${rc:-0}" "1" "env 가 이기는 키는 토글을 거절한다"
 assert_contains "$out" "TT_RC" "거절 사유로 그 환경변수 이름을 말한다"
 
-# log_max 는 지금 항상 이 거절에 걸린다 — 10-util.sh:21 이 TT_LOG_MAX 를 스스로 세워서,
-# 설정 파일에 쓴 값이 실제로 안 먹기 때문이다. rc 2 로 값을 받아 저장해봐야 거짓말이 된다.
-# 임계값 배선(10-util.sh 를 tt_conf_get 경유로)이 들어오면 이 줄이 rc 2 로 바뀌어야 한다.
-assert_rc 1 "$TTBIN" --config-toggle log_max
-assert_contains "$("$TTBIN" --config-toggle log_max 2>&1)" "TT_LOG_MAX" \
-    "log_max 는 아직 파일로 못 바꾼다는 사실을 그대로 말한다"
+# log_max 는 예전엔 **항상** 이 거절에 걸렸다 — 10-util.sh 가 TT_LOG_MAX 전역을 스스로
+# 세웠고 그 이름이 곧 이 키의 환경변수 이름이라, 진짜 환경변수가 없어도 늘 env 로 읽혔다.
+# 임계값 배선(T5)이 그 전역을 없앴다. 이제는 다른 값 키와 똑같이 rc 2(값을 입력받아라)이고,
+# 진짜 환경변수를 걸었을 때만 거절된다.
+assert_rc 2 "$TTBIN" --config-toggle log_max
+assert_rc 1 env TT_LOG_MAX=4096 "$TTBIN" --config-toggle log_max
+assert_contains "$(TT_LOG_MAX=4096 "$TTBIN" --config-toggle log_max 2>&1)" "TT_LOG_MAX" \
+    "진짜 환경변수가 걸렸을 때만 그 이름을 대며 거절한다"
 
 # 진입점당 설정 파일은 한 번만 읽는다(05-config.sh:53 계약) — --config-list 는 키마다
 # tt_conf_get/tt_conf_source 를 서브셸로 부르므로, 계약을 어기면 경고가 36번 나온다.

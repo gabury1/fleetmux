@@ -335,14 +335,18 @@ if [ "${1:-}" = "--boot-restore" ]; then
     # 이 기능은 사람이 안 보는 시각에 딱 한 번 돌고, 실패해도 조용하다 → 로그가 유일한 증거다.
     # 그래서 판정 하나하나를 다 남긴다. 회전은 hook.log 와 같은 정책을 재사용한다.
     blog() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$BOOTLOG"; }
+    # 설정 캐시는 진입점 맨 위, 서브셸 아닌 맨 statement (05-config.sh 의 계약).
+    #   회전(log_max)이 아래 boot_restore 스위치보다 먼저 설정을 읽으므로 로드도 그보다 앞이어야
+    #   한다 — 회전 안의 $(...) 안에서 처음 읽히면 캐시가 그 서브셸과 함께 죽어, 깨진 줄 하나가
+    #   부팅마다 경고를 두 번 낸다.
+    tt_conf_load
     TT_LOG_FILE="$BOOTLOG" tt_log_rotate
     blog "=== boot-restore start (dry=$dry, pid $$)"
 
     # ⓪ 설정 스위치. ① 킬 스위치와 뜻은 같고 손잡이만 다르다(파일 하나 vs `tt config`).
     #    자리도 같아야 한다 — 여기서 나가야 아래의 PATH 보정·flock·네트워크 대기(최대 120초)·
     #    tmux start-server(이 진입점이 처음 tmux 를 부르는 자리)를 전부 건드리지 않는다.
-    #    tt_conf_load 는 서브셸 아닌 맨 statement (05-config.sh:53 계약).
-    tt_conf_load
+    #    (설정 캐시는 위 로그 회전 앞에서 이미 세웠다 — 회전이 log_max 를 읽기 때문이다.)
     if ! tt_conf_on boot_restore; then
         blog "boot_restore=off in config — nothing done"
         printf 'boot_restore=off — 부팅 복원을 건너뛴다 (tt config set boot_restore on)\n'

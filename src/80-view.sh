@@ -51,13 +51,19 @@ TT_ACT_AWK='
     END { if (f != "") print f "\t" (best == "" ? 0 : iso2epoch(best)) }'
 
 # 목록 생성: 내용 변경 시각 순(진짜 대화·작업이 최근인 세션이 위)
-#   세션명 굵게=6시간 내 대화 있음, 흐리게=그 이상 조용  ●=attached  ✻=Claude 작업중
+#   세션명 굵게=recent_hours(기본 6시간) 내 대화 있음, 흐리게=그 이상 조용  ●=attached  ✻=Claude 작업중
 # 출력 한 줄 = "<이름>\t<표시용 색칠 문자열>". 이름을 탭으로 떼어 앞에 두는 이유:
 #   picker가 {1}로 뽑는 값이 공백 든 이름에서도 온전해야 한다. 예전엔 공백 기준 첫 단어만 잘려
 #   tmux -t 접두 매칭에 걸려 엉뚱한 세션이 죽었다(실기기 재현). fzf는 --with-nth로 1번 필드를 감춘다.
 # 주의: 목록에 괄호 금지 — fzf --bind의 reload(...) 구분자와 충돌한다
 if [ "${1:-}" = "--list" ]; then
     now=$(date +%s)
+    # 설정은 진입점 맨 위에서 서브셸 아닌 맨 statement 로 한 번만 (05-config.sh 의 계약).
+    #   아래 두 값은 루프 밖에서 미리 뽑는다 — 세션마다 다시 물으면 포크가 세션 수만큼 는다.
+    #   게다가 표시 루프는 파이프라인(서브셸) 안이라 거기서 읽어봐야 밖으로 못 나온다.
+    tt_conf_load
+    acc=$(tt_conf_num accent 255)              # 강조색 256색 번호 (이스케이프 안으로 들어간다)
+    recent_s=$(( $(tt_conf_num recent_hours) * 3600 ))   # 이 안에 대화가 있으면 이름을 굵게
     # rc 표시 캐시 — 판정은 --cron(1분)가 해두고 여기선 한 줄 읽어 쓴다(포크 0)
     # 캐시가 5분 넘게 낡았으면 = cron이 안 도는 것 → 낡은 ⊘로 겁주지 말고 조용히 끈다
     rcoff=""; rcts=0
@@ -163,7 +169,7 @@ if [ "${1:-}" = "--list" ]; then
             [ "$name" = "${TT_CUR:-}" ] && continue
             [ "$attached" = - ] && attached=""    # 센티넬 해제 — 여기서부터는 표시용 빈 문자열
             if [ "$grp" = 0 ]; then   # 도구 세션: 청록, 맨 아래 그룹, 상태 장식 없음
-                printf '%s\t\033[38;5;73m%s\033[0m \033[36m%s\033[0m\n' "$name" "$name" "$attached"
+                printf '%s\t\033[38;5;%sm%s\033[0m \033[36m%s\033[0m\n' "$name" "$acc" "$name" "$attached"
                 continue
             fi
             # 상태: 훅 기록 우선(정확), 없거나 훅 프로세스가 죽었으면 화면 판정 폴백
@@ -220,7 +226,7 @@ if [ "${1:-}" = "--list" ]; then
                 *" $sid=gave "*) rcmark=$'\033[1;38;5;160m⊘\033[0m' ;;
                 *" $sid=off "*)  rcmark=$'\033[38;5;245m⊘\033[0m' ;;
             esac
-            if [ $(( now - ts )) -lt 21600 ]; then
+            if [ $(( now - ts )) -lt "$recent_s" ]; then
                 printf '%s\t\033[1m%s\033[0m \033[36m%s\033[0m %s %s %s\n' "$name" "$name" "$attached" "$mark" "$umark" "$rcmark"
             else
                 printf '%s\t\033[2m%s\033[0m \033[36m%s\033[0m %s %s %s\n' "$name" "$name" "$attached" "$mark" "$umark" "$rcmark"

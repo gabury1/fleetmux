@@ -136,6 +136,11 @@ if [ "${1:-}" = "--hook" ]; then
             #   쓸고 나서 없으면 만든다 = 어느 쪽이든 이 세션의 pid가 박힌 파일이 남는다.
             tt_sweep_hooks
             [ -f "$hf" ] || echo "idle $(date +%s) $cpid" > "$hf"
+            # 회전 임계(log_max)를 설정에서 읽으므로 캐시를 먼저 세운다 — 서브셸 아닌 맨
+            # statement (05-config.sh 의 계약). 훅 경로에서 설정을 읽는 곳은 여기 하나뿐이라
+            # 진입점 맨 위가 아니라 회전 바로 앞에 둔다: 이벤트마다 도는 working/idle 경로는
+            # 설정을 한 글자도 안 읽는다.
+            tt_conf_load
             tt_log_rotate   # cron이 안 깔린 환경에서도 감사 로그가 무한히 자라지 않게
             name="$sname"                          # 위에서 이미 물어봤다(포크 절약)
             [ -n "$name" ] || exit 0
@@ -177,10 +182,15 @@ if [ "${1:-}" = "--hook" ]; then
 fi
 
 # 상태바: 함대 집계(⏸n ✻n) + 끝난 세션 ✓이름 뱃지
-#   뱃지는 그 세션에 들어가보거나 10분 지나면 소멸. .tmux.conf status-right의 #(tt --status)가 5초마다 호출
+#   뱃지는 그 세션에 들어가보거나 unseen_minutes(기본 10분) 지나면 소멸.
+#   .tmux.conf status-right의 #(tt --status)가 5초마다 호출
 if [ "${1:-}" = "--status" ]; then
     f="$STATE/finished"
     now=$(date +%s)
+    # 설정은 진입점 맨 위에서 서브셸 아닌 맨 statement 로 한 번만 (05-config.sh 의 계약).
+    # 이 경로는 상태바가 5초마다 부른다 — 깨진 줄 하나가 조회 횟수만큼 경고를 뿜으면 안 된다.
+    tt_conf_load
+    unseen_s=$(( $(tt_conf_num unseen_minutes) * 60 ))
     agg=$(tt_fleet_agg)     # finished와 무관한 집계라 락 밖에서 먼저
     out=""
     if [ -s "$f" ]; then
@@ -200,7 +210,7 @@ if [ "${1:-}" = "--status" ]; then
             [ "${la:-0}" -gt "$ts" ] && continue    # 이미 들어가봄 = 확인 완료 → 제거
             keep="$keep$ts $name
 "
-            [ $(( now - ts )) -le 600 ] && out="$out ✓$name"   # 상태바엔 10분만, 파일은 볼 때까지 유지
+            [ $(( now - ts )) -le "$unseen_s" ] && out="$out ✓$name"   # 상태바엔 unseen_minutes 만큼만, 파일은 볼 때까지 유지
         done < "$f"
         printf '%s' "$keep" > "$f"
         tt_finished_unlock

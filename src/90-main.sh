@@ -195,7 +195,10 @@ fi
 
 # 도움말 화면 (팝업에서 ? 로 진입, CLI에서 tt --help)
 if [ "${1:-}" = "--help" ]; then
-    T=$'\033[38;5;73m'; D=$'\033[2m'; R=$'\033[0m'; B=$'\033[1m'
+    # 설정은 진입점 맨 위에서 서브셸 아닌 맨 statement 로 한 번만 (05-config.sh 의 계약).
+    tt_conf_load
+    acc=$(tt_conf_num accent 255)
+    T=$'\033[38;5;'"$acc"'m'; D=$'\033[2m'; R=$'\033[0m'; B=$'\033[1m'
     cat << EOF
 
   ${B}tt — tmux session manager${R}  ${D}works with claude & codex sessions${R}

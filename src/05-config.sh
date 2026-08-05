@@ -117,6 +117,27 @@ tt_conf_get() {
     tt_conf_default "$k"
 }
 
+# 수를 쓰는 키를 산술에 넣어도 안전한 형태로 읽는다. 모르는 키면 rc 1.
+#   왜 따로 두나: 위 화이트리스트 파서는 값의 **문자셋**만 본다. `recent_hours=6h` 는 통과한다.
+#   그 값이 그대로 $(( … )) 로 들어가면 산술 구문 오류가 나고, set -e 가 그걸 물어 --list 나
+#   --status 를 통째로 죽인다 — 손으로 고친 설정 한 줄이 관제탑을 못 뜨게 하면 안 된다.
+#   또 하나: `08` 은 문자셋 검사를 통과하지만 bash 산술에선 8진수라 "value too great for base"
+#   로 즉사한다. 그래서 통과한 값도 10#… 으로 한 번 정규화해서 내보낸다.
+#   두 번째 인자는 상한(선택) — accent 처럼 값이 이스케이프 시퀀스 안으로 들어가는 키에 쓴다.
+#   기본값으로 돌아갈 땐 조용히 넘어가지 않고 한 줄 말한다(파서의 무시 경고와 같은 규율).
+tt_conf_num() {
+    local k="${1:-}" max="${2:-}" v ok=1
+    v=$(tt_conf_get "$k") || return 1
+    case "$v" in ''|*[!0-9]*) ok=0 ;; esac
+    if [ "$ok" = 1 ] && [ -n "$max" ] && [ "$(( 10#$v ))" -gt "$max" ]; then ok=0; fi
+    if [ "$ok" = 0 ]; then
+        printf 'fleetmux: %s 의 값을 쓸 수 없다 — 기본값으로 간다: %s\n' "$k" "$v" >&2
+        v=$(tt_conf_default "$k")
+    fi
+    printf '%s' "$(( 10#$v ))"
+    return 0
+}
+
 # 값이 어디서 왔나 — env | file | default
 tt_conf_source() {
     local k="${1:-}" envn v

@@ -10,21 +10,10 @@ tt_conf_is_bool() {
     case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore) return 0 ;; *) return 1 ;; esac
 }
 
-# 이 키가 실제 동작에 물려 있나 — "(미배선)" 표시의 근거다.
-#   거짓말하는 토글을 주지 않기 위한 장치다: 켜고 꺼도 아무 일이 안 일어나는 키를 아무 표시
-#   없이 늘어놓으면, 사용자는 자기가 끈 기능이 꺼진 줄 안다. 그건 설정 화면이 할 수 있는
-#   가장 나쁜 거짓말이다.
-#   rc·snapshot·boot_restore 는 60-rc.sh:83/164/173 · 70-fleet.sh:29/346 이 tt_conf_on 으로
-#   판정한다. key_summon·key_summon_fast·snapshot_on_exit 는 87-tmux-conf.sh 가 tmux 스니펫에
-#   박고, 값을 바꾸면 85 의 tt_conf_resnip 이 그 자리에서 스니펫을 다시 쓴다.
-#   ★ 새 키를 코드에 물릴 때 이 목록에 같이 넣어라. 안 넣으면 표시가 거짓이 된다.
-tt_conf_wired() {
-    case "${1:-}" in
-        rc|snapshot|boot_restore) return 0 ;;
-        key_summon|key_summon_fast|snapshot_on_exit) return 0 ;;
-        *) return 1 ;;
-    esac
-}
+# "미배선" 표시의 근거인 tt_conf_wired 는 85-config-cli.sh 에 있다 — `tt config list` 도
+#   같은 판정을 쓰기 때문이고, 85 가 이 파일보다 먼저 이어붙으니 여기서 그냥 부르면 된다.
+#   손으로 적은 목록이 아니라 코드에서 뽑는다: 더 이상 "새 키를 물릴 때 목록도 같이 고쳐라"를
+#   기억할 필요가 없다.
 
 # 한 줄 설명. 괄호를 피한다 — 이 문자열이 언젠가 fzf --bind 의 execute/reload 인자 안으로
 # 들어가면 닫는 괄호가 바인딩을 잘라먹는다(80-view.sh:58 과 같은 이유).
@@ -119,8 +108,9 @@ if [ "${1:-}" = "--config-toggle" ]; then
     # env 가 이기는 키는 파일에 뭘 써도 값이 안 바뀐다 — 딱 그 "거짓말하는 토글"이라 막는다.
     #   불린 판정보다 먼저다: 값을 입력받는 키도 마찬가지로 안 먹으니, 입력을 받아놓고
     #   버리느니 애초에 묻지 않는 게 맞다.
-    #   log_max 가 지금 항상 여기 걸린다 — 10-util.sh:21 이 TT_LOG_MAX 를 스스로 세우기
-    #   때문이다. 그 키를 tt_conf_get 경유로 바꾸는 순간(임계값 배선) 여기서 풀린다.
+    #   log_max 는 예전엔 항상 여기 걸렸다 — 10-util.sh 가 TT_LOG_MAX 전역을 스스로 세웠고,
+    #   그 이름이 곧 이 키의 환경변수 이름이라 늘 "env 가 이긴다"로 읽혔다. 임계값 배선으로
+    #   그 전역을 없앴으니 이제 진짜 환경변수를 걸었을 때만 걸린다.
     if [ "$(tt_conf_source "$k")" = env ]; then
         echo "$k 는 환경변수 $(tt_conf_envname "$k") 가 이긴다 — 설정 파일에 써도 안 먹는다" >&2
         exit 1
