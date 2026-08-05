@@ -185,7 +185,26 @@ if [ "${1:-}" = "--hook" ]; then
         mconv=""; mhome=""
         if [ -n "$payload" ]; then
             tt_jv "$payload" session_id && mconv="$TT_JV" || true   # claude 훅의 대화 id
-            tt_jv "$payload" cwd && mhome="$TT_JV" || true          # claude의 cwd = 대화 홈
+            # 대화 홈: cwd 를 그대로 믿으면 안 된다. 훅은 **서브에이전트도 쏘고**, 그 payload 의
+            # cwd 는 서브에이전트가 일하던 디렉토리다. 그걸 홈으로 적으면 복원이
+            #   ( cd '<엉뚱한 곳>' && claude --resume <id> )
+            # 를 돌리고, claude 는 그 cwd 로 인코딩된 폴더에서 대화를 못 찾아 실패한다.
+            # (2026-08-06 실측: tui-worker·membership·ops 세 줄이 이렇게 깨져 복원이 죽었다.)
+            #
+            # transcript_path 가 진실을 안다 — ~/.claude/projects/<홈을 인코딩한 이름>/<id>.jsonl.
+            # 그래서 cwd 를 인코딩해 그 폴더 이름과 **같을 때만** 홈으로 채택한다.
+            # 어긋나면 빈 값으로 넘겨 기존 기록을 보존한다(디코딩은 안 한다 — '-' 가 든 디렉토리
+            # 이름이 있으면 인코딩이 되돌릴 수 없다: _myproject → -home-...-_myproject).
+            mhome=""
+            if tt_jv "$payload" cwd; then
+                _hcwd="$TT_JV"
+                if tt_jv "$payload" transcript_path; then
+                    _hdir=${TT_JV%/*}; _hdir=${_hdir##*/}          # 인코딩된 폴더 이름
+                    case "$(printf '%s' "$_hcwd" | tr '/' '-')" in
+                        "$_hdir") mhome="$_hcwd" ;;                 # 일치 → 이 cwd 가 진짜 홈이다
+                    esac
+                fi
+            fi
         fi
         # pane 명령은 도구 실행 중엔 claude가 아닐 수 있다(자식이 tty 전면에 올 때) →
         # 확실할 때만 적고 아니면 빈 값으로 넘겨 기존 기록을 보존한다.
