@@ -331,11 +331,17 @@ fi
 #   표시줄)만 보여준다. 그래서 {1}·{+1}은 공백이 들어간 이름도 잘리지 않은 채로 tt에 전달되고,
 #   {3}은 프리뷰가 last-<id> 를 찾는 열쇠가 된다(프리뷰 안에서 tmux에 되묻지 않아도 된다).
 # 프리뷰는 tail — 중요한 건 화면 하단(입력창·스피너·승인 프롬프트)인데 전체를 흘려보내면 잘린다.
-# --preview-label 은 ' screen ' 이 아니라 ' session ' 이다. 창 안에 이제 두 가지가 산다:
+# --preview-label 은 ' screen ' 이 아니라 **고른 세션의 이름**이다. 창 안에 이제 두 가지가 산다:
 #   위의 last prompt 헤더(우리가 쓴 글)와 그 아래 화면 꼬리(남의 출력). 바깥 라벨이 ' screen '
 #   이면 헤더까지 화면인 것처럼 말한다 — 라벨은 창 전체를 가리키므로 창 전체가 무엇인지,
 #   즉 "고른 세션"을 말해야 맞다. 헤더가 자기 이름(last prompt)을 스스로 대므로
 #   화면 꼬리에는 따로 이름표가 필요 없다.
+#   focus 는 커서가 옮겨질 때마다(첫 렌더 포함) 발화하므로 라벨이 늘 현재 행을 따라간다.
+#   --preview-label 의 ' session ' 은 그 첫 발화 전 한 순간의 폴백이다.
+#   {1}(순수 이름)을 쓰는 이유: 2번 필드는 색코드가 박혀 있어 라벨에 그대로 새면 깨진다.
+#   주의 — 이 액션의 인자는 괄호로 닫히므로 이름에 ')' 가 들어가면 파싱이 깨진다.
+#   tt 로 만드는 이름엔 그런 글자가 없고, 외부에서 그렇게 지은 세션은 라벨만 이상해질 뿐
+#   목록·진입·프리뷰 본문은 멀쩡하다(부가물 원칙).
 # 목록 생산자의 stderr 는 화면이 아니라 hook.log 로 간다 — 설정 파일에 깨진 줄이 있으면
 # 그 경고가 fzf 화면 위에 덧칠돼 관제탑을 못 읽게 만든다. 버리지 않는 이유는 86 과 같다(권고 N3).
 # footer 가 설정 키를 적는다 — 목록에서 ⚙ 행을 뺀 대신 여기서 발견성을 갚는다. 바인딩과 표기가
@@ -348,6 +354,7 @@ session=$("$SELF" --list 2>>"$STATE/hook.log" \
           --color='pointer:#4ec9b0,prompt:#4ec9b0,hl:#56b6c2,hl+:#56b6c2,bg+:#18221e,fg+:regular,footer:#4a5a52,border:#4a5a52,label:#4ec9b0,preview-border:#4a5a52' \
           --preview "$SELFQ --preview {1} {3}" \
           --preview-window 'right,65%,border-rounded' --preview-label=' session ' \
+          --bind 'focus:change-preview-label( {1} )' \
           --bind 'right:accept' \
           --bind 'left:abort' \
           --bind "ctrl-r:reload($SELFQ --list)" \
