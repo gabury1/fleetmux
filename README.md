@@ -120,21 +120,28 @@ Two settings, because **one physical key arrives under different names per termi
   may arrive as.
 
 ```bash
-tt config set key_summon_fast 'C-Left M-Left'   # rewrites the tmux snippet on the spot
+tt config set key_summon_fast S-Left            # rewrites the tmux snippet on the spot
+tt config set key_summon_fast 'C-Left M-Left'   # or several names for one physical key
 tt config unset key_summon_fast                 # back to prefix-only
 ```
 
 What to bind where. **The rows are bindings (tmux key names), not physical keys** —
 that distinction is the whole problem: one physical key arrives under a different
-tmux name on each platform.
+tmux name on each platform. O = the binding fires, X = the key never reaches tmux.
 
 | binding you would write | Linux | macOS | Windows Terminal → WSL2 |
 |---|---|---|---|
-| `prefix + F` — the default | reaches tmux | reaches tmux | reaches tmux |
-| `bind -n C-Left` | usually reaches tmux | Ctrl+← is often eaten by Mission Control first | reaches tmux |
-| `bind -n M-Left` | usually reaches tmux | Option+← does **not** arrive under this name | Alt+← never arrives — WT moves its own panes |
-| `bind -n M-b` | fires on Alt+b — it is not an arrow key here | this is what **Option+←** arrives as | fires on Alt+b |
+| `prefix + F` — the config default | **O** reaches tmux | **O** reaches tmux | **O** reaches tmux |
+| `bind -n S-Left` — what `./install.sh` offers | **O** reaches tmux | **O** Shift+arrow is not claimed by Mission Control | **O** WT claims Alt+arrow, not Shift+arrow |
+| `bind -n C-Left` | **O** usually reaches tmux | **X** Ctrl+← is often eaten by Mission Control first | **O** reaches tmux |
+| `bind -n M-Left` | **O** usually reaches tmux | **X** Option+← does **not** arrive under this name | **X** Alt+← never arrives — WT moves its own panes |
+| `bind -n M-b` | **O** but it fires on Alt+b — it is not an arrow key here | **O** this is what **Option+←** arrives as | **O** but it fires on Alt+b |
 
+- **Shift+arrow is the only prefix-less single keystroke that survives all three.**
+  `C-arrow` is taken by macOS Mission Control, `M-arrow` is taken by Windows Terminal
+  and never arrives as itself on macOS, and `Ctrl`+letter is already spoken for by
+  shell line-editing, vim, emacs and fzf widgets. Shift+arrow is left over — and your
+  hand is already there, since Shift sits next to the arrow keys.
 - **macOS Option+←/→ arrives as `M-b`/`M-f`, not `M-Left`/`M-Right`.** The terminal
   sends `ESC b` for Terminal.app compatibility — Ghostty is reported to do this too,
   even with `macos-option-as-alt` set. Bind `M-b`, not `M-Left`.
@@ -142,17 +149,53 @@ tmux name on each platform.
   tmux. Turn it off in System Settings or pick another key.
 - **Windows Terminal** claims `Alt+Arrow` for its own pane navigation before WSL sees
   it. `C-Left` survives.
+- **Known risk, stated plainly: plenty of dotfiles already bind `S-Left`/`S-Right` to
+  tmux window switching.** If yours does, pick another preset at install time —
+  `./install.sh` reads your tmux config first and prints the offending lines before it
+  binds anything, but it can only see bindings that live in a file it knows about.
 
 > **How much of this is measured?** Only the Linux column — this build has never run
-> on macOS or under WSL2. The macOS and WSL rows are *reported* behaviour (terminal
-> documentation and user reports), not something we reproduced. If you are the first
-> to install on either, you are the first measurement: run `./install.sh --dry-run`
-> first, and tell us what the keys actually did.
+> on macOS or under WSL2. The macOS and WSL rows, `S-Left` included, are *reported*
+> behaviour (terminal documentation and user reports), not something we reproduced.
+> If you are the first to install on either, you are the first measurement: run
+> `./install.sh --dry-run` first, and tell us what the keys actually did.
 
-That is why the default is `prefix + F`: it is the only binding that works on every
-platform without taking a key away from something else. `./install.sh` offers presets
-(`safe` / `mac` / `linux` / `wsl`) and detects the platform, but you can always change
-your mind with `tt config set`.
+### Why a single keystroke is what the installer offers
+
+**Why one keystroke.** `prefix + F` costs two chords for a thing you hit dozens of
+times an hour. So the installer offers `S-Left`: one key, no prefix, and — per the
+table above — the only such key that is not already claimed on some platform. Left,
+not right, because that is where the popup has always been summoned from; inside the
+popup `→` still enters and `←` still closes, the usual TUI convention (ranger, lf,
+nnn, vifm). Outside is "call it", inside is "close it" — different contexts, and in
+practice not confusing.
+
+**What it takes.** A prefix-less binding is global to the pane: tmux swallows the key
+before anything running inside sees it. Accept `S-Left` and vim, your shell's line
+editing and fzf stop receiving Shift+← *in tmux panes*. That is a real cost, which is
+why it is an offer you answer, never something that happens quietly.
+
+**What still never happens quietly.** The config default for `key_summon_fast` stays
+**empty**: installing the config file alone steals nothing. `./install.sh --yes` and
+any non-interactive run also go to `safe` — automatic approval must not take somebody
+else's key. A prefix-less key is bound only when a human answers the prompt, or writes
+`--preset` on the command line.
+
+**How to turn it off.**
+
+```bash
+tt config unset key_summon_fast   # rewrites the snippet, emits unbind for the old key
+```
+
+The snippet emits `unbind -n -q <key>` for every prefix-less key fmux itself has bound,
+so the key goes back to whatever it did before — tmux keeps bindings until told
+otherwise, and removing a line from a config file is not telling it.
+
+`./install.sh` offers presets (`shift` / `safe` / `mac` / `linux` / `wsl`). It still
+detects your platform and says so, but the *suggestion* is `shift` on all three: the
+`mac`, `linux` and `wsl` presets each work on their own platform only, while `S-Left`
+is the one that works on all of them. You can always change your mind with
+`tt config set`.
 
 fmux does not edit your `~/.tmux.conf`. It owns one file and borrows one line:
 
@@ -334,14 +377,16 @@ popup.
 ./install.sh --yes          accept every proposed default — except the summon key,
                             which stays `safe` (no prefix-less key is taken)
 ./install.sh --prefix DIR   install somewhere other than ~/.local
-./install.sh --preset mac   summon-key preset: safe | mac | linux | wsl
+./install.sh --preset shift summon-key preset: shift | safe | mac | linux | wsl
+                            (interactively it offers `shift` = S-Left; see above)
 ```
 
-`--yes` deliberately does **not** accept the detected key preset. Binding a
-prefix-less key is a global change to your tmux — it takes that key away from whatever
-else was using it — so it happens only when you name a preset yourself. "Accept the
-defaults" must never mean "take two of my keys". Without `--preset`, `--yes` leaves
-`key_summon_fast` empty, exactly as the default promises.
+`--yes` deliberately does **not** accept the detected key preset, nor the offered
+`shift` one. Binding a prefix-less key is a global change to your tmux — it takes that
+key away from whatever else was using it — so it happens only when you name a preset
+yourself or answer the prompt. "Accept the defaults" must never mean "take my keys".
+Without `--preset`, `--yes` leaves `key_summon_fast` empty, exactly as the default
+promises. The same holds for any run where stdin is not a terminal.
 
 Eight steps: dependencies → `~/.local/bin/fmux` (+ the `tt` symlink) → hook shims in
 `~/.local/libexec/tt/` → the tmux snippet → summon-key preset → agent skill → cron
@@ -423,7 +468,8 @@ weaker there. Be honest with yourself about this before relying on it:
   `wsl.exe -d <distro> -- ~/.local/bin/fmux --boot-restore`), and typically a
   long-lived process to keep the instance alive at all.
 - **Key bindings are more constrained.** Windows Terminal takes `Alt+Arrow` before
-  WSL sees it; use `prefix + F` or `C-Left`.
+  WSL sees it; use `prefix + F`, `S-Left` or `C-Left`. (Windows Terminal claims
+  Alt+arrow, not Shift+arrow — which is why `S-Left` is what the installer offers.)
 
 Everything that does not depend on the machine staying up — the popup, hook state,
 broadcast, `tt config`, `--restore` run by hand — works normally.
@@ -451,7 +497,8 @@ Most likely nothing is bound: `key_summon_fast` is empty by default, on purpose 
 takes no key until you say so. Turn it on and re-source:
 
 ```bash
-tt config set key_summon_fast 'C-Left M-Left'   # macOS: 'M-b'
+tt config set key_summon_fast S-Left            # works on macOS, Linux and WSL alike
+tt config set key_summon_fast 'C-Left M-Left'   # Linux-only alternative; macOS: 'M-b'
 ```
 
 Then check three things:
@@ -467,6 +514,9 @@ Then check three things:
 
 On macOS, Option+← arrives as `M-b`, not `M-Left`, and Ctrl+arrow is usually eaten by
 Mission Control. Under Windows Terminal, Alt+arrow never reaches WSL; use `C-Left`.
+`S-Left` sidesteps both — it is the one prefix-less key reported to reach tmux on all
+three. If `S-Left` also does nothing, something else in your config already binds it:
+`tmux list-keys -T root | grep S-Left` shows who won.
 
 ### Q3. The list shows up, but `⏸` (waiting for approval) never does
 

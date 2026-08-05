@@ -63,6 +63,29 @@ assert_eq "$(count_lines "$out" '^bind F ')" "1" "fast 를 켜도 prefix 키는 
 # 같은 키에 unbind 가 먼저 나와야 재적용이 멱등하다
 assert_eq "$(count_lines "$out" '^unbind .*C-Left$')" "1" "거는 키도 먼저 걷는다"
 
+# ── ④-b 설치기가 제안하는 키(S-Left)를 생성기가 그대로 받는가 ───────────────
+# 제안이 프리셋 이름에만 있고 생성기가 그 값을 못 받으면, 설치기는 "걸었다"고 말하면서
+# 아무것도 안 건다. 그래서 값 검증(tt_conf_is_tmux_key)까지 통과하는지를 여기서 잰다.
+rm -f "$SNIP" "$CONF"
+printf 'key_summon_fast=S-Left\n' > "$CONF"
+out=$("$TTBIN" --tmux-conf)
+assert_contains "$out" "bind -n S-Left " "S-Left 가 무prefix 로 걸린다"
+assert_eq "$(count_lines "$out" '^bind -n ')" "1" "S-Left 하나만 걸린다"
+assert_eq "$(count_lines "$out" '^unbind -n -q S-Left$')" "1" "거는 키를 먼저 걷는다(재적용 멱등)"
+# 이전 키 → S-Left 로 갈아탈 때 이전 키의 unbind 가 나와야 한다. tmux 는 설정에서 줄을
+# 지운다고 바인딩을 놓지 않는다 — 그래서 이 unbind 가 없으면 옛 키가 서버에 계속 산다.
+rm -f "$SNIP" "$CONF"
+printf 'key_summon_fast=C-Left M-Left\n' > "$CONF"
+"$TTBIN" --tmux-conf --write >/dev/null
+assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "2" "전제: 먼저 옛 키 두 개가 걸려 있다"
+printf 'key_summon_fast=S-Left\n' > "$CONF"
+"$TTBIN" --tmux-conf --write >/dev/null
+assert_eq "$(grep -c '^bind -n S-Left ' "$SNIP" || true)" "1" "새 키만 걸린다"
+assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "1" "옛 키는 더 이상 안 걸린다"
+assert_eq "$(grep -c '^unbind -n -q C-Left$' "$SNIP" || true)" "1" "옛 키 C-Left 의 unbind 가 나온다"
+assert_eq "$(grep -c '^unbind -n -q M-Left$' "$SNIP" || true)" "1" "옛 키 M-Left 의 unbind 가 나온다"
+rm -f "$SNIP" "$CONF"
+
 # ── ⑤ key_summon 을 비우면 prefix 바인딩이 사라진다 ──────────────────────────
 printf 'key_summon=\n' > "$CONF"
 out=$("$TTBIN" --tmux-conf)

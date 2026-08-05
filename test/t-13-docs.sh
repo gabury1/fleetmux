@@ -150,10 +150,37 @@ assert_contains "$(cat install.sh)" '.claude/skills/fleetmux'   "install.sh 의 
 # 키 이름이 설치기가 실제로 내주는 프리셋 값인지는 잴 수 있다 — 팀원이 그 이름을 얻는 문이
 # install.sh 의 프리셋이기 때문이다.
 INST_SH=$(cat install.sh)
-for k in 'M-b' 'C-Left' 'M-Left'; do
+for k in 'M-b' 'C-Left' 'M-Left' 'S-Left'; do
     assert_contains "$RM"      "$k" "README 가 $k 를 설명한다"
     assert_contains "$INST_SH" "$k" "$k 를 install.sh 프리셋이 실제로 내준다"
 done
+
+# ── ④-a 제안이 S-Left 라는 사실이 화면·문서·코드에서 같은 말을 하는가 ───────
+# 설치기가 제안하는 키와 README 의 표·문단과 tt --help 의 안내가 다른 말을 하면,
+# 팀원은 셋 중 무엇을 믿을지 알 수 없다. 셋을 같은 문자열로 묶는다.
+assert_contains "$INST_SH" 'PRESET_SUGGEST=shift' "install.sh 의 제안 기본값이 shift 다"
+assert_contains "$INST_SH" "shift) printf 'S-Left'" "shift 프리셋이 실제로 S-Left 를 낸다"
+assert_contains "$INST_SH" '이 키를 pane 안 모든 앱에서 가져갑니다' "제안 문구가 무엇을 뺏는지 말한다"
+assert_contains "$INST_SH" '이미 쓰고 있다면 다른 키를 골라라' "이미 쓰는 사람에게 다른 키를 권한다"
+assert_contains "$RM" '`bind -n S-Left` — what `./install.sh` offers' "README 표에 Shift 행이 있다"
+assert_contains "$RM" 'the only prefix-less single keystroke that survives all three' \
+    "README 가 왜 Shift 계열인지 근거를 적는다"
+assert_contains "$RM" 'bind `S-Left`/`S-Right` to' "README 가 알려진 위험(창 전환 바인딩)을 적는다"
+assert_contains "$RM" 'Why a single keystroke is what the installer offers' \
+    "README 에 왜 한 타건인가 문단이 있다"
+assert_contains "$RM" 'tt config unset key_summon_fast   # rewrites the snippet' \
+    "README 가 어떻게 끄는지 적는다"
+assert_contains "$RM" 'installing the config file alone steals nothing' \
+    "README 가 설정 기본값은 여전히 빈 값이라고 적는다"
+# 화면(tt --help)도 같은 말을 해야 한다 — 여기서만 옛 키를 가르치면 안 된다.
+HELP=$("$TTBIN" --help 2>&1) || HELP=''
+assert_contains "$HELP" 'S-Left' "tt --help 가 S-Left 를 안내한다"
+assert_contains "$HELP" 'takes that key from everything in' "tt --help 도 무엇을 뺏는지 말한다"
+assert_eq "$(printf '%s' "$HELP" | grep -c "key_summon_fast 'C-Left M-Left'" || true)" "0" \
+    "tt --help 에 옛 제안(C-Left M-Left)이 남아 있지 않다"
+
+# 설정 기본값은 갈라진 채로 남아야 한다 — 제안이 바뀌었다고 기본값까지 따라가면 안 된다.
+assert_eq "$("$TTBIN" config get key_summon_fast)" "" "설정 기본값 key_summon_fast 는 여전히 빈 값"
 
 # 스니펫 생성기에는 **정적 후보 목록이 없어야 한다**(게이트 B3). 있으면 기본(safe) 프리셋에서도
 # 그 키들을 unbind 해 — 우리가 안 건 키를, 즉 남의 바인딩을 지운다. README 는 바로 옆에서

@@ -64,6 +64,12 @@ tt_conf_default() {
         key_help)        printf '?' ;;
         key_settings)    printf 'ctrl-o' ;;
         key_summon)      printf 'F' ;;
+        # 무prefix 소환키의 기본값은 **빈 값으로 남는다**. 설정 파일만 깔린 상태에서 말없이
+        # 남의 키를 뺏으면 안 된다 — 무prefix 바인딩은 그 pane 안 모든 앱(vim·셸·fzf)에서
+        # 그 키를 가져간다. 그건 사람이 한 번 "예"라고 말한 뒤에만 일어나야 한다.
+        #   그래서 정책이 둘로 갈린다: **설정 기본값은 빈 값, 설치기의 제안은 S-Left**.
+        #   (install.sh 의 프리셋 절이 왜 S-Left 인지를 길게 적어 뒀다. 요약: Shift+방향키가
+        #    macOS·리눅스·Windows Terminal 세 곳을 다 통과하는 유일한 무prefix 한 타건이다.)
         key_summon_fast) printf '' ;;
         *) return 1 ;;
     esac
@@ -3317,7 +3323,7 @@ if [ "${1:-}" = "--help" ]; then
     hkset=$(tt_key_label "$TT_KEY_SETTINGS")   # 팝업 바인딩과 같은 값에서 뽑은 표기
     if [ -n "$hsum" ]; then hsummon="prefix + $hsum"; else hsummon="(key_summon is empty)"; fi
     if [ -n "$hfast" ]; then hsummon="$hsummon  ·  $hfast  ${D}prefix-less${R}"
-    else hsummon="$hsummon  ${D}· no prefix-less key — tt config set key_summon_fast 'C-Left M-Left'${R}"
+    else hsummon="$hsummon  ${D}· no prefix-less key — tt config set key_summon_fast S-Left${R}"
     fi
     cat << EOF
 
@@ -3342,6 +3348,11 @@ if [ "${1:-}" = "--help" ]; then
     ${D}key_summon is pressed after the prefix; key_summon_fast is a space-separated list of${R}
     ${D}prefix-less keys — one physical key arrives under different names per terminal${R}
     ${D}changing either key, or snapshot_on_exit, rewrites the snippet on the spot${R}
+    ${D}S-Left is what ./install.sh offers: the one prefix-less single keystroke that reaches${R}
+    ${D}tmux on macOS, Linux and Windows Terminal alike. It takes that key from everything in${R}
+    ${D}the pane (vim, shell line-editing, fzf) — that is why it is offered, never a default.${R}
+    ${D}Some dotfiles bind S-Left/S-Right to window switching; pick another key if yours does.${R}
+    ${D}tt config unset key_summon_fast gives the key back — key_summon still summons.${R}
 
   ${T}broadcast${R}
     Tab-mark multiple sessions, then Enter — send one prompt to all

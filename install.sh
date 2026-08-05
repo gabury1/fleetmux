@@ -6,6 +6,8 @@
 #   ./install.sh --yes        물음에 전부 yes (제안된 기본값을 그대로 받는다)
 #                             소환키만은 예외 — safe(아무 키도 안 뺏음)로 간다. 무prefix 키를
 #                             전역으로 뺏는 것은 --preset 으로 명시할 때만 일어난다.
+#                             (물어볼 수 있을 때의 제안은 shift = S-Left 다. 왜 그 키인지는
+#                              아래 "⑤ 소환키 프리셋" 절 머리말에 근거를 적어 뒀다.)
 #
 # 규율 넷 — 이 파일을 고칠 사람에게:
 #   ① 멱등하다. 두 번 돌려도 안전하고, 이미 있는 것은 덮기 전에 알린다.
@@ -35,9 +37,11 @@ usage: ./install.sh [옵션]
   -y, --yes           물음에 전부 yes (제안된 기본값을 그대로 받는다)
                       단, 소환키는 safe 로 간다 — 무prefix 키는 아무것도 안 뺏는다
       --prefix DIR    설치 위치 (기본 ~/.local — bin/ 과 libexec/tt/ 가 그 밑에 생긴다)
-      --preset NAME   소환키 프리셋: safe | mac | linux | wsl
-                      물어볼 수 있으면 플랫폼 감지값을 제안한다. --yes 로는 안 뺏는다 —
-                      무prefix 키를 뺏는 것은 여기서 명시할 때만 일어난다.
+      --preset NAME   소환키 프리셋: shift | safe | mac | linux | wsl
+                      물어볼 수 있으면 shift(S-Left)를 제안한다 — 맥·리눅스·Windows Terminal
+                      세 곳 모두에 도착하는 유일한 무prefix 한 타건이다. 대신 그 pane 안
+                      모든 앱에서 그 키를 가져간다. --yes 로는 안 뺏는다 — 무prefix 키를
+                      뺏는 것은 여기서 명시할 때만 일어난다.
   -h, --help          이 도움말
 
 무엇을 하나: 의존성 확인 → 바이너리 설치 → 훅 shim 배치 → tmux 스니펫 →
@@ -554,9 +558,34 @@ install_snippet() {
 
 # ── ⑤ 소환키 프리셋 ────────────────────────────────────────────────────────
 # 물리 키 하나가 터미널마다 다른 이름으로 도착한다 — 그래서 목록이다(87-tmux-conf.sh).
+#
+# ── 왜 제안이 S-Left 인가 (이 판단의 근거를 여기 남긴다) ─────────────────────
+# prefix 방식은 거부됐다: "두 번 눌러야 되잖아". 원하는 것은 무prefix 한 타건이다.
+# 조합을 훑으면 **Shift+방향키가 세 플랫폼을 다 통과하는 유일한 한 타건**이다:
+#
+#   C-화살표 : macOS 의 Mission Control 이 가져간다(스페이스 전환·창 보기)
+#   M-화살표 : macOS 는 Option 을 ESC b 로 보내고, Windows Terminal 은 Alt+화살표를 먼저 먹는다
+#   Ctrl+글자: 거의 전부 셸 줄편집·vim·emacs·fzf 위젯이 이미 쓴다
+#   S-화살표 : 세 플랫폼 모두 통과. 손도 안 멀다(방향키 옆이 Shift)
+#
+# 방향이 **왼쪽**인 이유는 취향이 아니라 이미 형성된 조작 모델이다:
+#   - 사용자는 몇 주간 C-Left·M-Left 로 왼쪽에서 팝업을 불러 왔다. S-Left 는 그 손버릇을 잇는다.
+#   - 팝업 안에서는 → 가 진입(accept), ← 가 닫기(abort)다. 그 관례는 그대로 둔다 —
+#     ranger·lf·nnn·vifm 등 TUI 계열의 보편 관례이고, 팀원 둘이 이미 그렇게 설치했다.
+#   - "밖에서 왼쪽은 부르기, 안에서 왼쪽은 닫기"는 맥락이 달라 안 헷갈린다(실사용으로 확인).
+#
+# 알려진 위험 하나 — 정직하게 적는다: **S-Left/S-Right 를 tmux 창 전환에 바인딩한 dotfile 이
+# 흔하다.** 그래서 아래 preset_conflicts 가 설정 파일을 먼저 읽어 알려주고, 그런 사람은
+# 설치 때 다른 프리셋을 고르면 된다.
+#
+# 정책은 둘로 갈린다(05-config.sh 의 key_summon_fast 기본값 주석과 짝이다):
+#   설정 기본값 = 빈 값(아무 키도 안 뺏음)  ·  설치기의 제안 = shift(S-Left)
+# 제안은 사람이 눈으로 보고 "예"라고 말할 자리가 있을 때만 유효하다. 그래서 --yes 와
+# 터미널 아닌 자리는 여전히 safe 로 간다 — 자동 승인이 남의 키를 가져가면 안 된다.
 preset_value() {
     case "${1:-}" in
         safe)  printf '' ;;
+        shift) printf 'S-Left' ;;
         mac)   printf 'M-b' ;;
         linux) printf 'C-Left M-Left' ;;
         wsl)   printf 'C-Left' ;;
@@ -568,10 +597,43 @@ preset_value() {
 preset_why() {
     case "${1:-}" in
         safe)  printf 'prefix 뒤의 소환키만 쓴다 — 남의 키를 하나도 안 뺏는다' ;;
+        shift) printf '맥·리눅스·Windows Terminal 세 곳 모두에 도착하는 유일한 무prefix 한 타건' ;;
         mac)   printf '맥의 Option+← 는 터미널이 ESC b 로 보내 M-b 로 도착한다' ;;
         linux) printf '터미널마다 C-Left 또는 M-Left 로 온다 — 둘 다 건다' ;;
         wsl)   printf 'Windows Terminal 이 Alt+화살표를 자기가 먼저 먹는다 — C-Left 만 남는다' ;;
     esac
+}
+
+# 프롬프트가 기본으로 내미는 프리셋. 플랫폼 감지값이 아니다 — 세 플랫폼 공통으로 되는
+# 하나(S-Left)를 내민다. 감지값은 여전히 화면에 뜨지만 그건 "이 기계는 이렇게 보인다"는
+# 정보이지 제안이 아니다.
+PRESET_SUGGEST=shift
+
+# 프리셋이 걸 키를 사용자가 이미 자기 설정에서 쓰고 있나 — 덮기 전에 알리기 위해서다.
+# 살아있는 tmux 서버에 묻지 않는다(list-keys): 설치기는 서버가 없어도 돌아야 하고, 남의
+# 서버에 말을 거는 것 자체가 이 프로젝트가 안 하는 일이다. 그래서 **설정 파일만** 읽는다.
+# 그래서 이 감지는 완전하지 않다 — 파일에 없는 바인딩(다른 스니펫이 source 한 것, 손으로
+# 친 것)은 못 본다. 그 한계 때문에 제안 문구에 "이미 쓰고 있다면 다른 키를 골라라"를 같이 적는다.
+preset_conflicts() {   # $1=키 목록(공백 구분) → "키  파일:줄  그 줄 전문" 을 줄마다
+    local keys="${1:-}" f line k n raw
+    [ -n "$keys" ] || return 0
+    for f in "$HOME/.tmux.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"; do
+        [ -r "$f" ] || continue
+        # 우리 스니펫은 후보가 아니다 — 우리가 지난번에 건 것을 "남의 키"라 말하면 거짓이다.
+        [ "$f" = "${SNIP:-}" ] && continue
+        n=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            n=$((n + 1))
+            raw="$line"
+            while :; do case "$line" in [[:blank:]]*) line=${line#?} ;; *) break ;; esac; done
+            case "$line" in 'bind '*|'bind-key '*) ;; *) continue ;; esac
+            for k in $keys; do
+                # 낱말 경계로 본다 — 양옆에 공백을 붙여 부분일치(C-Left 안의 Left)를 막는다.
+                case " $line " in *" $k "*) printf '%s  %s:%s  %s\n' "$k" "$f" "$n" "$raw" ;; esac
+            done
+        done < "$f"
+    done
+    return 0
 }
 
 detect_preset() {
@@ -589,11 +651,24 @@ detect_preset() {
 
 install_preset() {
     step 5/8 "소환키"
-    local guess want cur v
+    local guess want cur v clash sug line
 
     guess=$(detect_preset)
+    sug=$(preset_value "$PRESET_SUGGEST")
+
+    # 제안은 어느 분기로 가든 **먼저, 똑같이** 화면에 뜬다. --yes 나 CI 에서 돌린 사람도
+    # "무엇을 안 받았고 어떻게 받는지"를 그 자리에서 봐야 하기 때문이다. 결정만 분기가 가른다.
+    note "제안: $PRESET_SUGGEST — key_summon_fast='$sug' ($(preset_why "$PRESET_SUGGEST"))"
+    note "  이 키를 pane 안 모든 앱에서 가져갑니다 — vim·셸 줄편집·fzf 가 그 pane 에서 S-Left 를 못 본다."
+    note "  S-Left/S-Right 를 tmux 창 전환에 걸어 둔 dotfile 이 흔하다. 이미 쓰고 있다면 다른 키를 골라라."
+    clash=$(preset_conflicts "$sug")
+    if [ -n "$clash" ]; then
+        warn "이미 그 키를 거는 줄을 설정에서 찾았다 — 프리셋을 고르면 우리 바인딩이 이깁니다:"
+        printf '%s\n' "$clash" | while IFS= read -r line; do printf '      %s\n' "$line"; done
+    fi
+
     if [ -n "$PRESET" ]; then
-        preset_value "$PRESET" > /dev/null 2>&1 || die "모르는 프리셋: $PRESET (safe|mac|linux|wsl)"
+        preset_value "$PRESET" > /dev/null 2>&1 || die "모르는 프리셋: $PRESET (safe|shift|mac|linux|wsl)"
         want="$PRESET"
         note "프리셋을 인자로 받았다: $want"
     elif [ "$ASSUME_YES" = 1 ]; then
@@ -601,22 +676,27 @@ install_preset() {
         # 리눅스에서 `./install.sh --yes` 가 무prefix 키 두 개(C-Left M-Left)를 말없이 전역으로
         # 뺏었고, 그동안 README 는 "steals no key until you say so" 를 약속하고 있었다.
         # 키를 뺏는 것은 되돌리기 귀찮은 전역 변경이라 "기본값 수락"의 범주가 아니다 —
-        # 사람이 --preset 으로 **명시**할 때만 뺏는다.
+        # 사람이 --preset 으로 **명시**할 때만 뺏는다. 제안이 S-Left 로 바뀐 뒤에도 이 규칙은
+        # 그대로다 — 제안이 좋아졌다는 것과 동의 없이 가져가도 된다는 것은 다른 말이다.
         want=safe
         note "--yes 는 아무 키도 안 뺏는 safe 로 간다 — 무prefix 키는 명시할 때만 뺏는다"
-        note "  이 기계는 $guess 로 보인다. 빠른 키를 원하면: ./install.sh --yes --preset $guess"
+        note "  한 타건을 원하면: ./install.sh --yes --preset $PRESET_SUGGEST   (이 기계는 $guess 로 보인다)"
     elif [ "$ASK_TTY" = 0 ]; then
         # 무prefix 바인딩은 남의 키를 뺏는 일이다. 물을 수 없는 자리에서는 안 뺏는 쪽으로 간다.
         want=safe
         note "터미널이 아니라 묻지 않았다 — 아무 키도 안 뺏는 safe 로 간다"
-        note "  이 기계는 $guess 로 보인다. 원하면: ./install.sh --preset $guess"
+        note "  한 타건을 원하면: ./install.sh --preset $PRESET_SUGGEST   (이 기계는 $guess 로 보인다)"
     else
+        note "고를 수 있는 것:"
+        note "shift  S-Left — 위에 적은 그 제안 (기본값)"
         note "safe   무prefix 없음 — $(preset_why safe)"
         note "mac    M-b — $(preset_why mac)"
         note "linux  C-Left M-Left — $(preset_why linux)"
         note "wsl    C-Left — $(preset_why wsl)"
-        note "감지: $(uname -s 2>/dev/null || echo unknown) → $guess 를 제안한다"
-        want=$(ask_word "프리셋 (safe|mac|linux|wsl)" "$guess")
+        note "감지: $(uname -s 2>/dev/null || echo unknown) → $guess. 그래도 제안은 $PRESET_SUGGEST 다 —"
+        note "  mac·linux·wsl 프리셋은 각자 자기 플랫폼에서만 되고, 셋 다에서 되는 것은 S-Left 하나다."
+        note "  거절하면(safe) prefix 방식으로 간다 — prefix 뒤에 소환키를 누른다. 아무 키도 안 뺏는다."
+        want=$(ask_word "프리셋 (shift|safe|mac|linux|wsl)" "$PRESET_SUGGEST")
         if ! preset_value "$want" > /dev/null 2>&1; then
             warn "모르는 프리셋 '$want' — safe 로 간다"
             want=safe
@@ -624,6 +704,14 @@ install_preset() {
     fi
     v=$(preset_value "$want")
     note "$want: key_summon_fast='$v' — $(preset_why "$want")"
+    # 제안이 아닌 키를 골랐으면 그 키로 다시 잰다 — 위에서 잰 것은 S-Left 였다.
+    if [ "$want" != "$PRESET_SUGGEST" ] && [ -n "$v" ]; then
+        clash=$(preset_conflicts "$v")
+        if [ -n "$clash" ]; then
+            warn "고른 키를 이미 거는 줄이 설정에 있다 — 우리 바인딩이 이깁니다:"
+            printf '%s\n' "$clash" | while IFS= read -r line; do printf '      %s\n' "$line"; done
+        fi
+    fi
     note "prefix 뒤 소환키(key_summon)는 그대로 둔다 — 바꾸려면 tt config set key_summon <키>"
 
     cur=$("$FMUX" config get key_summon_fast 2>/dev/null) || cur=''
@@ -747,6 +835,7 @@ show_cron() {
 # ── ⑧ 요약 ─────────────────────────────────────────────────────────────────
 summary() {
     step 8/8 "요약"
+    local fastnow
     if is_dry; then
         printf '  --dry-run 이었다 — 파일을 하나도 안 만들었다. 위 dry 줄이 할 일이다.\n'
         printf '  실제로 하려면: ./install.sh\n'
@@ -761,6 +850,14 @@ summary() {
         *":$BINDIR:"*) printf '  - 새 tmux 세션에서 tt 를 쳐봐라 (또는 prefix + %s)\n' "$("$FMUX" config get key_summon 2>/dev/null || echo F)" ;;
         *) printf '  - PATH 를 먼저 고쳐라: %s\n' "$(path_line)" ;;
     esac
+    # 무prefix 키가 실제로 걸렸으면 그 키를 말한다. 안 걸렸으면 어떻게 얻는지를 말한다 —
+    # 화면과 문서가 다른 말을 하면 안 되고, "안 뺏었다"도 결과의 일부다.
+    fastnow=$("$FMUX" config get key_summon_fast 2>/dev/null) || fastnow=''
+    if [ -n "$fastnow" ]; then
+        printf '  - 무prefix 한 타건도 걸렸다: %s  (되돌리려면 tt config unset key_summon_fast)\n' "$fastnow"
+    else
+        printf '  - 무prefix 한 타건은 안 걸었다 — 원하면: tt config set key_summon_fast %s\n' "$(preset_value "$PRESET_SUGGEST")"
+    fi
     printf '  - tt --help 가 키·설정·복원을 전부 설명한다. tt config list 로 설정을 본다.\n'
 
     printf '\n지우려면\n'

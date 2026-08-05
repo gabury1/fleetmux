@@ -232,7 +232,7 @@ if [ "${1:-}" = "--help" ]; then
     hkset=$(tt_key_label "$TT_KEY_SETTINGS")   # 팝업 바인딩과 같은 값에서 뽑은 표기
     if [ -n "$hsum" ]; then hsummon="prefix + $hsum"; else hsummon="(key_summon is empty)"; fi
     if [ -n "$hfast" ]; then hsummon="$hsummon  ·  $hfast  ${D}prefix-less${R}"
-    else hsummon="$hsummon  ${D}· no prefix-less key — tt config set key_summon_fast 'C-Left M-Left'${R}"
+    else hsummon="$hsummon  ${D}· no prefix-less key — tt config set key_summon_fast S-Left${R}"
     fi
     cat << EOF
 
@@ -257,6 +257,11 @@ if [ "${1:-}" = "--help" ]; then
     ${D}key_summon is pressed after the prefix; key_summon_fast is a space-separated list of${R}
     ${D}prefix-less keys — one physical key arrives under different names per terminal${R}
     ${D}changing either key, or snapshot_on_exit, rewrites the snippet on the spot${R}
+    ${D}S-Left is what ./install.sh offers: the one prefix-less single keystroke that reaches${R}
+    ${D}tmux on macOS, Linux and Windows Terminal alike. It takes that key from everything in${R}
+    ${D}the pane (vim, shell line-editing, fzf) — that is why it is offered, never a default.${R}
+    ${D}Some dotfiles bind S-Left/S-Right to window switching; pick another key if yours does.${R}
+    ${D}tt config unset key_summon_fast gives the key back — key_summon still summons.${R}
 
   ${T}broadcast${R}
     Tab-mark multiple sessions, then Enter — send one prompt to all

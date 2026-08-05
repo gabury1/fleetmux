@@ -27,6 +27,12 @@ tt_conf_default() {
         key_help)        printf '?' ;;
         key_settings)    printf 'ctrl-o' ;;
         key_summon)      printf 'F' ;;
+        # 무prefix 소환키의 기본값은 **빈 값으로 남는다**. 설정 파일만 깔린 상태에서 말없이
+        # 남의 키를 뺏으면 안 된다 — 무prefix 바인딩은 그 pane 안 모든 앱(vim·셸·fzf)에서
+        # 그 키를 가져간다. 그건 사람이 한 번 "예"라고 말한 뒤에만 일어나야 한다.
+        #   그래서 정책이 둘로 갈린다: **설정 기본값은 빈 값, 설치기의 제안은 S-Left**.
+        #   (install.sh 의 프리셋 절이 왜 S-Left 인지를 길게 적어 뒀다. 요약: Shift+방향키가
+        #    macOS·리눅스·Windows Terminal 세 곳을 다 통과하는 유일한 무prefix 한 타건이다.)
         key_summon_fast) printf '' ;;
         *) return 1 ;;
     esac

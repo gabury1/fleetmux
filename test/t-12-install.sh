@@ -281,7 +281,101 @@ run_inst "$STUB_OK" --yes --preset safe
 
 run_inst "$STUB_OK" --preset nope
 assert_eq "$RC" "1" "모르는 프리셋이면 멈춘다"
-assert_eq "$(has "$OUT" 'safe|mac|linux|wsl')" "yes" "쓸 수 있는 프리셋을 알려준다"
+assert_eq "$(has "$OUT" 'safe|shift|mac|linux|wsl')" "yes" "쓸 수 있는 프리셋을 알려준다"
+
+# ── ⑦-c 제안은 S-Left 다 (무prefix 한 타건) ────────────────────────────────
+# 판단 근거: C-화살표는 macOS Mission Control 이, M-화살표는 Windows Terminal 이 먼저 먹고,
+# Ctrl+글자는 셸 줄편집·vim·fzf 가 이미 쓴다. 셋 다 통과하는 무prefix 한 타건은 S-화살표뿐이다.
+# 여기서 재는 것은 셋이다: ① 제안이 실제로 S-Left 인가 ② 뭘 뺏는지 말하는가
+# ③ 그런데도 안 물어본 자리에서는 안 뺏는가.
+run_inst "$STUB_OK" --preset safe                # 먼저 안 뺏긴 상태로 돌려둔다
+run_inst "$STUB_OK" --dry-run
+assert_eq "$RC" "0" "dry-run 은 rc 0"
+assert_eq "$(has "$OUT" "제안: shift — key_summon_fast='S-Left'")" "yes" "제안이 S-Left 다"
+assert_eq "$(has "$OUT" '이 키를 pane 안 모든 앱에서 가져갑니다')" "yes" "무엇을 뺏는지 그 자리에서 말한다"
+assert_eq "$(has "$OUT" '이미 쓰고 있다면 다른 키를 골라라')" "yes" "이미 쓰는 사람에게 다른 키를 권한다"
+assert_eq "$(has "$OUT" 'S-Left/S-Right 를 tmux 창 전환')" "yes" "알려진 위험(창 전환 바인딩)을 적는다"
+# 제안은 말일 뿐이다 — 물어볼 수 없는 자리(터미널 아님)에서는 여전히 안 뺏는다.
+assert_eq "$(has "$OUT" '터미널이 아니라 묻지 않았다')" "yes" "묻지 못하면 그렇게 말한다"
+assert_eq "$(has "$OUT" 'config set key_summon_fast')" "no" "묻지 못한 자리는 키를 걸 계획조차 안 세운다"
+
+# --preset shift 는 실제로 S-Left 를 건다(제안 이름이 실재하는 프리셋인가).
+run_inst "$STUB_OK" --yes --preset shift
+assert_eq "$RC" "0" "--preset shift 는 rc 0"
+assert_eq "$(has "$(cat "$CONF")" 'key_summon_fast=S-Left')" "yes" "shift 프리셋이 설정에 들어간다"
+assert_eq "$(grep -c '^bind -n S-Left ' "$SNIP" || true)" "1" "스니펫이 bind -n S-Left 를 낸다"
+assert_eq "$(grep -c '^unbind -n -q S-Left$' "$SNIP" || true)" "1" "거는 키도 먼저 걷는다(재적용 멱등)"
+assert_eq "$(grep -c '^bind F ' "$SNIP" || true)" "1" "prefix 소환키는 그대로 남는다"
+
+# ── ⑦-d --yes 는 새 제안도 자동 채택하지 않는다 (회귀 방지) ────────────────
+# 제안이 좋아졌다는 것과 동의 없이 가져가도 된다는 것은 다른 말이다. ⑦-b 와 같은 규율을
+# **새 기본 제안(S-Left)에 대해** 다시 못 박는다 — 이 줄이 없으면 "기본값을 바꿨으니
+# --yes 도 따라가야지" 라는 다음 수정이 조용히 통과한다.
+assert_eq "$(grep -c '^bind -n S-Left ' "$SNIP" || true)" "1" "재현: 지금은 S-Left 가 걸려 있다"
+run_inst "$STUB_OK" --yes
+assert_eq "$RC" "0" "--yes 만 주면 rc 0"
+assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "--yes 는 S-Left 도 안 뺏는다"
+assert_eq "$(grep -c '^unbind -n -q S-Left$' "$SNIP" || true)" "1" "뺏었던 S-Left 는 unbind 로 돌려준다"
+assert_eq "$(cnt "$CONF" '^key_summon_fast=')" "0" "설정에도 값이 안 남는다"
+assert_eq "$(has "$OUT" '--yes 는 아무 키도 안 뺏는')" "yes" "왜 safe 인지 화면에 말한다"
+assert_eq "$(has "$OUT" './install.sh --yes --preset shift')" "yes" "원하면 어떻게 얻는지도 말한다"
+
+# ── ⑦-e 이미 그 키를 쓰는 줄을 덮기 전에 알린다 ────────────────────────────
+# 살아있는 tmux 서버에 묻지 않는다 — 설정 파일만 읽는다. S-Left/S-Right 를 창 전환에
+# 걸어 둔 dotfile 이 흔하다는 것이 이 감지의 존재 이유다.
+cp "$TMUXCONF" "$TTROOT/tmuxconf.noclash"
+printf 'bind -n S-Left previous-window\n' >> "$TMUXCONF"
+run_inst "$STUB_OK" --dry-run
+assert_eq "$(has "$OUT" '이미 그 키를 거는 줄을 설정에서 찾았다')" "yes" "충돌을 덮기 전에 알린다"
+assert_eq "$(has "$OUT" 'bind -n S-Left previous-window')" "yes" "그 줄을 그대로 보여준다"
+assert_eq "$(has "$OUT" "$TMUXCONF:")" "yes" "어느 파일 몇 번째 줄인지 말한다"
+# 남의 다른 키까지 넘겨짚지 않는다 — S-Right 를 건 줄은 S-Left 제안의 충돌이 아니다.
+cp "$TTROOT/tmuxconf.noclash" "$TMUXCONF"
+printf 'bind -n S-Right next-window\n' >> "$TMUXCONF"
+run_inst "$STUB_OK" --dry-run
+assert_eq "$(has "$OUT" '이미 그 키를 거는 줄을 설정에서 찾았다')" "no" "안 겹치는 줄은 충돌이라 안 한다"
+cp "$TTROOT/tmuxconf.noclash" "$TMUXCONF"
+
+# ── ⑦-f 물어보는 자리에서의 제안·거절 (진짜 pty) ──────────────────────────
+# ASK_TTY 는 `[ -t 0 ]` 다. 파이프로는 그 분기를 못 밟으므로 pty 를 하나 띄운다.
+# util-linux 의 `script -qec CMD /dev/null` 형식이 있을 때만 돈다 — BSD(맥) 의 script 는
+# 인자 순서가 달라 이 형식이 없다. 없으면 건너뛴 사실을 말한다(조용히 통과시키지 않는다).
+SCRIPTBIN=$(PATH="$ORIGPATH" command -v script 2>/dev/null) || SCRIPTBIN=''
+if [ -n "$SCRIPTBIN" ] && "$SCRIPTBIN" -qec 'true' /dev/null > /dev/null 2>&1 < /dev/null; then
+    # $2 = 표준입력으로 흘려 넣을 답들. 이 시점의 $TMUXCONF 는 이미 source 줄을 갖고 있어
+    # 4단계는 안 묻는다 → 답은 [프리셋, 스킬설치여부] 순서다.
+    run_inst_tty() {   # $1=스텁디렉토리 $2=답 문자열, 나머지=install.sh 인자
+        local stub="$1" input="$2"; shift 2
+        RC=0
+        # %b 다 — 답 사이의 개행을 실제 개행으로 흘려 넣어야 read 가 한 줄씩 받는다.
+        OUT=$(printf '%b' "$input" \
+              | PATH="$stub:$SEAL" "$SCRIPTBIN" -qec "bash '$INST' $*" /dev/null 2>&1) || RC=$?
+    }
+
+    run_inst "$STUB_OK" --preset safe            # 안 뺏긴 상태에서 출발
+    # ① 그냥 엔터 = 제안 수락 → S-Left 를 건다
+    run_inst_tty "$STUB_OK" '\nn\n'
+    assert_eq "$RC" "0" "pty 대화형 설치는 rc 0"
+    assert_eq "$(has "$OUT" '프리셋 (shift|safe|mac|linux|wsl) [shift]')" "yes" "프롬프트 기본값이 shift 다"
+    assert_eq "$(has "$(cat "$CONF")" 'key_summon_fast=S-Left')" "yes" "엔터만 치면 S-Left 를 받는다"
+    assert_eq "$(grep -c '^bind -n S-Left ' "$SNIP" || true)" "1" "스니펫에도 S-Left 가 걸린다"
+
+    # ② 거절(safe) → prefix 방식으로 간다. 무prefix 키는 하나도 안 남는다.
+    run_inst_tty "$STUB_OK" 'safe\nn\n'
+    assert_eq "$RC" "0" "거절해도 rc 0"
+    assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "거절하면 무prefix 키가 하나도 안 남는다"
+    assert_eq "$(cnt "$CONF" '^key_summon_fast=')" "0" "거절하면 설정에도 값이 안 남는다"
+    assert_eq "$(grep -c '^bind F ' "$SNIP" || true)" "1" "거절하면 prefix 방식이 남는다"
+    assert_eq "$(grep -c '^unbind -n -q S-Left$' "$SNIP" || true)" "1" "받았던 S-Left 는 돌려준다"
+
+    # ③ 오타는 안 뺏는 쪽으로 떨어진다 — 모르는 답을 제안으로 읽으면 안 된다
+    run_inst_tty "$STUB_OK" 'shfit\nn\n'
+    assert_eq "$(has "$OUT" "모르는 프리셋 'shfit'")" "yes" "모르는 답을 그렇게 말한다"
+    assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "모르는 답은 safe 로 떨어진다"
+else
+    printf '  skip pty 대화형 검사 — util-linux 형식 script 가 없다 (BSD/맥 예상)\n'
+fi
+run_inst "$STUB_OK" --yes --preset safe
 
 # ── ⑧ 설치 뒤 --dry-run 도 여전히 아무것도 안 바꾼다 ───────────────────────
 cp -R "$HOME/.local" "$TTROOT/local.dry"
