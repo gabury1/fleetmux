@@ -112,7 +112,7 @@ export TT_FAKE_DISP='$0|0'
 fin_ts=$(( now - 400 ))
 : > "$CONF"
 printf '%s alpha\n' "$fin_ts" > "$STATE/finished"
-assert_contains "$("$TTBIN" --status 2>/dev/null)" "✓ alpha" "기본 unseen_minutes=10 이면 400초 전 완료는 아직 보인다"
+assert_contains "$("$TTBIN" --status 2>/dev/null)" "✓alpha" "기본 unseen_minutes=10 이면 400초 전 완료는 아직 보인다"
 
 printf 'unseen_minutes=5\n' > "$CONF"
 printf '%s alpha\n' "$fin_ts" > "$STATE/finished"

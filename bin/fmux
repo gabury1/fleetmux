@@ -1640,7 +1640,7 @@ if [ "${1:-}" = "--status" ]; then
             [ "${la:-0}" -gt "$ts" ] && continue    # 이미 들어가봄 = 확인 완료 → 제거
             keep="$keep$ts $name
 "
-            [ $(( now - ts )) -le "$unseen_s" ] && out="$out ✓ $name"   # 상태바엔 unseen_minutes 만큼만, 파일은 볼 때까지 유지
+            [ $(( now - ts )) -le "$unseen_s" ] && out="$out ✓$name"   # 상태바엔 unseen_minutes 만큼만, 파일은 볼 때까지 유지
         done < "$f"
         printf '%s' "$keep" > "$f"
         tt_finished_unlock
