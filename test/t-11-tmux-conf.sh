@@ -110,6 +110,11 @@ assert_eq "$(count_lines "$out" '^bind a/b')" "0" "키 모양이 아닌 값은 �
 #   판정: 사용자 설정에 source-file 줄이 **실제로 있을 때만** 나가야 한다. 예전 판은
 #   ~/.tmux.conf 가 아예 없어도 무조건 쐈다 — 스니펫을 눈으로 보려고 --write 를 친 것만으로
 #   남의 서버 키가 바뀌었다.
+# 여기까지(⑨ 끝)는 tt_test_sandbox 의 봉인된 가짜 tmux 아래서 돌았다. TMUX 가 비어 있으므로
+# --write 는 살아있는 서버에 아무것도 안 쏴야 한다 — 봉인 로그로 그걸 못 박는다.
+assert_no_tmux_mutation "TMUX 가 비어 있으면 --write 가 tmux 를 아예 안 부른다"
+assert_eq "$(cat "$TT_TMUX_STUB_LOG")" "" "①~⑨ 구간은 tmux 를 한 번도 부르지 않는다"
+
 mkdir -p "$TTROOT/fakebin"
 cat > "$TTROOT/fakebin/tmux" <<'SHIM'
 #!/usr/bin/env bash

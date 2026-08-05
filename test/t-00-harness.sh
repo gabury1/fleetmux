@@ -35,6 +35,42 @@ else
     printf '  FAIL TMUX 가 여전히 세팅돼 있다: %s\n' "$TMUX"; TT_FAIL=$((TT_FAIL+1))
 fi
 
+# ── 봉인된 가짜 tmux ───────────────────────────────────────────────────────
+# 소켓 격리는 "어느 서버냐"만 가른다. 진짜 tmux 바이너리가 실행되는 것 자체가 위험이라
+# tt_test_sandbox 는 PATH 맨 앞에 가짜를 세운다. 여기서 그 봉인이 실제로 섰는지 잰다.
+_which_tmux=$(command -v tmux 2>/dev/null || true)
+case "$_which_tmux" in
+    "$TT_TMUX_STUB_DIR/tmux") printf '  ok   PATH 의 tmux 가 봉인된 가짜다: %s\n' "$_which_tmux" ;;
+    *) printf '  FAIL PATH 의 tmux 가 가짜가 아니다: %s\n' "$_which_tmux"; TT_FAIL=$((TT_FAIL+1)) ;;
+esac
+
+# 읽기 전용 질의: -V 만 답한다.
+assert_eq "$(tmux -V 2>/dev/null)" "tmux 3.5a" "가짜가 -V 에는 답한다"
+assert_rc 1 tmux ls
+assert_contains "$(tmux ls 2>&1 >/dev/null)" "no server running" \
+    "읽기 전용 질의는 서버 없는 기계와 같은 답을 한다"
+
+# 상태를 바꾸는 하위명령은 전부 거부하고 로그에 남긴다.
+# ⛔ 이 목록은 "가짜가 받았을 때 거부하는가"를 재는 것이지 진짜 tmux 를 부르는 게 아니다.
+for sub in new-session kill-session kill-server send-keys source-file \
+           switch-client attach rename-session set-hook bind detach-client run-shell; do
+    assert_rc 1 tmux "$sub" -t nope
+done
+_refused=$(wc -l < "$TT_TMUX_STUB_REFUSED" | tr -d ' ')
+assert_eq "$_refused" "12" "거부한 하위명령이 12건 전부 로그에 남았다"
+assert_contains "$(cat "$TT_TMUX_STUB_REFUSED")" "kill-server" "거부 로그가 인자까지 받아 적는다"
+assert_contains "$(cat "$TT_TMUX_STUB_LOG")" "kill-server -t nope" "전체 호출 로그에도 남는다"
+
+# 그리고 그 로그를 근거로 삼는 헬퍼가 실제로 실패를 잡는지 — 지금은 12건이 들어 있으니
+# assert_no_tmux_mutation 이 반드시 FAIL 을 내야 한다(이빨 확인).
+_neg=$( ( TT_FAIL=0; assert_no_tmux_mutation "고의"; printf 'TT_FAIL=%s' "$TT_FAIL" ) )
+case "$_neg" in
+    *FAIL*TT_FAIL=1*) printf '  ok   assert_no_tmux_mutation 이 거부 로그를 실패로 잡는다\n' ;;
+    *) printf '  FAIL assert_no_tmux_mutation 이 거부 로그를 못 잡았다: %s\n' "$_neg"; TT_FAIL=$((TT_FAIL+1)) ;;
+esac
+: > "$TT_TMUX_STUB_REFUSED"
+assert_no_tmux_mutation "비운 뒤에는 통과한다"
+
 # tt_test_sandbox 가 TTBIN 을 세팅해야 한다(브리핑 Interfaces 계약) — run.sh 를
 # 거치지 않고 이 파일을 단독으로 `bash test/t-00-harness.sh` 실행해도 성립해야 한다.
 case "${TTBIN:-}" in

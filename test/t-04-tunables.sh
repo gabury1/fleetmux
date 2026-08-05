@@ -236,4 +236,9 @@ printf 'key_summon=\nkey_summon_fast=\n' > "$CONF"
 h=$("$TTBIN" --help 2>/dev/null)
 assert_contains "$h" "key_summon is empty" "prefix 키까지 비면 그 사실을 말한다"
 
+# ── 봉인 확인 ──────────────────────────────────────────────────────────────
+# 이 파일은 --list·--status·--cron 을 실제로 부른다. 전부 봉인된 가짜 tmux 를 지나갔고,
+# 그중 상태를 바꾸는 하위명령은 한 건도 없었어야 한다.
+assert_no_tmux_mutation "이 파일이 부른 tmux 는 전부 읽기 전용이었다"
+
 tt_test_done

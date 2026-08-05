@@ -99,4 +99,6 @@ hook working '{"session_id":"7f3b1c22-0000-4000-8000-0123456789ab","cwd":"'"$HOM
 assert_contains "$(cat "$STATE/manifest")" "$HOME/moved" "훅이 올 때마다 다시 쓴다"
 assert_eq "$(printf '%s' "$before" | grep -c '/moved' || true)" "0" "그 전에는 없던 값이다"
 
+assert_no_tmux_mutation "훅 경로가 살아있는 서버를 건드리지 않았다"
+
 tt_test_done
