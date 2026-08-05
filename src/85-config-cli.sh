@@ -82,6 +82,21 @@ tt_conf_write() {
     return 0
 }
 
+# 값이 바뀐 키가 tmux 스니펫에 박히는 키면 스니펫을 다시 쓴다.
+#   왜 자기 자신을 다시 부르나: 렌더 함수는 87-tmux-conf.sh 에 있고 그 파일은 이 파일보다
+#   뒤에 이어붙는다. 게다가 `tt config …` 는 아래 블록에서 exit 하므로 87 까지 실행이 가지
+#   않는다 — 이 프로세스에는 tt_tmux_conf_write 라는 이름이 아예 없다. 파일 순서를 뒤집는
+#   것보다 이미 20군데에서 쓰는 $SELF 재호출 관례를 따르는 편이 안전하다.
+#   실패해도 삼킨다: 스니펫을 못 썼다고 설정 저장까지 실패로 만들면, 이미 파일에 들어간
+#   값과 종료코드가 어긋난다. 설정은 저장됐고 스니펫은 다음 --tmux-conf 때 따라잡는다.
+tt_conf_resnip() {
+    case "${1:-}" in
+        key_summon|key_summon_fast|snapshot_on_exit)
+            "$SELF" --tmux-conf --write >/dev/null 2>&1 || true ;;
+    esac
+    return 0
+}
+
 if [ "${1:-}" = "config" ]; then
     # 아래 각 하위명령은 TT_CONF_KEYS 를 훑으며 tt_conf_get/tt_conf_source 를 여러 번
     # $(...) 로 감싸 부른다 — 각 호출이 서브셸이라, 여기서 tt_conf_load 를 맨 statement 로
@@ -108,12 +123,14 @@ if [ "${1:-}" = "config" ]; then
             v="$*"
             tt_conf_validate "$k" "$v" || exit 1
             tt_conf_write "$k" "$v" set || exit 1
+            tt_conf_resnip "$k"
             printf '%s=%s\n' "$k" "$v"
             exit 0 ;;
         unset)
             [ -n "${3:-}" ] || { echo "usage: tt config unset <key>" >&2; exit 1; }
             tt_conf_default "$3" >/dev/null 2>&1 || { echo "모르는 키: $3" >&2; exit 1; }
             tt_conf_write "$3" '' unset || exit 1
+            tt_conf_resnip "$3"
             printf '%s → 기본값 %s\n' "$3" "$(tt_conf_default "$3")"
             exit 0 ;;
         path)

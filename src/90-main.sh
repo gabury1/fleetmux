@@ -213,6 +213,13 @@ if [ "${1:-}" = "--help" ]; then
     ${D}rows marked 미배선 are not wired to any behaviour yet — the toggle would be a lie${R}
     tt config list   ${D}the same table from the shell; tt config path shows the file${R}
 
+  ${T}tmux binding${R}  ${D}fmux owns one file and borrows one line of your ~/.tmux.conf${R}
+    tt --tmux-conf          print the snippet — summon key, and the on-exit snapshot hooks
+    tt --tmux-conf --write  write it, then add ${D}source-file <printed path>${R} to ~/.tmux.conf
+    ${D}key_summon is pressed after the prefix; key_summon_fast is a space-separated list of${R}
+    ${D}prefix-less keys — one physical key arrives under different names per terminal${R}
+    ${D}changing either key, or snapshot_on_exit, rewrites the snippet on the spot${R}
+
   ${T}broadcast${R}
     Tab-mark multiple sessions, then Enter — send one prompt to all
     ${D}tool sessions are skipped — a prompt typed into a shell or TUI runs as a command${R}

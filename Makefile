@@ -20,6 +20,9 @@
 #   80-view.sh     --list
 #   85-config-cli.sh 설정 CLI — 검증·원자적 쓰기·tt config 하위명령
 #   86-config-view.sh 팝업 안 설정 화면 — --config-list/--config-toggle/--config-view
+#   87-tmux-conf.sh  tmux 스니펫 생성 — 소환키 바인딩·떠날 때 스냅샷 훅(--tmux-conf [--write])
+#                    85 보다 뒤다: `tt config set` 은 85 에서 exit 하므로 여기 함수를 못 본다.
+#                    그래서 85 는 함수를 직접 부르지 않고 `$SELF --tmux-conf --write` 로 재호출한다.
 #   90-main.sh     tt_prompt·--do-*·--preview·--hooks-json·--codex-hooks·--help·진입점(fzf 팝업)
 #
 # 셔뱅은 00-header.sh 에만 있어야 한다 — 다른 파일에 넣으면 합친 결과 한가운데 셔뱅이 박힌다.
@@ -37,6 +40,7 @@ SRC = src/00-header.sh \
       src/80-view.sh \
       src/85-config-cli.sh \
       src/86-config-view.sh \
+      src/87-tmux-conf.sh \
       src/90-main.sh
 
 OUT    = bin/fmux

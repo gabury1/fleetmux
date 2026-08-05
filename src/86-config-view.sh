@@ -14,10 +14,16 @@ tt_conf_is_bool() {
 #   거짓말하는 토글을 주지 않기 위한 장치다: 켜고 꺼도 아무 일이 안 일어나는 키를 아무 표시
 #   없이 늘어놓으면, 사용자는 자기가 끈 기능이 꺼진 줄 안다. 그건 설정 화면이 할 수 있는
 #   가장 나쁜 거짓말이다.
-#   여기 적힌 세 키는 60-rc.sh:83/164/173 · 70-fleet.sh:29/346 이 tt_conf_on 으로 실제 판정한다.
+#   rc·snapshot·boot_restore 는 60-rc.sh:83/164/173 · 70-fleet.sh:29/346 이 tt_conf_on 으로
+#   판정한다. key_summon·key_summon_fast·snapshot_on_exit 는 87-tmux-conf.sh 가 tmux 스니펫에
+#   박고, 값을 바꾸면 85 의 tt_conf_resnip 이 그 자리에서 스니펫을 다시 쓴다.
 #   ★ 새 키를 코드에 물릴 때 이 목록에 같이 넣어라. 안 넣으면 표시가 거짓이 된다.
 tt_conf_wired() {
-    case "${1:-}" in rc|snapshot|boot_restore) return 0 ;; *) return 1 ;; esac
+    case "${1:-}" in
+        rc|snapshot|boot_restore) return 0 ;;
+        key_summon|key_summon_fast|snapshot_on_exit) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 # 한 줄 설명. 괄호를 피한다 — 이 문자열이 언젠가 fzf --bind 의 execute/reload 인자 안으로
@@ -125,6 +131,9 @@ if [ "${1:-}" = "--config-toggle" ]; then
     # 포크하면 그 자식이 설정 파일을 한 번 더 파싱해, 깨진 줄 하나가 토글 한 번에 경고 두 번이 된다.
     tt_conf_validate "$k" "$nv" || exit 1
     tt_conf_write "$k" "$nv" set || exit 1
+    # snapshot_on_exit 는 tmux 스니펫에 박히는 불린이다 — 여기서 뒤집으면 스니펫도 따라와야
+    # 한다. 값 입력 경로(tt_conf_view_once)는 `$SELF config set` 에 맡기므로 거기서 이미 돈다.
+    tt_conf_resnip "$k"
     exit 0
 fi
 

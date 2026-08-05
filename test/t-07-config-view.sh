@@ -63,21 +63,23 @@ plain=$("$TTBIN" --config-list | sed "$TT_DEANSI")
 assert_contains "$plain" "rc                 on" "설정이 없으면 기본값이 보인다"
 
 # ── ①-b "미배선" 표시가 정직한가 ───────────────────────────────────────────
-# T4 가 물린 세 키(rc·snapshot·boot_restore)에는 표시가 없어야 하고, 나머지엔 있어야 한다.
+# T4 가 물린 세 키(rc·snapshot·boot_restore)와 T6 이 tmux 스니펫에 물린 세 키
+# (key_summon·key_summon_fast·snapshot_on_exit)에는 표시가 없어야 하고, 나머지엔 있어야 한다.
 # 이 판정을 뒤집는 순간 설정 화면은 "끈 줄 알았는데 안 꺼진" 토글을 팔게 된다.
-for k in rc snapshot boot_restore; do
+for k in rc snapshot boot_restore snapshot_on_exit key_summon key_summon_fast; do
     row=$(printf '%s\n' "$plain" | grep "^$k$TAB")
     case "$row" in *미배선*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "no" "$k 은 실제로 물려 있으니 미배선 표시가 없다"
 done
-for k in snapshot_on_exit recent_hours unseen_minutes accent log_max key_new key_settings key_summon; do
+for k in recent_hours unseen_minutes accent log_max key_new key_settings; do
     row=$(printf '%s\n' "$plain" | grep "^$k$TAB")
     case "$row" in *미배선*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "yes" "$k 은 아직 안 물렸으니 미배선 표시가 붙는다"
 done
-# 배선 판정의 근거는 코드다 — tt_conf_on 을 실제로 부르는 키만 배선된 것으로 친다.
-# 이 개수가 늘면 tt_conf_wired 도 같이 늘어야 한다는 뜻이다.
-assert_eq "$(printf '%s\n' "$plain" | grep -vc 미배선)" "3" "지금 배선된 키는 정확히 3개다"
+# 배선 판정의 근거는 코드다 — tt_conf_on 으로 실제 판정하거나(rc·snapshot·boot_restore),
+# 87-tmux-conf.sh 가 스니펫에 실제로 박는 키(key_summon·key_summon_fast·snapshot_on_exit)만
+# 배선된 것으로 친다. 이 개수가 늘면 tt_conf_wired 도 같이 늘어야 한다는 뜻이다.
+assert_eq "$(printf '%s\n' "$plain" | grep -vc 미배선)" "6" "지금 배선된 키는 정확히 6개다"
 
 # ── ② --config-toggle ──────────────────────────────────────────────────────
 : > "$CONF"
