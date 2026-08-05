@@ -22,6 +22,8 @@ STATE="$HOME/.cache/tt"
 mkdir -p "$STATE"
 TAB=$'\t'
 ESC=$'\033'
+CSI=$'\302\233'          # U+009B — 8비트 CSI. ESC 없이 혼자 커서를 움직인다.
+BS='\'                   # JSON 이스케이프를 소스에 적을 때 쓴다("${BS}u009b" = 여섯 글자 )
 
 # ── ⛔ PATH 가드 — 어떤 단언보다 먼저 선다 ─────────────────────────────────
 mkdir -p "$TTROOT/bin"
@@ -123,6 +125,39 @@ case "$(body)" in *"$ESC"*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "★생 ESC 바이트도 본문에 남지 않는다"
 assert_contains "$(body)" "생ESC" "그래도 글자는 남는다"
 
+# ★C1(U+0080–9F)도 버린다. ESC 만 거르면 부족하다 — 8비트 CSI(U+009B)는 ESC 없이 혼자
+#   커서를 움직인다. UTF-8 로는 c2 9b 두 바이트라 "코드 < 32" 검사에 안 걸렸다(실측 잔존).
+hook working "$(ups "${BS}u009b31m빨강${BS}u009b0m")"
+case "$(body)" in *"$CSI"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "★\\u009b(8비트 CSI)가 본문에 남지 않는다"
+assert_contains "$(body)" "빨강" "C1 만 빠지고 글자는 남는다"
+hook working "$(ups "${CSI}31m생CSI${CSI}0m")"
+case "$(body)" in *"$CSI"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "★생 C1 바이트(c2 9b)도 본문에 남지 않는다"
+assert_contains "$(body)" "생CSI" "그래도 글자는 남는다"
+
+# ── ①-b 권한 ───────────────────────────────────────────────────────────────
+# ★이 파일에는 **사용자가 친 프롬프트 원문**이 들어간다 — ~/.cache/tt 에 대화 본문이 놓이는
+#   건 이번이 처음이고, 같은 것을 담는 ~/.claude/projects 는 0700 이다. 이 기계에는 uid 가
+#   둘 있다(1000·1001). umask 에 맡기면 022 에서 -rw-r--r--, 002 에서 -rw-rw-r-- 라
+#   결과가 기계마다 갈린다 — 어느 umask 로 훅을 돌려도 0600 이어야 한다.
+mode_of() { ls -ld "$1" 2>/dev/null | awk '{ printf "%s", substr($1, 1, 10) }'; }
+oldmask=$(umask)
+umask 000
+rm -f "$LF"
+hook working "$(ups '남이 읽으면 안 되는 지시')"
+assert_eq "$(mode_of "$LF")" "-rw-------" "★umask 000 으로 훅을 돌려도 0600 이다"
+# 예전 판이 남긴 헐거운 파일도 다음 쓰기에서 조여진다.
+#   mv 는 rename 이라 tmp 의 모드를 그대로 옮긴다 — 그래서 이 단언은 **tmp 도 0600 이었다**는
+#   증거이기도 하다(tmp 는 mv 전에도 본문이 다 들어 있어 그대로 읽힌다).
+chmod 666 "$LF"
+hook working "$(ups '두 번째 지시')"
+assert_eq "$(mode_of "$LF")" "-rw-------" "★이미 헐거운 파일도 다음 쓰기에서 조여진다"
+umask 022
+hook working "$(ups '세 번째 지시')"
+assert_eq "$(mode_of "$LF")" "-rw-------" "umask 022 에서도 결과가 같다"
+umask "$oldmask"
+
 # ── ② 이벤트 게이팅 ────────────────────────────────────────────────────────
 # ★PostToolUse 의 tool_input.prompt = Task 도구 서브에이전트 지시문. 훅 상태는 똑같이
 #   working 이라 $2 로는 구별할 수 없다. 게이팅이 없으면 매 툴콜마다 이게 덮어쓴다.
@@ -193,6 +228,21 @@ echo "idle 1 999999" > "$STATE/hook-9"       # 없는 pid
 printf '1\n유령\n' > "$LF"
 hook boot ''
 assert_rc 1 test -f "$LF"
+
+# ★쓰다 만 조각(.last-<id>.<pid>) 회수. 훅이 mv 에 닿기 전에 죽으면 남는다.
+#   판정은 이름에 박힌 pid — 그 프로세스가 없으면 이 조각은 영영 완성되지 않는다.
+#   살아있는 pid 는 건드리지 않는다: 지금 쓰는 중이면 지운 순간 mv 가 실패해 프롬프트가 샌다.
+echo "idle 1 $$" > "$STATE/hook-9"
+printf '1\n살아있는 세션\n' > "$LF"
+printf 'x' > "$STATE/.last-9.999999"      # 없는 pid = 완성될 일 없는 조각
+printf 'x' > "$STATE/.last-9.$$"          # 살아있는 pid = 쓰는 중일 수 있다
+printf 'x' > "$STATE/.last-9.pid없음"     # 우리 형식이 아니다
+hook boot ''
+assert_rc 1 test -f "$STATE/.last-9.999999"      # 죽은 pid 의 조각 → 회수
+assert_rc 0 test -f "$STATE/.last-9.$$"          # 살아있는 pid 의 조각 → 그대로
+assert_rc 1 test -f "$STATE/.last-9.pid없음"     # 형식 밖 → 회수
+assert_rc 0 test -f "$LF"                        # 조각을 쓸어도 진짜 파일은 남는다
+rm -f "$STATE/.last-9.$$"
 unset TT_FAKE_LS2
 
 # ── ⑤ 렌더 ─────────────────────────────────────────────────────────────────
@@ -243,6 +293,34 @@ assert_eq "$(pv 9 40 30 | head -1)" "❯ $x27…" \
 k=$(awk 'BEGIN { s = ""; for (i = 0; i < 20; i++) s = s "가"; printf "%s", s }')
 printf '1\n%s\n' "$k" > "$LF"
 assert_eq "$(pv 9 40 20 | head -1)" "❯ 가가가가가가가가…" "★한글은 두 칸으로 세서 자른다"
+
+# ── ⑤-b 렌더 소독 — 저장을 안 거친 파일이 들어와도 헤더가 안 깨진다 ─────────
+# 손으로 만든 파일·옛 판이 남긴 파일은 저장 소독을 안 거쳤다. 렌더는 파일을 믿지 않는다.
+#
+# ★탭. 폭 1 로 세던 판을 실측했더니 20칸 한도에서 58칸이 나갔다 — 터미널이 탭을 탭 스톱까지
+#   벌리는데 우리는 1칸으로 셌기 때문이다. 공백으로 펴서 센 폭과 그린 폭을 같게 만든다.
+printf '1\na%sb%sc\n' "$TAB" "$TAB" > "$LF"
+assert_eq "$(pv 9 40 20 | head -1)" "❯ a b c" "★렌더가 탭을 공백 한 칸으로 편다"
+tabline=$(awk -v t="$TAB" 'BEGIN { s = ""; for (i = 0; i < 40; i++) s = s t "x"; printf "%s", s }')
+printf '1\n%s\n' "$tabline" > "$LF"
+# cols=20 → 본문 폭 18 → 마지막 한 칸은 … 자리 → 17칸(" x" 8쌍 + 공백 하나)까지
+sp17=$(awk 'BEGIN { s = ""; for (i = 0; i < 8; i++) s = s " x"; printf "%s ", s }')
+assert_eq "$(pv 9 40 20 | head -1)" "❯ $sp17…" "★탭이 든 줄도 표시폭이 정확히 cols 다"
+case "$(pv 9 40 20)" in *"$TAB"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "탭 자체가 프리뷰로 나가지 않는다"
+
+# ★C1(U+0080–9F). 8비트 CSI(U+009B)는 ESC 없이 커서를 움직인다 — 프리뷰가 깨지면 사용자
+#   눈에는 팝업 전체가 망가진 것으로 보인다. 저장 소독을 안 거친 파일에서도 막는다.
+printf '1\n%s31m빨강%s0m\n' "$CSI" "$CSI" > "$LF"
+out=$(pv 9 40 60)
+case "$out" in *"$CSI"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "★렌더가 C1(c2 9b)을 걷어낸다"
+assert_contains "$out" "빨강" "C1 만 빠지고 글자는 남는다"
+# 구분선은 DIM(ESC[2m)으로 그리므로 전체 출력에는 ESC 가 원래 있다 — 본문 줄만 본다
+printf '1\n%s[31m생ESC\n' "$ESC" > "$LF"
+case "$(pv 9 40 60 | head -1)" in *"$ESC"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "★렌더가 생 ESC 도 걷어낸다"
+assert_eq "$(pv 9 40 60 | head -1)" "❯ [31m생ESC" "ESC 만 빠지고 나머지는 그대로다"
 
 # ★줄 수 회계 — 헤더가 먹은 만큼 화면 꼬리가 줄어든다
 export TT_FAKE_PANE=$(awk 'BEGIN { for (i = 1; i <= 20; i++) print "screen line " i }')

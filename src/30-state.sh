@@ -441,6 +441,17 @@ tt_sweep_hooks() {
             *) rm -f "$hf" ;;
         esac
     done
+    # 쓰다 만 조각(.last-<id>.<pid>) 회수. 위 글롭이 점 파일을 안 잡으니 여기서 한 번 더 돈다.
+    #   조각은 훅이 mv 에 닿기 전에 죽었을 때만 남는다(SIGKILL·디스크 가득). 판정은 이름에
+    #   박힌 pid 다 — 그 프로세스가 없으면 이 조각은 영영 완성되지 않는다. **살아있는 pid 는
+    #   건드리지 않는다**: 지금 쓰는 중일 수 있고, 지우면 mv 가 실패해 그 프롬프트가 통째로
+    #   유실된다. kill -0 은 내장이라 포크가 안 는다.
+    for hf in "$STATE"/.last-*; do
+        [ -f "$hf" ] || continue
+        id=${hf##*.}
+        case "$id" in ''|*[!0-9]*) rm -f "$hf"; continue ;; esac   # pid 자리가 아니다 = 우리 것이 아니다
+        kill -0 "$id" 2>/dev/null || rm -f "$hf"
+    done
     return 0
 }
 
