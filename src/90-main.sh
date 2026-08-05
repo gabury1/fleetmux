@@ -344,6 +344,8 @@ fi
 #   transform 계열만 인자를 명령으로 돌려 그 출력을 라벨로 쓰므로 placeholder 가 확장된다.
 #   확인 방법: 크기를 준 pty(script + stty)에서 fzf 를 실제로 띄우고 그려진 글자를 잡는다.
 #   기동 성공(rc=0)만 보면 이 차이를 못 잡는다 — 둘 다 기동은 된다.
+#   그리고 {1} 은 **셸 인용된 채로** 치환된다('my-session'). 그걸 다시 " " 로 감싸면
+#   인용부호가 화면에 문자로 남는다 — 여백은 printf 의 포맷으로 주고 {1} 은 인자로 넘긴다.
 # 목록 생산자의 stderr 는 화면이 아니라 hook.log 로 간다 — 설정 파일에 깨진 줄이 있으면
 # 그 경고가 fzf 화면 위에 덧칠돼 관제탑을 못 읽게 만든다. 버리지 않는 이유는 86 과 같다(권고 N3).
 # footer 가 설정 키를 적는다 — 목록에서 ⚙ 행을 뺀 대신 여기서 발견성을 갚는다. 바인딩과 표기가
@@ -356,7 +358,7 @@ session=$("$SELF" --list 2>>"$STATE/hook.log" \
           --color='pointer:#4ec9b0,prompt:#4ec9b0,hl:#56b6c2,hl+:#56b6c2,bg+:#18221e,fg+:regular,footer:#4a5a52,border:#4a5a52,label:#4ec9b0,preview-border:#4a5a52' \
           --preview "$SELFQ --preview {1} {3}" \
           --preview-window 'right,65%,border-rounded' --preview-label=' session ' \
-          --bind 'focus:transform-preview-label:echo " {1} "' \
+          --bind 'focus:transform-preview-label:printf " %s " {1}' \
           --bind 'right:accept' \
           --bind 'left:abort' \
           --bind "ctrl-r:reload($SELFQ --list)" \
