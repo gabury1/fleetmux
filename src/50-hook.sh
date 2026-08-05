@@ -63,14 +63,14 @@ tt_fleet_agg() {
                 [ -n "$nm" ] || continue
                 # 셋까지만 적고 나머지는 +n — 상태바는 폭이 좁고, 넘치면 tmux 가 통째로 자른다.
                 if [ "$wshown" -lt 3 ]; then
-                    out="$out#[fg=colour215,bold]⏸$nm #[default]"
+                    out="$out#[fg=colour215,bold]⏸ $nm #[default]"
                     wshown=$((wshown + 1))
                 fi
             done
             [ "$w" -gt "$wshown" ] && out="$out#[fg=colour215,bold]+$((w - wshown)) #[default]"
         fi
         # 이름을 하나도 못 얻었으면(서버가 없거나 조회 실패) 예전처럼 개수만이라도 띄운다.
-        [ "$wshown" = 0 ] && out="$out#[fg=colour215,bold]⏸$w #[default]"
+        [ "$wshown" = 0 ] && out="$out#[fg=colour215,bold]⏸ $w #[default]"
     fi
     [ "$k" -gt 0 ] && out="$out#[fg=yellow,bold]✻$k #[default]"
     printf '%s' "$out"
@@ -269,7 +269,7 @@ if [ "${1:-}" = "--status" ]; then
             [ "${la:-0}" -gt "$ts" ] && continue    # 이미 들어가봄 = 확인 완료 → 제거
             keep="$keep$ts $name
 "
-            [ $(( now - ts )) -le "$unseen_s" ] && out="$out ✓$name"   # 상태바엔 unseen_minutes 만큼만, 파일은 볼 때까지 유지
+            [ $(( now - ts )) -le "$unseen_s" ] && out="$out ✓ $name"   # 상태바엔 unseen_minutes 만큼만, 파일은 볼 때까지 유지
         done < "$f"
         printf '%s' "$keep" > "$f"
         tt_finished_unlock
