@@ -16,7 +16,7 @@
 #   t-10 이 훅 신선/낡음 × CPU rc0/rc1/rc2 × 화면 매치/불일치 12칸의 기대값과 이 부등식을
 #   격자로 못박는다.
 tt_fleet_agg() {
-    local f st ts pid w=0 k=0 out="" now sid
+    local f st ts pid w=0 k=0 out="" now sid wids="" wnames="" wshown=0 nm line
     now=$(date +%s)
     for f in "$STATE"/hook-*; do
         [ -f "$f" ] || continue
@@ -28,7 +28,12 @@ tt_fleet_agg() {
         [ "$pid" -gt 0 ] && ! kill -0 "$pid" 2>/dev/null && continue
         case "${ts:-0}" in ''|*[!0-9]*) ts=0 ;; esac
         case "$st" in
-            waiting) w=$((w + 1)) ;;
+            waiting)
+                w=$((w + 1))
+                # 어느 세션이 막혀 있는지까지 기억한다 — ⏸ 는 **사람이 손대야 끝나는** 상태다.
+                # 개수만 띄우면 "누구야?"를 알려고 팝업을 열어야 하는데, 그 한 번이 곧 지연이다.
+                # (✓ 는 이미 이름을 단다. 더 급한 ⏸ 가 이름이 없던 게 거꾸로였다.)
+                wids="$wids ${f##*/hook-}" ;;
             working)
                 sid=${f##*/hook-}
                 # 훅이 working 이면 **무조건 센다** — 여기엔 3순위 증인(화면)이 없다.
@@ -45,7 +50,28 @@ tt_fleet_agg() {
                 tt_cpu_sample "$sid" "$pid" "$now" ;;
         esac
     done
-    [ "$w" -gt 0 ] && out="$out#[fg=colour215,bold]⏸$w #[default]"
+    # ⏸ 이름 붙이기. tmux 조회는 **딱 한 번** — 이 함수는 상태바가 5초마다 부른다.
+    #   세션당 display-message 를 부르면 대기 세션 수만큼 포크가 는다.
+    if [ "$w" -gt 0 ]; then
+        wnames=$(tmux list-sessions -F '#{session_id} #{session_name}' 2>/dev/null || true)
+        if [ -n "$wnames" ]; then
+            for sid in $wids; do
+                nm=""
+                while read -r line; do
+                    case "$line" in "\$$sid "*) nm=${line#* }; break ;; esac
+                done <<< "$wnames"
+                [ -n "$nm" ] || continue
+                # 셋까지만 적고 나머지는 +n — 상태바는 폭이 좁고, 넘치면 tmux 가 통째로 자른다.
+                if [ "$wshown" -lt 3 ]; then
+                    out="$out#[fg=colour215,bold]⏸$nm #[default]"
+                    wshown=$((wshown + 1))
+                fi
+            done
+            [ "$w" -gt "$wshown" ] && out="$out#[fg=colour215,bold]+$((w - wshown)) #[default]"
+        fi
+        # 이름을 하나도 못 얻었으면(서버가 없거나 조회 실패) 예전처럼 개수만이라도 띄운다.
+        [ "$wshown" = 0 ] && out="$out#[fg=colour215,bold]⏸$w #[default]"
+    fi
     [ "$k" -gt 0 ] && out="$out#[fg=yellow,bold]✻$k #[default]"
     printf '%s' "$out"
     return 0
