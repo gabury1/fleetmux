@@ -27,11 +27,15 @@ Order of operations, always: **state first, panes second.**
 tt --status
 ```
 
-One line, the same one the tmux status bar shows: `⏸2 ✻3` — sessions awaiting a human
-/ sessions working right now, plus `✓name` badges for work that finished while nobody
-was watching. It is emitted with tmux style markup (`#[fg=colour215,bold]…#[default]`)
-because the status bar is its home; read the glyphs and the numbers, ignore the
-markup. Empty output means nothing is working and nothing is waiting.
+One line: `⏸2 ✻3` — sessions awaiting a human / sessions working right now, plus
+`✓name` badges for work that finished while nobody was watching. It is emitted with
+tmux style markup (`#[fg=colour215,bold]…#[default]`) because a tmux status bar is
+what it is written for; read the glyphs and the numbers, ignore the markup. Empty
+output means nothing is working and nothing is waiting.
+
+Do not assume the human can see this line. Wiring it into `status-right` is manual and
+many installs never do it (README → Troubleshooting Q4), so **say the tally out loud**
+rather than pointing at the status bar.
 
 `⏸` **is the one that matters.** It means a session is blocked on a human — a
 permission prompt, a plan approval, a question. Surface those first, before anything
@@ -82,7 +86,7 @@ disagreement is worth reporting.
 cat ~/.cache/tt/hook-<tmux-session-id>   # "<state> <unix-ts> <agent-pid>"
 cat ~/.cache/tt/manifest                 # TAB: name, cwd, kind, command, conversation-id, conversation home
 cat ~/.cache/tt/finished                 # "<unix-ts> <name>" — finished, not yet seen
-tail ~/.cache/tt/hook.log                # append-only audit trail of every transition
+tail ~/.cache/tt/hook.log                # audit trail of every transition (rotated at log_max)
 ```
 
 `hook-*` states are `working`, `waiting`, `idle`. The timestamp answers "how long has

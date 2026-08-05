@@ -33,9 +33,21 @@ tt_is_uuid() {
 #   dash 는 .bashrc 를 안 읽어 claude 가 PATH 에서 사라진다(2026-07-26: agent 5개 전멸).
 #   set -g default-shell 로 고치면 남의 세션까지 영향이 가므로, 세션마다 명시하는 쪽을 택한다 —
 #   서버 전역 상태는 무접촉이고 효과는 우리 세션에만 든다.
+#   판정 소스가 둘인 이유(팀 배포 게이트 I4): `getent` 는 glibc 것이라 **맥에 없다**.
+#   맥에서 첫 줄만 있으면 이 함수는 폴백이 아니라 **상수**가 된다 — zsh 가 기본인 기계에서
+#   PATH 가 ~/.zshrc 에만 있으면 복원된 pane 이 다시 claude 를 못 찾는다(위 사고의 재발).
+#   그래서 맥의 사용자 DB(Directory Service)를 `dscl` 로 한 번 더 묻는다. 리눅스엔 dscl 이
+#   없고 맥엔 getent 이 없으니, 두 줄 중 그 기계에 있는 쪽만 답한다.
+#   `|| s=''` 을 붙이는 이유: 이 파일은 `set -euo pipefail` 아래다. 없는 명령의 파이프라인은
+#   rc 127 이고 pipefail 이 그걸 대입문 밖으로 내보낸다 — 붙이지 않으면 호출 맥락에 따라
+#   함수가 조용히 죽는다.
 tt_login_shell() {
-    local s
-    s=$(getent passwd "$(id -un 2>/dev/null)" 2>/dev/null | cut -d: -f7)
+    local s u
+    u=$(id -un 2>/dev/null) || u=''
+    s=$(getent passwd "$u" 2>/dev/null | cut -d: -f7) || s=''
+    if [ -z "$s" ] && [ -n "$u" ]; then
+        s=$(dscl . -read "/Users/$u" UserShell 2>/dev/null | awk 'NR==1{print $2}') || s=''
+    fi
     case "$s" in */bash|*/zsh|*/fish) [ -x "$s" ] && { printf '%s' "$s"; return 0; } ;; esac
     printf '/bin/bash'
 }

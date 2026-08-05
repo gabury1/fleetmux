@@ -96,6 +96,10 @@ tt_tmux_conf_render() {
 #   판정 규칙은 install.sh 의 already_sourced 와 같아야 한다: **줄 앞머리 한정 + 인자 정확 일치**.
 #   부분일치로 보면 주석 줄이나 개행 없이 이어붙어 깨진 줄("set -g mouse onsource-file …")까지
 #   "연결됨"이 된다. 후보 파일은 install.sh 의 pick_tmux_conf 와 같은 둘이다.
+#   틸데(~/…)는 펴서 비교한다(팀 배포 게이트 I1): tmux 는 `source-file ~/.config/…` 를 정상
+#   처리하고 README 도 그 모양을 가르치는데, 절대경로 정확 일치만 보면 그 사람만 "연결 안 함"
+#   으로 읽힌다 — 그러면 tt config set 이 살아있는 서버에 반영을 안 하면서 화면은 성공만 찍고,
+#   설치기 재실행은 중복 source 줄을 하나 더 붙인다. **문서가 시킨 그대로 한 사람만 걸리는 구멍**.
 tt_tmux_conf_linked() {
     local f line rest
     for f in "$HOME/.tmux.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"; do
@@ -113,6 +117,12 @@ tt_tmux_conf_linked() {
             while :; do case "$rest" in '-'*' '*) rest=${rest#* } ;; *) break ;; esac; done
             while :; do case "$rest" in *[[:blank:]]) rest=${rest%?} ;; *) break ;; esac; done
             case "$rest" in '"'*'"'|"'"*"'") rest=${rest#?}; rest=${rest%?} ;; esac
+            # 틸데를 편다. 패턴을 \~ 로 인용하는 이유: bash 는 ${var#word} 의 word 에도
+            # 틸데 확장을 하므로, 인용을 빼면 패턴이 $HOME 으로 먼저 펴져 안 맞는다.
+            case "$rest" in
+                '~')   rest="$HOME" ;;
+                '~/'*) rest="$HOME/${rest#\~/}" ;;
+            esac
             [ "$rest" = "$TT_TMUX_CONF" ] && return 0
         done < "$f"
     done

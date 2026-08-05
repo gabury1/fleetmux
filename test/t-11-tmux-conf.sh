@@ -144,6 +144,23 @@ printf 'set -g mouse on\nsource-file %s\n' "$SNIP" > "$HOME/.tmux.conf"
 "$TTBIN" --tmux-conf --write >/dev/null
 assert_contains "$(cat "$TT_TMUX_LOG")" "source-file $SNIP" "연결한 사람의 서버에는 그 자리에서 반영한다"
 
+# ── ⑩-b 틸데로 적은 줄도 연결이다 (게이트 I1) ───────────────────────────────
+# README 가 가르치는 모양이 정확히 이것이다: `source-file ~/.config/fleetmux/tmux.conf`.
+# tmux 는 이 줄을 정상 처리하는데 우리가 절대경로 정확 일치만 보면 **문서대로 한 사람만**
+# "연결 안 함"으로 읽힌다 → tt config set 이 살아있는 서버에 반영을 안 하면서 화면은 성공만
+# 찍고, 설치기 재실행은 중복 source 줄을 하나 더 붙인다.
+: > "$TT_TMUX_LOG"
+printf 'set -g mouse on\nsource-file ~/.config/fleetmux/tmux.conf\n' > "$HOME/.tmux.conf"
+assert_eq "$SNIP" "$HOME/.config/fleetmux/tmux.conf" "전제: 그 틸데 줄이 가리키는 곳이 우리 스니펫이다"
+"$TTBIN" --tmux-conf --write >/dev/null
+assert_contains "$(cat "$TT_TMUX_LOG")" "source-file $SNIP" "틸데로 적은 source-file 도 연결로 본다"
+
+# 다만 무조건 펴면 안 된다 — ~other/… 는 **남의 홈**이라 우리 줄이 아니다.
+: > "$TT_TMUX_LOG"
+printf 'source-file ~other/.config/fleetmux/tmux.conf\n' > "$HOME/.tmux.conf"
+"$TTBIN" --tmux-conf --write >/dev/null
+assert_eq "$(cat "$TT_TMUX_LOG")" "" "~other 형태(남의 홈)는 연결로 안 친다"
+
 # tmux 밖이면 연결돼 있어도 안 쏜다(쏠 서버가 없다)
 : > "$TT_TMUX_LOG"
 TMUX='' "$TTBIN" --tmux-conf --write >/dev/null

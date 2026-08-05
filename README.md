@@ -151,6 +151,11 @@ tt --tmux-conf --write    # write it, prints the path
 source-file ~/.config/fleetmux/tmux.conf
 ```
 
+Either form of that line is recognised — `~/…`, an absolute path, `-q`, quotes, leading
+whitespace. fmux reads your tmux config to decide whether it may re-`source` the
+snippet into the tmux server you are sitting in right now, and it only does that if it
+finds this line; a comment or a line with the path merely *inside* it does not count.
+
 The snippet is regenerated automatically whenever you change `key_summon`,
 `key_summon_fast`, or `snapshot_on_exit`.
 
@@ -162,8 +167,15 @@ The snippet is regenerated automatically whenever you change `key_summon`,
 | accent color | tool session (yazi, lazydocker…) — sorted alphabetically at the bottom |
 | ● ✻ ⏸ ✓ ⊘ | attached · working · awaiting you · unseen result · remote control dropped |
 
-Status bar carries the fleet tally `⏸2 ✻3` and a `✓name` badge for work that
-finished while you were away.
+`tt --status` prints the fleet tally `⏸2 ✻3` plus a `✓name` badge for work that
+finished while you were away — one line, meant for a tmux status bar.
+
+> **fmux does not wire your status bar.** Nothing in the snippet touches
+> `status-right`; the tally only appears once *you* add two lines to your own tmux
+> config. That is deliberate — `status-right` is a single value, so writing it would
+> overwrite whatever you already have there, and fmux's whole discipline is that it
+> owns one file and borrows one line. The two lines are in
+> [Troubleshooting](#troubleshooting) (Q4).
 
 ## Configuration
 
@@ -306,10 +318,17 @@ popup.
 
 ```
 ./install.sh --dry-run      change nothing, just print what it would do
-./install.sh --yes          accept every proposed default
+./install.sh --yes          accept every proposed default — except the summon key,
+                            which stays `safe` (no prefix-less key is taken)
 ./install.sh --prefix DIR   install somewhere other than ~/.local
 ./install.sh --preset mac   summon-key preset: safe | mac | linux | wsl
 ```
+
+`--yes` deliberately does **not** accept the detected key preset. Binding a
+prefix-less key is a global change to your tmux — it takes that key away from whatever
+else was using it — so it happens only when you name a preset yourself. "Accept the
+defaults" must never mean "take two of my keys". Without `--preset`, `--yes` leaves
+`key_summon_fast` empty, exactly as the default promises.
 
 Eight steps: dependencies → `~/.local/bin/fmux` (+ the `tt` symlink) → hook shims in
 `~/.local/libexec/tt/` → the tmux snippet → summon-key preset → agent skill → cron
@@ -327,13 +346,32 @@ Re-running the installer is safe. If it stops, it tells you exactly how far it g
 
 ## macOS — what works and what does not
 
-Honest boundary, read from the code rather than guessed:
+Honest boundary, read from the code rather than guessed. Nothing below was *run* on a
+Mac — each row names the line of code it was read from, so you can check us.
 
-**Works.** The popup and the list, hook state (`✻` working, `⏸` waiting, `✓` unseen),
-the status-bar tally, broadcast, `tt config`, the summon key, the manifest, and
-`--restore` / `--boot-restore`. `bash` is fine: macOS still ships bash 3.2 as
-`/bin/bash`, and fmux is written to 3.2 — `test/t-14-bash3.sh` scans every source file
-for bash-4-only syntax so it stays that way.
+| on macOS | verdict | why (read from the code) |
+|---|---|---|
+| popup · list · hook state (`✻` `⏸` `✓`) · broadcast · `tt config` · summon key · manifest | works | no platform-specific call in the path |
+| `tt --status` (fleet tally) | works | but nothing wires it for you on any platform — see [Troubleshooting](#troubleshooting) Q4 |
+| `tt --restore` (by hand) | works | process lookup is `ps -o comm=`, which is POSIX (`src/10-util.sh`) |
+| `tt --boot-restore` (`@reboot` cron) | **does not work** | its network gate is `timeout 5 getent hosts …` (`src/70-fleet.sh`). macOS has neither `timeout` (GNU coreutils) nor `getent` (glibc), so the check can never pass: it burns the full `TT_BOOT_NETWAIT` (120 s) and then exits 1 with `ABORT: no DNS+tcp/443` in `~/.cache/tt/boot.log`. The cron line ends in `>/dev/null 2>&1`, so it fails **silently**. |
+| Remote Control auto-repair (`rc`) | **does not work** | `/proc/<pid>/stat` — see below |
+| `bash` itself | works | macOS still ships bash 3.2 as `/bin/bash`, and fmux is written to 3.2 — `test/t-14-bash3.sh` scans the source for bash-4-only syntax so it stays that way |
+
+Two smaller macOS details, both fixed in this build but worth knowing:
+
+- **`flock` is absent**, so the duplicate-run guard is off (`brew install flock`).
+  `--boot-restore` logs `warn: flock not found` and continues.
+- **The login shell for restored panes** is looked up with `getent passwd` (absent) and
+  now falls back to `dscl . -read /Users/"$(id -un)" UserShell` (`src/20-manifest.sh`).
+  Before that fallback the answer was a constant `/bin/bash` — on a Mac, where zsh is
+  the default, a restored pane would start a shell that never reads your `~/.zshrc`,
+  and `claude --resume` would come back `command not found`.
+
+Making `--boot-restore` work on macOS means replacing that gate with a
+dependency-free check. It is **not** in this release — until then, do not add the
+`@reboot` line on a Mac; run `tt --restore` by hand instead, which skips the gate
+entirely.
 
 **Does not work: Remote Control auto-repair (`rc`).** `src/60-rc.sh` identifies the
 claude process behind a session with `/proc/<pid>/stat` (field 22, `starttime`) so a
@@ -376,6 +414,90 @@ weaker there. Be honest with yourself about this before relying on it:
 
 Everything that does not depend on the machine staying up — the popup, hook state,
 broadcast, `tt config`, `--restore` run by hand — works normally.
+
+## Troubleshooting
+
+The five things that go wrong first, in the order people hit them.
+
+### Q1. `tt: command not found`
+
+Put the line the installer printed into your shell startup file and open a **new**
+shell:
+
+```bash
+export PATH="$HOME/.local/libexec/tt:$HOME/.local/bin:$PATH"
+```
+
+`~/.bashrc` on Linux, `~/.bash_profile` for bash on macOS, `~/.zshrc` for zsh. The
+`libexec/tt` half must stay **first** — that is the hook shim, and behind the real
+`claude` it never fires. The installer does not edit startup files for you.
+
+### Q2. The summon key does nothing
+
+Most likely nothing is bound: `key_summon_fast` is empty by default, on purpose — fmux
+takes no key until you say so. Turn it on and re-source:
+
+```bash
+tt config set key_summon_fast 'C-Left M-Left'   # macOS: 'M-b'
+```
+
+Then check three things:
+
+1. `~/.tmux.conf` (or `~/.config/tmux/tmux.conf`) contains
+   `source-file ~/.config/fleetmux/tmux.conf` as its own line. `~` is fine; so is an
+   absolute path. A commented-out line is not.
+2. If you are already inside tmux, the running server still has the old bindings.
+   `tt config set` re-sources the snippet for you *if* it finds that line; otherwise
+   press `prefix + :` and run `source-file ~/.tmux.conf` once.
+3. `prefix + F` — the default — always works, even with no prefix-less key at all. If
+   that fails too, the snippet is not being read at all, which is point 1 again.
+
+On macOS, Option+← arrives as `M-b`, not `M-Left`, and Ctrl+arrow is usually eaten by
+Mission Control. Under Windows Terminal, Alt+arrow never reaches WSL; use `C-Left`.
+
+### Q3. The list shows up, but `⏸` (waiting for approval) never does
+
+That is the hook path, and it depends entirely on the shim:
+
+- `command -v claude` must print `~/.local/libexec/tt/claude`. If it prints anything
+  else, go back to Q1 — the shim is not in front.
+- The shim fires **only inside tmux, and only while `tt` is on `PATH`** (it checks
+  `command -v tt`). Outside tmux it deliberately passes straight through.
+- If you started that agent *before* installing fmux, it has no hooks. Restart it.
+- The audit log is `~/.cache/tt/hook.log`. It is **rotated**, not append-forever: past
+  `log_max` bytes it is cut back to the last ~2000 lines. A log that starts abruptly is
+  rotation, not silence.
+
+### Q4. The `⏸2 ✻3` tally never appears in the status bar
+
+Nothing is broken — **fmux does not wire your status bar**, on any platform. It would
+have to overwrite `status-right`, which is yours. Add these two lines to your own tmux
+config (not to the fmux snippet, which is regenerated):
+
+```tmux
+set -g status-interval 5
+set -ag status-right '#(~/.local/bin/fmux --status)'
+```
+
+`-ag` appends, so whatever you already had in `status-right` survives. Beyond drawing
+the tally, this is also the **sampler** for the `✻` CPU-delta signal (`src/50-hook.sh`,
+`src/30-state.sh`): every 5 s it refreshes the working-session snapshot the popup reads.
+Without it the popup falls back to reading the screen — the same behaviour as before
+that signal existed, so nothing regresses; the `✻` mark is just less certain.
+
+### Q5. `tt --rc` says `? no claude found` on every row, and a reboot restores nothing
+
+On macOS this is *unsupported*, not broken: rc needs `/proc/<pid>/stat`, and
+`--boot-restore`'s network gate needs `getent` and `timeout`. macOS has none of the
+three — see [macOS](#macos--what-works-and-what-does-not) for the exact table. Run
+`tt --restore` by hand instead; it does not pass through that gate and works fine.
+
+On Linux, both are real diagnostics. Bring `~/.cache/tt/boot.log`: if the last line is
+`ABORT: no DNS+tcp/443`, the machine had no network within 120 s of boot and fmux
+refused to restore on purpose — a fleet of network-less agents would look "already
+running" forever and block your manual retry. If the log says the manifest is
+`older than 7 days`, nothing has been writing it: the minute cron line was probably
+never installed.
 
 ## Scripting surface
 

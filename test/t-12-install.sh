@@ -223,6 +223,19 @@ run_inst "$STUB_OK" --yes
 assert_eq "$(has "$OUT" '이미 이 파일을 source')" "yes" "들여쓰기·플래그·따옴표가 있어도 같은 줄로 본다"
 assert_eq "$(cnt "$TMUXCONF" 'source-file')" "1" "그때는 줄을 더 넣지 않는다"
 
+# 틸데로 적어도 같은 줄로 본다 (게이트 I1) — README 가 가르치는 모양이 정확히 이것이다.
+# 안 펴면 **문서대로 손으로 넣은 사람만** 재실행에서 중복 source 줄을 하나 더 받는다.
+assert_eq "$SNIP" "$HOME/.config/fleetmux/tmux.conf" "전제: 틸데 줄이 가리키는 곳이 우리 스니펫이다"
+printf 'set -g mouse on\nsource-file ~/.config/fleetmux/tmux.conf\n' > "$TMUXCONF"
+run_inst "$STUB_OK" --yes
+assert_eq "$(has "$OUT" '이미 이 파일을 source')" "yes" "틸데로 적은 줄도 이미 연결된 것으로 본다"
+assert_eq "$(cnt "$TMUXCONF" 'source-file')" "1" "그러니 중복 줄을 안 붙인다"
+
+# 남의 홈(~other/…)은 우리 줄이 아니다 — 무조건 $HOME 으로 펴면 그것대로 오탐이다.
+printf 'source-file ~other/.config/fleetmux/tmux.conf\n' > "$TMUXCONF"
+run_inst "$STUB_OK" --yes
+assert_eq "$(cnt "$TMUXCONF" 'source-file')" "2" "~other 형태는 우리 줄로 안 친다"
+
 # 다른 파일을 source 하는 줄은 우리 줄이 아니다
 printf 'source-file %s.other\n' "$SNIP" > "$TMUXCONF"
 run_inst "$STUB_OK" --yes
@@ -247,6 +260,24 @@ assert_eq "$(grep -c '^unbind -n -q M-b' "$SNIP" || true)" "1" "걷은 키에 un
 
 run_inst "$STUB_OK" --yes --preset safe
 assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "safe 는 무prefix 키를 하나도 안 건다"
+
+# ── ⑦-b --yes 는 감지 프리셋을 자동 채택하지 않는다 (게이트 I3) ────────────
+# 예전엔 ASSUME_YES 가 ask_word 의 기본값(=감지값)을 프롬프트 없이 그대로 받았다. 그래서
+# 리눅스에서 `./install.sh --yes` 는 무prefix 키 **두 개**(C-Left M-Left)를 전역으로 뺏었고,
+# 그 옆에서 README 는 `key_summon_fast — Default empty (fmux steals no key until you say so)`
+# 를 약속하고 있었다. 키를 전역에서 뺏는 것은 "제안된 기본값 수락"의 범주가 아니다.
+run_inst "$STUB_OK" --yes --preset linux         # ← 먼저 '뺏긴 상태'를 만든다
+assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "2" "재현: --preset linux 는 무prefix 키 두 개를 건다"
+run_inst "$STUB_OK" --yes
+assert_eq "$RC" "0" "--yes 만 주면 rc 0"
+assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "--yes 는 무prefix 키를 하나도 안 뺏는다"
+assert_eq "$(cnt "$CONF" '^key_summon_fast=')" "0" "설정에도 값이 안 남는다"
+assert_eq "$(grep -c '^bind F ' "$SNIP" || true)" "1" "prefix 소환키(F)는 그대로 남는다"
+assert_eq "$(has "$OUT" '--yes 는 아무 키도 안 뺏는')" "yes" "왜 safe 인지 화면에 말한다"
+# 뺏는 길은 명시할 때만 열린다 — 그 길이 막히면 이 수정은 기능을 없앤 것이 된다.
+run_inst "$STUB_OK" --yes --preset linux
+assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "2" "명시 --preset 은 여전히 뺏는다"
+run_inst "$STUB_OK" --yes --preset safe
 
 run_inst "$STUB_OK" --preset nope
 assert_eq "$RC" "1" "모르는 프리셋이면 멈춘다"
@@ -312,7 +343,66 @@ cp "$ALT/bin/tt" "$TTROOT/tt.before"
 run_inst "$STUB_OK" --prefix "$ALT" --preset safe
 assert_eq "$RC" "0" "남의 tt 가 있어도 설치는 끝난다"
 assert_rc 0 cmp -s "$TTROOT/tt.before" "$ALT/bin/tt"
-assert_eq "$(has "$OUT" '심링크가 아닌 파일이다')" "yes" "남의 tt 를 건드리지 않았다고 말한다"
+assert_eq "$(has "$OUT" '우리 것이 아니다')" "yes" "남의 tt 를 건드리지 않았다고 말한다"
+
+# ── ⑪-b 남의 tt **심링크** 도 덮지 않는다 (게이트 I2) ──────────────────────
+# 이게 진짜 자리다. ~/.local/bin 에 개인 도구를 거는 가장 흔한 방식이 심링크인데,
+# 예전 가드는 `[ -e ] && [ ! -L ]` 이라 **일반 파일만** 지키고 심링크는 말없이 갈아쳤다.
+# 백업도 경고도 없으니 원래 가리키던 대상이 어디에도 안 남는다 = 되돌릴 수 없다.
+# 여기서는 두 경로를 다 밟는다: make 가 있으면 `make install` 이 걸고(그래서 Makefile 에도
+# 같은 가드가 있어야 한다), 없으면 install.sh 자기 손으로 건다.
+ALT2="$TTROOT/alt2"
+mkdir -p "$ALT2/bin" "$ALT2/theirs"
+printf '#!/bin/sh\necho 남의 도구다\n' > "$ALT2/theirs/mytool"; chmod +x "$ALT2/theirs/mytool"
+ln -sf "$ALT2/theirs/mytool" "$ALT2/bin/tt"
+assert_rc 0 test -L "$ALT2/bin/tt"
+
+run_inst "$STUB_OK" --prefix "$ALT2" --preset safe
+assert_eq "$RC" "0" "남의 tt 심링크가 있어도 설치는 끝난다"
+assert_eq "$(readlink "$ALT2/bin/tt")" "$ALT2/theirs/mytool" "남의 심링크가 그대로 남아 있다"
+assert_eq "$(has "$OUT" '우리 것이 아니다')" "yes" "남의 것이라고 말한다"
+assert_eq "$(has "$OUT" "심링크 → $ALT2/theirs/mytool")" "yes" "무엇이 있는지 대상 경로까지 보여준다"
+assert_eq "$(has "$OUT" 'ok   '"$ALT2/bin/tt"' → fmux')" "no" "안 걸었으면서 걸었다고 찍지 않는다"
+assert_eq "$(has "$OUT" 'mv ')" "yes" "사람이 정할 수 있게 방법을 알려준다"
+assert_eq "$(ex "$ALT2/bin/fmux")" "yes" "그래도 fmux 자체는 깔린다"
+
+# make 를 뺀 경로(HAVE_MAKE=0)도 같은 판정이어야 한다 — 이쪽은 install.sh 가 직접 ln 한다.
+NOMAKE="$TTROOT/nomake"
+mkdir -p "$NOMAKE"
+for c in sh bash env cat cp mv rm mkdir chmod ln cmp uname awk sed grep tr cut date ls \
+         dirname basename readlink sort head tail wc id touch find mktemp diff expr; do
+    [ -e "$SEAL/$c" ] && ln -sf "$SEAL/$c" "$NOMAKE/$c"
+done
+ALT3="$TTROOT/alt3"
+mkdir -p "$ALT3/bin" "$ALT3/theirs"
+printf '#!/bin/sh\necho 남의 도구다\n' > "$ALT3/theirs/mytool"; chmod +x "$ALT3/theirs/mytool"
+ln -sf "$ALT3/theirs/mytool" "$ALT3/bin/tt"
+RC=0
+OUT=$(PATH="$STUB_OK:$NOMAKE" bash "$INST" --prefix "$ALT3" --preset safe < /dev/null 2>&1) || RC=$?
+assert_eq "$RC" "0" "make 없이도 설치는 끝난다"
+assert_eq "$(has "$OUT" 'make 가 없다')" "yes" "make 없는 경로를 실제로 탔다"
+assert_eq "$(readlink "$ALT3/bin/tt")" "$ALT3/theirs/mytool" "make 없는 경로도 남의 심링크를 안 건드린다"
+
+# 반대편 — 우리가 건 심링크는 재실행이 그대로 다시 건다(멱등). 안 그러면 두 번째 설치부터
+# 훅 주입이 통째로 죽는다.
+ALT4="$TTROOT/alt4"
+run_inst "$STUB_OK" --prefix "$ALT4" --preset safe
+assert_eq "$(readlink "$ALT4/bin/tt")" "fmux" "빈 자리에는 우리 심링크를 건다"
+run_inst "$STUB_OK" --prefix "$ALT4" --preset safe
+assert_eq "$(readlink "$ALT4/bin/tt")" "fmux" "우리 심링크는 재실행이 그대로 유지한다"
+assert_eq "$(has "$OUT" '우리 것이 아니다')" "no" "우리 것을 남의 것으로 오판하지 않는다"
+# 끊어진 남의 심링크도 '비어 있음'이 아니다 — -e 는 거짓이지만 -L 은 참이다.
+ALT5="$TTROOT/alt5"
+mkdir -p "$ALT5/bin"
+ln -sf "$TTROOT/does-not-exist" "$ALT5/bin/tt"
+run_inst "$STUB_OK" --prefix "$ALT5" --preset safe
+assert_eq "$(readlink "$ALT5/bin/tt")" "$TTROOT/does-not-exist" "끊어진 남의 심링크도 안 갈아친다"
+assert_eq "$(has "$OUT" '우리 것이 아니다')" "yes" "끊어진 심링크도 남의 것으로 본다"
+
+# --dry-run 도 같은 말을 해야 한다(하고 나서 놀라지 않게)
+run_inst "$STUB_OK" --dry-run --prefix "$ALT2"
+assert_eq "$(has "$OUT" '우리 것이 아니다')" "yes" "dry-run 이 미리 알려준다"
+assert_eq "$(readlink "$ALT2/bin/tt")" "$ALT2/theirs/mytool" "dry-run 은 당연히 아무것도 안 바꾼다"
 
 # ── ⑫ 못 쓰는 prefix — 어디까지 했는지 말하고 멈춘다 ───────────────────────
 NOPREFIX="$TTROOT/notadir"
@@ -377,6 +467,33 @@ assert_rc 0 cmp -s "$TTROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmu
 assert_rc 0 cmp -s "$TTROOT/skill.before/mine.md"  "$HOME/.claude/skills/fleetmux.fmux-bak/mine.md"
 assert_eq "$(has "$OUT" 'fmux-bak')" "yes" "백업 경로를 사람에게 말한다"
 assert_contains "$(cat "$HOME/.claude/skills/fleetmux/SKILL.md")" "테스트용 스킬" "그러고 나서 우리 것을 깐다"
+
+# ── ⑫-d 재실행이 그 백업을 파괴하지 않는다 (게이트 C3) ─────────────────────
+# 예전 코드는 백업 직전에 `rm -rf "$SKILL_DST.fmux-bak"` 를 했다. 2회차 실행이 1회차가 남긴
+# **사용자 원본**을 먼저 지우고, 이미 우리 파일로 덮인 디렉토리를 그 자리에 다시 백업했다 —
+# 화면은 두 번 다 "백업해 뒀다"를 찍는데 사용자 원본은 기계 어디에도 안 남는다. 되돌릴 수 없고
+# 발생 조건은 '재실행' 하나뿐이며, README 는 바로 옆에서 "Re-running the installer is safe"
+# 를 약속한다. 백업은 한 번 만들면 덮지 않는다.
+RC=0
+OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" --yes < /dev/null 2>&1) || RC=$?
+assert_eq "$RC" "0" "재실행도 rc 0"
+assert_rc 0 cmp -s "$TTROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md"
+assert_rc 0 cmp -s "$TTROOT/skill.before/mine.md"  "$HOME/.claude/skills/fleetmux.fmux-bak/mine.md"
+assert_eq "$(has "$(cat "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md")" '테스트용 스킬')" "no" \
+    "★백업이 우리 파일로 바뀌지 않았다 — 사용자 원본이 그대로다"
+assert_eq "$(has "$OUT" '백업할 것이 없다')" "yes" "이미 같은 내용이면 백업 자체를 안 한다"
+
+# 사람이 설치된 스킬을 손으로 고친 뒤 재실행하면 — 원본 백업은 지키고, 그 변경분은 따로 남긴다.
+printf '내가 나중에 고친 줄\n' >> "$HOME/.claude/skills/fleetmux/SKILL.md"
+RC=0
+OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" --yes < /dev/null 2>&1) || RC=$?
+assert_eq "$RC" "0" "내용이 달라진 재실행도 rc 0"
+assert_rc 0 cmp -s "$TTROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md"
+assert_eq "$(has "$OUT" '첫 실행이 남긴 네 원본이다')" "yes" "기존 백업이 원본임을 알아보고 안 덮는다"
+assert_eq "$(ls -d "$HOME/.claude/skills/fleetmux.fmux-bak."* 2>/dev/null | wc -l | tr -d ' ')" "1" \
+    "이번 변경분은 타임스탬프를 붙여 옆에 남긴다"
+assert_eq "$(cat "$HOME"/.claude/skills/fleetmux.fmux-bak.*/SKILL.md | grep -c '내가 나중에 고친 줄' || true)" "1" \
+    "그 사본에 사람이 고친 줄이 들어 있다"
 
 # ── ⑬ 진짜 tmux 가 샜나 ────────────────────────────────────────────────────
 assert_eq "$(ex "$LEAK")" "no" "가짜 tmux/fzf 가 -V 말고 다른 인자로 불린 적이 없다"

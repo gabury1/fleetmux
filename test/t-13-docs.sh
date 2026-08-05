@@ -200,4 +200,70 @@ for p in safe mac linux wsl; do
     assert_contains "$(cat install.sh)" "$p)" "install.sh 가 프리셋 $p 를 받는다"
 done
 
+# ── ⑤ 상태바 — 문서와 스니펫이 같은 말을 하는가 (게이트 C1) ─────────────────
+# 이게 t-13 이 통째로 놓쳤던 자리다: 네 곳(README 둘·SKILL.md·tt --help)이 상태바 집계를
+# **되는 기능으로 단정**하는데 배선 코드가 레포에 없었다. 팀원 100% 가 그 화면을 영원히 못 본다.
+# 그래서 여기서는 문장을 세지 않고 **스니펫이 실제로 무엇을 내는지 렌더해서** 문서와 맞춘다.
+# 나중에 누가 배선을 넣으면 이 판정이 자동으로 반대편을 요구한다 — 한 방향으로만 도는 그물이 아니다.
+snip=$("$TTBIN" --tmux-conf 2>/dev/null) || snip=''
+case "$snip" in *status-right*) wired=yes ;; *) wired=no ;; esac
+assert_eq "$wired" "no" "지금 스니펫은 status-right 를 배선하지 않는다(사실 확인)"
+if [ "$wired" = no ]; then
+    assert_contains "$RM" 'fmux does not wire your status bar' \
+        "배선이 없으니 README 가 '자동으로 안 붙는다'고 말한다"
+    assert_contains "$RM" 'set -ag status-right' "README 가 직접 넣을 줄을 알려준다"
+    assert_contains "$RM" 'set -g status-interval 5' "README 가 갱신 주기 줄도 알려준다"
+    assert_contains "$SK" 'Wiring it into `status-right` is manual' \
+        "스킬도 상태바를 본 적 없는 사람을 전제한다"
+    assert_contains "$("$TTBIN" --help 2>/dev/null)" 'not wired automatically' \
+        "tt --help 도 같은 말을 한다"
+    # 반증된 단정문이 남아 있으면 안 된다.
+    assert_eq "$(grep -c 'Status bar carries the fleet tally' "$README" || true)" "0" \
+        "'상태바가 집계를 나른다'는 옛 단정이 README 에 없다"
+    assert_eq "$(grep -c 'the status-bar tally' "$README" || true)" "0" \
+        "macOS Works 목록의 옛 단정도 없다"
+    assert_eq "$(grep -c 'the same one the tmux status bar shows' "$SKILL" || true)" "0" \
+        "스킬의 옛 단정도 없다"
+else
+    assert_eq "$(grep -c 'does not wire your status bar' "$README" || true)" "0" \
+        "배선이 생겼으면 '안 붙는다'는 안내가 남아 있으면 안 된다"
+fi
+
+# ── ⑥ macOS --boot-restore 경계 (게이트 C2) ────────────────────────────────
+# 네트워크 게이트가 timeout·getent 에 매달려 있다 — 둘 다 맥 기본에 없다. 그런데 README 의
+# macOS **Works** 목록이 --boot-restore 를 품고 있었다. 크론 줄은 >/dev/null 2>&1 이라
+# 실패가 조용하다: 팀원은 "복원이 되는데 왜 안 됐지"를 영원히 디버깅한다.
+assert_contains "$SRC" 'timeout 5 getent hosts' "boot-restore 의 네트워크 게이트가 실제로 그 둘에 매달려 있다"
+assert_contains "$RM"  'macOS has neither `timeout`' "README 가 맥에 그 둘이 없다고 적는다"
+assert_contains "$RM"  'does not work' "README 가 안 되는 것을 안 된다고 적는다"
+assert_contains "$RM"  'ABORT: no DNS+tcp/443' "무슨 증상으로 나타나는지 적는다"
+assert_contains "$SRC" 'ABORT: no DNS+tcp/443' "그 문구가 실제 코드에 있다"
+# --restore(손으로)는 그 게이트를 안 지난다 — 맥에서도 된다. 그 구분이 문서에 있어야 한다.
+assert_contains "$RM" 'tt --restore` (by hand)' "손으로 치는 --restore 는 맥에서도 된다고 나눠 적는다"
+
+# ── ⑦ 로그인 셸 판정 (게이트 I4) ────────────────────────────────────────────
+# getent 는 glibc 것이라 맥에 없다 → 폴백이 아니라 상수 /bin/bash 가 된다.
+assert_contains "$SRC" 'dscl . -read' "맥용 로그인 셸 폴백이 코드에 있다"
+assert_contains "$RM"  'dscl . -read' "README 가 그 폴백을 적는다"
+
+# ── ⑧ --yes 는 키를 안 뺏는다 (게이트 I3) ───────────────────────────────────
+# README:106 의 "steals no key until you say so" 와 install.sh 의 --yes 가 서로 어긋나 있었다.
+assert_contains "$INST_SH" '--yes 는 아무 키도 안 뺏는 safe 로 간다' "install.sh 가 그렇게 말한다"
+assert_contains "$INST_SH" 'elif [ "$ASSUME_YES" = 1 ]; then' "그 분기가 실제로 코드에 있다"
+assert_contains "$RM" 'does **not** accept the detected key preset' "README 가 --yes 의 경계를 적는다"
+
+# ── ⑨ Troubleshooting 절 ────────────────────────────────────────────────────
+# 팀원이 받는 문서는 README 하나뿐이다. 안내문 마지막 줄이 이 절을 가리킨다.
+assert_eq "$(grep -c '^## Troubleshooting' "$README" || true)" "1" "README 에 Troubleshooting 절이 있다"
+assert_contains "$RM" '`tt: command not found`' "Q1 — PATH"
+assert_contains "$RM" 'The summon key does nothing' "Q2 — 소환키"
+assert_contains "$RM" 'never does' "Q3 — ⏸ 가 안 뜬다"
+assert_contains "$RM" 'never appears in the status bar' "Q4 — 상태바 집계"
+assert_contains "$RM" 'restores nothing' "Q5 — rc·부팅 복원"
+# 각 답이 근거로 든 문자열이 코드에 실재해야 한다 — FAQ 가 없는 파일·없는 동작을 가르치면 안 된다.
+assert_contains "$SRC" 'STATE/boot.log'  "boot.log 경로가 코드에 있다"
+assert_contains "$RM"  '~/.cache/tt/boot.log' "Q5 가 그 로그를 안내한다"
+assert_contains "$(cat libexec/claude)" 'command -v tt' "Q3 이 말한 shim 발동 조건이 실제 코드다"
+assert_contains "$RM"  'command -v tt' "Q3 이 그 조건을 그대로 적는다"
+
 tt_test_done
