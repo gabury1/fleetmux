@@ -8,10 +8,18 @@
 #                             전역으로 뺏는 것은 --preset 으로 명시할 때만 일어난다.
 #                             (물어볼 수 있을 때의 제안은 shift = S-Left 다. 왜 그 키인지는
 #                              아래 "⑤ 소환키 프리셋" 절 머리말에 근거를 적어 뒀다.)
+#   curl -fsSL <URL> | bash   레포 없이 설치(원격 모드) — 릴리스 아카이브를 받아 깐다
+#
+# 모드가 둘이다. 어느 쪽인지는 **파일 존재로** 가르고, 화면 머리에 한 줄로 밝힌다:
+#   로컬 — 이 스크립트 옆에 레포가 있다(Makefile·src/·bin/fmux 가 보인다). 그것을 깐다.
+#   원격 — 없다(`curl | bash` 로 들어왔다). 릴리스 아카이브를 받아 임시 디렉토리에 풀고
+#          그것을 레포처럼 써서 아래 여덟 단계를 똑같이 밟는다. 끝나거나 실패하면 지운다.
 #
 # 규율 넷 — 이 파일을 고칠 사람에게:
 #   ① 멱등하다. 두 번 돌려도 안전하고, 이미 있는 것은 덮기 전에 알린다.
 #   ② --dry-run 은 파일을 하나도 안 만든다. 새 단계를 넣을 때 이 갈림을 빠뜨리지 마라.
+#      (원격 모드의 --dry-run 은 아카이브를 받기는 받는다 — 받아 봐야 무엇을 깔지 말할 수
+#       있기 때문이다. 다만 **임시 디렉토리 밖으로는 한 바이트도 안 나가고**, 끝나면 지운다.)
 #   ③ 남의 파일은 동의 없이 안 고친다. ~/.tmux.conf 는 물어보고 한 줄만,
 #      crontab 은 아예 안 고친다 — 보여주기만 한다(이 프로젝트의 원칙).
 #   ④ 실패하면 어디까지 했는지 말하고 멈춘다. 조용한 반쪽 설치를 만들지 않는다.
@@ -28,10 +36,13 @@ PREFIX="${PREFIX:-$HOME/.local}"
 DRY=0
 ASSUME_YES=0
 PRESET=""
+REF=""
 
 usage() {
     cat << 'EOF'
 usage: ./install.sh [옵션]
+       curl -fsSL <URL> | bash              (원격 모드 — 레포 없이)
+       curl -fsSL <URL> | bash -s -- --ref v1.2.3
 
   -n, --dry-run       아무것도 바꾸지 않고 할 일만 출력한다
   -y, --yes           물음에 전부 yes (제안된 기본값을 그대로 받는다)
@@ -42,10 +53,12 @@ usage: ./install.sh [옵션]
                       세 곳 모두에 도착하는 유일한 무prefix 한 타건이다. 대신 그 pane 안
                       모든 앱에서 그 키를 가져간다. --yes 로는 안 뺏는다 — 무prefix 키를
                       뺏는 것은 여기서 명시할 때만 일어난다.
+      --ref TAG       원격 모드에서 받을 태그(또는 브랜치). 기본은 **최신 릴리스 태그**다.
+                      로컬 모드에서는 쓰이지 않는다.
   -h, --help          이 도움말
 
-무엇을 하나: 의존성 확인 → 바이너리 설치 → 훅 shim 배치 → tmux 스니펫 →
-소환키 프리셋 → 에이전트 스킬 → 크론 안내 → 요약.
+무엇을 하나: (원격이면 릴리스 아카이브 받기 →) 의존성 확인 → 바이너리 설치 →
+훅 shim 배치 → tmux 스니펫 → 소환키 프리셋 → 에이전트 스킬 → 크론 안내 → 요약.
 EOF
 }
 
@@ -57,6 +70,8 @@ while [ $# -gt 0 ]; do
         --prefix=*)   PREFIX="${1#--prefix=}" ;;
         --preset)     [ $# -ge 2 ] || { echo "--preset 에 이름이 없다" >&2; exit 2; }; PRESET="$2"; shift ;;
         --preset=*)   PRESET="${1#--preset=}" ;;
+        --ref)        [ $# -ge 2 ] || { echo "--ref 에 태그가 없다" >&2; exit 2; }; REF="$2"; shift ;;
+        --ref=*)      REF="${1#--ref=}" ;;
         -h|--help)    usage; exit 0 ;;
         *) echo "모르는 옵션: $1" >&2; echo >&2; usage >&2; exit 2 ;;
     esac
@@ -233,6 +248,189 @@ tt_link_what() {     # 그 자리에 무엇이 있나 — 사람이 정하려면
     fi
 }
 
+# ── 원격 모드 ───────────────────────────────────────────────────────────────
+# `curl -fsSL … | bash` 로 들어오면 $0 은 'bash' 이고 dirname 은 '.' 이라, 위에서 잡은 REPO 는
+# 그냥 "지금 디렉토리"다. 거기 우리 파일이 있을 리 없다 — 그래서 **파일 존재로** 가른다.
+# (거꾸로, 클론 안에서 파이프로 돌려도 파일이 보이므로 로컬로 간다. 그게 맞다.)
+REMOTE=0
+[ -f "$REPO/bin/fmux" ] && [ -d "$REPO/src" ] && [ -f "$REPO/Makefile" ] || REMOTE=1
+
+# 공개 배포 주소. **레포가 아직 비공개라 여기는 자리표시자다.**
+#   공개되면 고칠 곳은 둘뿐이다: 이 기본값과 README 의 Install 절 URL.
+# 포크·사설 미러·시험은 FMUX_SLUG 로 덮어쓴다 (FMUX_SLUG=owner/repo ./install.sh).
+SLUG="${FMUX_SLUG:-OWNER/fleetmux}"
+SLUG_IS_PLACEHOLDER=0
+[ "$SLUG" = 'OWNER/fleetmux' ] && SLUG_IS_PLACEHOLDER=1
+
+DL=''        # 받는 도구: curl | wget
+SHA_CMD=''   # 대조 도구: sha256sum(리눅스) | shasum -a 256(맥). 없으면 빈 값.
+TMPD=''      # 원격 모드의 임시 디렉토리. 성공하든 실패하든 EXIT 에서 지운다.
+
+# 지우는 것은 trap 하나에만 맡긴다 — 성공 경로에서만 지우는 코드는 언젠가 실패 경로를 샌다.
+# die() 도 exit 로 나가므로 이 trap 을 지난다.
+cleanup_tmpd() {
+    [ -n "$TMPD" ] || return 0
+    if [ -d "$TMPD" ]; then
+        rm -rf "$TMPD" && printf '  ok   임시 디렉토리를 지웠다: %s\n' "$TMPD"
+    fi
+    TMPD=''
+}
+trap 'cleanup_tmpd' EXIT
+trap 'cleanup_tmpd; exit 130' INT
+trap 'cleanup_tmpd; exit 143' TERM
+
+# curl 우선, 없으면 wget. 둘 다 없으면 무엇을 깔지 말하고 멈춘다.
+pick_downloader() {
+    if command -v curl > /dev/null 2>&1; then DL=curl; ok "curl 로 받는다"
+    elif command -v wget > /dev/null 2>&1; then DL=wget; ok "wget 으로 받는다 (curl 이 없다)"
+    else
+        warn "curl 도 wget 도 없다 — 아무것도 받을 수 없다."
+        warn "     둘 중 하나를 깔아라:  apt install curl  /  dnf install curl  /  brew install curl"
+        warn "     또는 레포를 클론해서 그 안에서 ./install.sh 를 돌려라(로컬 모드)."
+        die "받을 도구가 없다"
+    fi
+}
+
+# $1=URL $2=받을 파일. rc 0 이면 받았다. 404·네트워크 실패는 rc≠0 이고 빈 파일을 안 남긴다
+# (wget -O 는 실패해도 파일을 만든다 — 그 껍데기를 다음 단계가 "받았다"고 믿으면 안 된다).
+fetch() {
+    local rc=0
+    case "$DL" in
+        curl) curl -fsSL --max-time 60 -o "$2" "$1" || rc=$? ;;
+        wget) wget -q -T 60 -O "$2" "$1" || rc=$? ;;
+        *)    rc=1 ;;
+    esac
+    if [ "$rc" != 0 ] || [ ! -s "$2" ]; then rm -f "$2"; return 1; fi
+    return 0
+}
+
+# 최신 릴리스 태그. 못 알아내면 rc 1 — **main 으로 흘러가지 않는다.**
+# main 이 깨진 순간 신규 설치가 전부 같이 깨지는 것이 태그를 기본으로 두는 이유다.
+# 파서는 sed 하나다(jq 는 없는 기계가 많다). 쉼표로 줄을 갈라 "tag_name":"…" 를 뽑는다.
+latest_tag() {
+    local f="$TMPD/latest.json" t=''
+    fetch "https://api.github.com/repos/$SLUG/releases/latest" "$f" || return 1
+    t=$(tr ',' '\n' < "$f" \
+        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+        | head -1)
+    [ -n "$t" ] || return 1
+    printf '%s' "$t"
+}
+
+pick_sha() {
+    if command -v sha256sum > /dev/null 2>&1; then SHA_CMD='sha256sum'
+    elif command -v shasum > /dev/null 2>&1; then SHA_CMD='shasum -a 256'
+    else SHA_CMD=''
+    fi
+}
+
+# 대조를 못 하는 상황. 파이프 설치의 방어선은 이 대조 하나뿐이라 **조용히 넘어가지 않는다**.
+#   - --yes: 멈춘다. 자동 실행이 무검증으로 깔리면 안 된다.
+#   - 물을 수 있으면: 묻는다. 사람이 눈으로 보고 승낙할 때만 계속한다.
+#   - 물을 수 없으면(파이프 설치는 stdin 이 스크립트라 늘 여기다): ask_yn 이 '아니오'다 → 멈춘다.
+no_verify_gate() {   # $1=왜 대조를 못 하나
+    warn "$1"
+    warn "     SHA256 대조는 파이프 설치(curl | bash)의 유일한 방어선이다 — 무검증으로 깔지 않는다."
+    if [ "$ASSUME_YES" = 1 ]; then
+        die "--yes 로는 무검증 설치를 승인하지 않는다 (사람이 직접 답할 때만 계속한다)"
+    fi
+    ask_yn "SHA256 대조 없이 그래도 계속할까?" || die "검증 없이는 설치하지 않는다"
+    note "사람이 무검증 설치를 승낙했다 — 계속한다"
+}
+
+# SHA256SUMS 대조. 어긋나면 **즉시** 멈춘다(경고하고 계속하는 선택지는 없다).
+verify_sums() {   # $1=받은 아카이브  $2=SHA256SUMS
+    local name want got
+    name=$(basename "$1")
+    pick_sha
+    if [ -z "$SHA_CMD" ]; then
+        no_verify_gate "sha256sum 도 shasum 도 없다 — 받은 파일을 대조할 도구가 이 기계에 없다."
+        return 0
+    fi
+    # 형식: '<해시>  <파일이름>' (바이너리 표시 '*' 가 붙기도 한다)
+    want=$(awk -v f="$name" '{ n=$2; sub(/^\*/, "", n); if (n == f) { print $1; exit } }' "$2")
+    [ -n "$want" ] || die "SHA256SUMS 에 $name 항목이 없다 — 이 아카이브는 대조할 수 없다"
+    got=$($SHA_CMD "$1" 2>/dev/null | awk 'NR==1{print $1}')
+    [ -n "$got" ] || die "$SHA_CMD 가 해시를 못 냈다 — 대조할 수 없다"
+    if [ "$want" = "$got" ]; then
+        ok "SHA256 일치 — $name"
+        return 0
+    fi
+    warn "기대: $want"
+    warn "실제: $got"
+    die "SHA256 가 다르다 — 받은 파일이 릴리스와 같지 않다. 설치하지 않는다."
+}
+
+# ── 0단계: 원격이면 여기서 받는다 (여덟 단계 앞에 붙는다) ───────────────────
+remote_fetch() {
+    step 0/8 "원격 — 릴리스 아카이브를 받는다"
+    local asset root d
+
+    pick_downloader
+    command -v tar > /dev/null 2>&1 || die "tar 가 없다 — 아카이브를 풀 수 없다"
+
+    if [ "$SLUG_IS_PLACEHOLDER" = 1 ]; then
+        warn "이 빌드에는 아직 공개 배포 주소가 없다 — 레포가 비공개라 자리표시자($SLUG)로 둔 상태다."
+        warn "     공개되면 고칠 곳은 둘이다: install.sh 의 SLUG 기본값, README 의 Install 절 URL."
+        warn "     지금 당장 원격으로 깔려면 주소를 직접 줘라:  FMUX_SLUG=owner/repo bash install.sh"
+        warn "     또는 레포를 클론해서 그 안에서 ./install.sh 를 돌려라(로컬 모드)."
+        die "받을 곳을 모른다"
+    fi
+
+    TMPD=$(mktemp -d "${TMPDIR:-/tmp}/fmux-install.XXXXXX") || die "임시 디렉토리를 못 만들었다"
+    ok "임시 디렉토리: $TMPD  (끝나거나 실패하면 지운다)"
+
+    if [ -n "$REF" ]; then
+        note "--ref 로 받는다: $REF"
+    else
+        REF=$(latest_tag) || REF=''
+        if [ -z "$REF" ]; then
+            warn "최신 릴리스 태그를 알아내지 못했다 (https://api.github.com/repos/$SLUG/releases/latest)."
+            warn "     main 으로 대신 받지 않는다 — main 이 깨진 날 신규 설치가 전부 같이 깨진다."
+            warn "     받을 것을 직접 지정해라:  ... | bash -s -- --ref v1.2.3"
+            die "무엇을 받을지 정하지 못했다"
+        fi
+        ok "최신 릴리스 태그: $REF"
+    fi
+
+    asset="fleetmux-$REF.tar.gz"
+    if fetch "https://github.com/$SLUG/releases/download/$REF/$asset" "$TMPD/$asset"; then
+        ok "받았다: $asset"
+        if fetch "https://github.com/$SLUG/releases/download/$REF/SHA256SUMS" "$TMPD/SHA256SUMS"; then
+            verify_sums "$TMPD/$asset" "$TMPD/SHA256SUMS"
+        else
+            no_verify_gate "이 릴리스($REF)에 SHA256SUMS 가 없다 — 받은 파일을 대조할 기준이 없다."
+        fi
+    elif fetch "https://github.com/$SLUG/archive/$REF.tar.gz" "$TMPD/src-$REF.tar.gz"; then
+        # 브랜치·릴리스 아닌 태그. 소스 아카이브에는 SHA256SUMS 가 붙지 않는다.
+        asset="src-$REF.tar.gz"
+        note "릴리스 자산이 없어 소스 아카이브로 받았다: $REF"
+        no_verify_gate "소스 아카이브에는 SHA256SUMS 가 붙지 않는다 — 대조할 기준이 없다."
+    else
+        warn "받지 못했다: https://github.com/$SLUG/releases/download/$REF/$asset"
+        warn "     그 태그가 실재하는지, 그리고 네트워크가 되는지 확인해라."
+        die "아카이브를 못 받았다 ($REF)"
+    fi
+
+    mkdir -p "$TMPD/x" || die "$TMPD/x 를 못 만들었다"
+    tar -xzf "$TMPD/$asset" -C "$TMPD/x" || die "아카이브를 풀 수 없다: $asset"
+
+    # 아카이브 안의 최상위 디렉토리 이름에 기대지 않는다 — bin/fmux 가 보이는 곳을 찾는다.
+    root=''
+    for d in "$TMPD"/x/*/; do
+        [ -f "${d}bin/fmux" ] || continue
+        root=${d%/}; break
+    done
+    [ -n "$root" ] || { [ -f "$TMPD/x/bin/fmux" ] && root="$TMPD/x"; }
+    [ -n "$root" ] || die "아카이브 안에 bin/fmux 가 없다 — 이건 fleetmux 아카이브가 아니다"
+
+    REPO="$root"
+    FMUX="$REPO/bin/fmux"       # 아래 단계들이 전부 이 둘을 본다
+    ok "풀었다 — 여기를 레포처럼 쓴다: $REPO"
+    is_dry && note "--dry-run 이라도 받기는 받는다. 임시 디렉토리 밖으로는 한 바이트도 안 나간다."
+    return 0
+}
+
 # ── ① 의존성 ────────────────────────────────────────────────────────────────
 DEP_FAIL=''
 dep_fail() { DEP_FAIL="$DEP_FAIL  - $1"$'\n'; }
@@ -312,7 +510,9 @@ install_bin() {
     [ -f "$REPO/bin/fmux" ] || die "$REPO/bin/fmux 가 없다 — 레포가 온전한지 확인해라"
 
     # 빌드가 먼저다. 그래야 아래 cmp 가 "지금 설치될 것"과 비교한다.
-    if [ "$HAVE_MAKE" = 1 ] && ! is_dry; then
+    #   원격 모드는 빌드하지 않는다 — **SHA256 로 대조한 그 바이트를 그대로 깐다.**
+    #   여기서 다시 이어붙이면 설치되는 것이 대조한 것과 다를 수 있고, 그러면 대조의 뜻이 없다.
+    if [ "$HAVE_MAKE" = 1 ] && [ "$REMOTE" = 0 ] && ! is_dry; then
         if ! make -C "$REPO" > /dev/null; then
             die "make 가 실패했다 — 'make' 를 직접 돌려 이유를 봐라"
         fi
@@ -334,9 +534,11 @@ install_bin() {
             plan "$BINDIR/tt 는 우리 것이 아니다($(tt_link_what)) → 건드리지 않는다(훅 주입이 안 붙는다)"
         fi
     else
-        if [ "$HAVE_MAKE" = 1 ]; then
+        if [ "$HAVE_MAKE" = 1 ] && [ "$REMOTE" = 0 ]; then
             # Makefile 의 install 이 fmux 복사와 tt 심링크를 같이 한다 — `make install` 만 쳐도
             # 쓸 수 있는 상태가 되어야 하기 때문이다. 여기서는 결과만 확인한다.
+            # (원격 모드는 여기로 안 온다 — 대조한 바이트를 그대로 복사한다. 아래 else 가 그 길이고,
+            #  tt 심링크 판정은 Makefile 과 같은 규칙이다.)
             make -C "$REPO" install PREFIX="$PREFIX" > /dev/null || die "make install 이 실패했다 (PREFIX=$PREFIX)"
         else
             mkdir -p "$BINDIR" || die "$BINDIR 를 만들 수 없다"
@@ -874,11 +1076,21 @@ summary() {
 }
 
 # ── 본체 ────────────────────────────────────────────────────────────────────
+# 무엇이 일어나는지 사용자가 먼저 알아야 한다 — 어느 모드로 가는지 한 줄로 밝히고 시작한다.
 printf 'fleetmux 설치\n'
-printf '  레포   %s\n' "$REPO"
+if [ "$REMOTE" = 1 ]; then
+    printf '  모드   원격 — 여기(%s)에 레포가 없다. 릴리스 아카이브를 받아 설치한다.\n' "$REPO"
+    printf '         받을 것: %s\n' "${REF:-최신 릴리스 태그(정해서 알려준다)}"
+else
+    printf '  모드   로컬 — 옆에 레포가 있다. 그 bin/fmux 를 설치한다.\n'
+    printf '  레포   %s\n' "$REPO"
+    [ -n "$REF" ] && printf '  참고   --ref %s 는 로컬 모드에서 쓰이지 않는다 — 지금 이 레포를 그대로 깐다\n' "$REF"
+fi
 printf '  prefix %s\n' "$PREFIX"
 is_dry && printf '  모드   --dry-run — 아무것도 바꾸지 않는다\n'
 [ "$ASSUME_YES" = 1 ] && printf '  모드   --yes — 물음에 전부 yes\n'
+
+[ "$REMOTE" = 1 ] && remote_fetch
 
 check_deps
 install_bin

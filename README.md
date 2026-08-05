@@ -347,8 +347,59 @@ report their state through the hook wrapper; they just cannot load this document
 
 ## Install
 
-**1. Get the repo.** There is no published remote yet, so clone the URL you were given
-(or copy the directory over) — then run the installer from inside it:
+The installer works two ways and tells you at the top which one it took. It decides by
+looking for the repo next to itself (`Makefile`, `src/`, `bin/fmux`): found → **local
+mode**, install what is here; not found → **remote mode**, download a release archive
+and install that.
+
+### A. One line, from a release
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/fleetmux/main/install.sh | bash
+```
+
+Or read it first — which is the reasonable thing to do with any `curl | sh`, and we are
+not going to pretend otherwise:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/fleetmux/main/install.sh -o install.sh
+less install.sh          # look at what you are about to run
+bash install.sh
+```
+
+> **The URL is a placeholder.** There is no published remote yet — this repo is still
+> private, so `OWNER/fleetmux` is not a real address and the one-liner cannot work yet.
+> The installer stops and says so rather than fetching something bogus. When the repo
+> goes public, two places change:
+> the `SLUG` default at the top of the remote-mode section in `install.sh`, and the two
+> URLs in this section. Until then, use a clone (**B** below), or point the installer at
+> a fork with `FMUX_SLUG=owner/repo`.
+
+What remote mode does, in order:
+
+- **Picks the latest release tag** by asking the GitHub API. If it cannot work out a
+  tag it **stops** — it does not quietly fall back to `main`, because the day `main`
+  breaks is the day every new install would break with it. Name one yourself with
+  `--ref`: `curl -fsSL <URL> | bash -s -- --ref v1.2.3`.
+- **Downloads with `curl`, or `wget` if there is no curl.** Neither one → it tells you
+  what to install and stops.
+- **Checks `SHA256SUMS`** from the release against the archive it just downloaded
+  (`sha256sum` on Linux, `shasum -a 256` on macOS). Mismatch → stops immediately,
+  installs nothing. This is the only thing standing between a piped install and
+  whatever the network handed you, so when it *cannot* check — no `SHA256SUMS` in the
+  release, or neither hashing tool on the machine — it asks whether to continue, and
+  `--yes` refuses outright. A piped install has no terminal to ask, so in practice
+  "cannot verify" means "does not install".
+- **Unpacks into a temp directory and deletes it** on the way out, whether the install
+  finished or died. Nothing outside `--prefix` is left behind.
+- Then runs exactly the same eight steps as local mode.
+
+Piped installs cannot answer questions — stdin is the script itself — so every prompt
+takes its "no" answer: no line is added to your `~/.tmux.conf`, no agent skill is
+copied, no prefix-less key is taken. The installer prints what to do by hand. Run the
+downloaded file instead (form two above) if you want to be asked.
+
+### B. From a clone
 
 ```bash
 cd fleetmux
@@ -356,7 +407,12 @@ cd fleetmux
 ./install.sh
 ```
 
-**2. Put it on your `PATH`.** The installer does not edit your shell startup file; it
+This is local mode: it installs the `bin/fmux` sitting in front of you, no network at
+all. `--ref` is ignored here, and the installer says so rather than swallowing it.
+
+### C. Put it on your `PATH`
+
+Either way you installed, this part is yours. The installer does not edit your shell startup file; it
 prints this line at the end and leaves it to you. Add it to `~/.bashrc`
 (`~/.bash_profile` for bash on macOS, `~/.zshrc` for zsh), then open a **new** shell:
 
@@ -369,8 +425,11 @@ Order matters. `~/.local/bin` is where `fmux` and the `tt` symlink land;
 the real `claude` and the status marks never appear. Skipping this step is why `tt`
 says *command not found*.
 
-**3. Check it.** `tt config list` prints the settings table; `tt` inside tmux opens the
-popup.
+### D. Check it
+
+`tt config list` prints the settings table; `tt` inside tmux opens the popup.
+
+### Options
 
 ```
 ./install.sh --dry-run      change nothing, just print what it would do
@@ -379,6 +438,8 @@ popup.
 ./install.sh --prefix DIR   install somewhere other than ~/.local
 ./install.sh --preset shift summon-key preset: shift | safe | mac | linux | wsl
                             (interactively it offers `shift` = S-Left; see above)
+./install.sh --ref v1.2.3   remote mode only: which tag (or branch) to download.
+                            Default is the latest release tag; never `main` by accident
 ```
 
 `--yes` deliberately does **not** accept the detected key preset, nor the offered
@@ -388,7 +449,8 @@ yourself or answer the prompt. "Accept the defaults" must never mean "take my ke
 Without `--preset`, `--yes` leaves `key_summon_fast` empty, exactly as the default
 promises. The same holds for any run where stdin is not a terminal.
 
-Eight steps: dependencies → `~/.local/bin/fmux` (+ the `tt` symlink) → hook shims in
+Eight steps (remote mode prints a step 0 in front of them — fetch and verify the
+archive): dependencies → `~/.local/bin/fmux` (+ the `tt` symlink) → hook shims in
 `~/.local/libexec/tt/` → the tmux snippet → summon-key preset → agent skill → cron
 instructions → summary. It asks before touching `~/.tmux.conf`, copies the file to
 `~/.tmux.conf.fmux-bak` before adding the line, and starts a fresh line if yours did
@@ -401,6 +463,21 @@ to you:
 ```
 
 Re-running the installer is safe. If it stops, it tells you exactly how far it got.
+
+### Cutting a release
+
+`make dist` builds both files a release needs, so nobody has to remember to hash
+anything by hand — the day someone forgets is the day a piped install has no defence
+left:
+
+```bash
+make dist VERSION=v1.2.3
+#   dist/fleetmux-v1.2.3.tar.gz   ← upload as a release asset
+#   dist/SHA256SUMS               ← upload as a release asset
+```
+
+Upload both under that tag. Remote mode looks for exactly those names, in that
+release, and refuses to install what it cannot match against `SHA256SUMS`.
 
 ## macOS — what works and what does not
 

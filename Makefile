@@ -85,6 +85,35 @@ verify:
 		exit 1; \
 	fi
 
+# ── 릴리스 아카이브 ─────────────────────────────────────────────────────────
+# `make dist` 는 릴리스에 올릴 것 두 개를 만든다:
+#   dist/fleetmux-<VERSION>.tar.gz   설치기가 받아서 푸는 것
+#   dist/SHA256SUMS                  설치기가 대조하는 것 — 파이프 설치의 유일한 방어선
+#
+# **손으로 만들지 마라.** 릴리스 때 사람이 sha256sum 을 직접 치면 언젠가 빠뜨리고, 빠진 날
+# `curl | bash` 는 무검증으로 깔린다. 그래서 타깃이다.
+#
+# 왜 GitHub 이 자동 생성하는 소스 tarball 을 안 쓰나: 그건 바이트가 고정이라는 보장이 없다
+# (git 판이 바뀌면 압축 결과가 달라질 수 있다). 우리가 만든 파일을 우리가 해시해서 같이 올려야
+# 대조가 뜻을 가진다. 설치기도 이 자산 이름(fleetmux-<태그>.tar.gz)을 먼저 찾는다.
+#
+# 해시 도구는 리눅스와 맥이 다르다 — sha256sum(GNU) 이 있으면 그것, 없으면 shasum -a 256(맥).
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+DISTDIR ?= dist
+DISTNAME = fleetmux-$(VERSION)
+SHA256   = $(shell if command -v sha256sum > /dev/null 2>&1; then echo sha256sum; else echo "shasum -a 256"; fi)
+
+dist: $(OUT)
+	rm -rf "$(DISTDIR)/$(DISTNAME)" "$(DISTDIR)/$(DISTNAME).tar.gz" "$(DISTDIR)/SHA256SUMS"
+	mkdir -p "$(DISTDIR)/$(DISTNAME)"
+	cp -R bin libexec src skills Makefile install.sh README.md LICENSE "$(DISTDIR)/$(DISTNAME)/"
+	tar -czf "$(DISTDIR)/$(DISTNAME).tar.gz" -C "$(DISTDIR)" "$(DISTNAME)"
+	rm -rf "$(DISTDIR)/$(DISTNAME)"
+	cd "$(DISTDIR)" && $(SHA256) "$(DISTNAME).tar.gz" > SHA256SUMS
+	@echo "dist: $(DISTDIR)/$(DISTNAME).tar.gz"
+	@cat "$(DISTDIR)/SHA256SUMS"
+	@echo "릴리스에 이 둘을 자산으로 올려라 — 설치기가 그 이름 그대로 찾는다."
+
 install: $(OUT)
 	mkdir -p $(BINDIR)
 	cp $(OUT) $(BINDIR)/fmux
@@ -109,4 +138,4 @@ install: $(OUT)
 		echo "      지금 그 자리: $$(ls -ld "$(BINDIR)/tt")"; \
 	fi
 
-.PHONY: all check verify install
+.PHONY: all check verify install dist
