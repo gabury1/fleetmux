@@ -58,8 +58,10 @@ $(OUT): $(SRC)
 # 문법 검사. shellcheck 는 있으면 돌리고, 없으면 건너뛴 사실을 말한다.
 check: $(OUT)
 	bash -n $(OUT)
+	bash -n install.sh
 	@if command -v shellcheck > /dev/null 2>&1; then \
 		shellcheck -x $(OUT) && echo "shellcheck: clean"; \
+		shellcheck install.sh || echo "shellcheck: install.sh 에 지적이 있다 — 아직 게이트가 아니다(아무도 클린을 확인한 적이 없다). 고치면 위 줄에 합쳐라"; \
 	else \
 		echo "shellcheck not installed — skipped"; \
 	fi
@@ -85,5 +87,14 @@ install: $(OUT)
 	cp $(OUT) $(BINDIR)/fmux
 	chmod +x $(BINDIR)/fmux
 	@echo "installed $(BINDIR)/fmux"
+# tt 심링크. `make install` 만 쳐도 쓸 수 있는 상태여야 한다 — PATH shim(libexec/claude)은
+# `command -v tt` 로 우리 존재를 확인하므로, 이 이름이 없으면 훅 주입이 통째로 안 붙는다.
+# 남의 tt(심링크가 아닌 파일)는 절대 덮지 않는다 — 설치기가 남의 도구를 지우면 안 된다.
+	@if [ -e $(BINDIR)/tt ] && [ ! -L $(BINDIR)/tt ]; then \
+		echo "skip: $(BINDIR)/tt 가 심링크가 아닌 파일이다 — 건드리지 않는다"; \
+	else \
+		ln -sf fmux $(BINDIR)/tt; \
+		echo "linked $(BINDIR)/tt -> fmux"; \
+	fi
 
 .PHONY: all check verify install
