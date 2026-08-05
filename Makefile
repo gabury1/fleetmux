@@ -13,6 +13,8 @@
 #   20-manifest.sh 매니페스트 경로/형식·uuid 판정·무결성 검사(awk)·원자적 쓰기·백업 3세대
 #   30-state.sh    상태 판정 계층 — 화면 작업중 판정(tt_working)·finished 락/정규화·
 #                  훅 파일 유효성(tt_hook_valid)·tt_is_agent·tt_broadcast·훅 sweep·tt_jv
+#   35-lastprompt.sh 마지막 프롬프트(last-<sid>) — payload 에서 뽑는 awk 스캐너·저장 함수·
+#                  프리뷰 헤더 렌더 awk. 50(훅)과 90(프리뷰)이 둘 다 쓰므로 그 앞이다.
 #   40-mfops.sh    매니페스트 변이 — 락·줄 조회·upsert·rename·forget
 #   50-hook.sh     함대 집계(tt_fleet_agg)·--hook 수신부(working/idle/waiting/clear/boot)·--status
 #   60-rc.sh       rc 판정 헬퍼(rc_*)·--cron(=--rc-check)·--rc
@@ -33,6 +35,7 @@ SRC = src/00-header.sh \
       src/10-util.sh \
       src/20-manifest.sh \
       src/30-state.sh \
+      src/35-lastprompt.sh \
       src/40-mfops.sh \
       src/50-hook.sh \
       src/60-rc.sh \

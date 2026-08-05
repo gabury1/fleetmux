@@ -109,7 +109,14 @@ if [ "${1:-}" = "--hook" ]; then
             # codex PermissionRequest는 이벤트 자체가 승인 대기 — stdin 판별 불필요
             echo "waiting $(date +%s) $cpid" > "$hf" ;;
         working)
-            echo "$st $(date +%s) $cpid" > "$hf" ;;
+            now=$(date +%s)
+            echo "$st $now $cpid" > "$hf"
+            # 마지막 프롬프트 적재 — working 은 UserPromptSubmit·PostToolUse·PreCompact·
+            #   PostCompact(codex 는 PreToolUse 까지)가 **공유하는** 한 갈래다. 그래서 여기서
+            #   $st 만 보고는 프롬프트 제출인지 알 수 없다 → 게이팅은 payload 의
+            #   hook_event_name 으로 함수 안에서 한다. 프롬프트 제출이 아니면 포크 0으로 즉시 반환.
+            #   실패해도 조용히 통과한다 — 상태 파일은 이미 위에서 써 뒀다(부가물 원칙).
+            tt_last_prompt_save "$sid" "$payload" "$now" ;;
         idle)
             prev=$(cut -d' ' -f1 "$hf" 2>/dev/null || true)
             echo "idle $(date +%s) $cpid" > "$hf"
@@ -131,7 +138,9 @@ if [ "${1:-}" = "--hook" ]; then
         clear)
             # CPU 스냅샷은 훅 파일의 수명에 완전히 종속된다 — 정리 규칙을 두 벌로 나누면
             # "지웠는데 또 믿는" 모순이 난다(tt_sweep_hooks 주석의 기존 판단과 같은 결).
-            rm -f "$hf" "$STATE/cpu-${sid#\$}" ;;
+            #   마지막 프롬프트도 같은 자리에서 지운다 — 세션이 끝났는데 "내가 뭘 시켰지"만
+            #   남아 다음 세션 프리뷰에 걸리면 안 된다(sweep 과 같은 판단).
+            rm -f "$hf" "$STATE/cpu-${sid#\$}" "$STATE/last-${sid#\$}" ;;
         boot)
             # 에이전트 부팅 자백 — 즉시 에이전트 세션으로 분류 + 예약된 /rename 실행
             #   claude: SessionStart 훅   codex: wrapper가 exec 직전에 직접 발신

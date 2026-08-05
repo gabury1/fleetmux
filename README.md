@@ -39,6 +39,13 @@ Hooks run as children of the agent process, so they inherit `$TMUX_PANE` — whi
 means each event knows exactly which tmux session it came from. That mapping is
 free here and painful any other way.
 
+The same payload carries the prompt you just typed, so the `UserPromptSubmit` hook
+also parks it in `~/.cache/tt/last-<session-id>` (4096 bytes, control characters
+stripped). The popup preview puts its first 3 lines above the pane tail — "what did I
+ask this one to do?" is the question the screen cannot answer, because the answer
+scrolled away hours ago. It is decoration only: no file, no header, and the preview is
+byte-for-byte what it always was.
+
 ## Installing the hooks without touching your settings
 
 fmux never edits your `~/.claude/settings.json`. It puts a wrapper early in `PATH`:
@@ -506,7 +513,7 @@ never installed.
 ## Scripting surface
 
 ```
---list  --status  --preview <name>  --rc  --cron  --snapshot  --restore [--dry]
+--list  --status  --preview <name> [<session-id>]  --rc  --cron  --snapshot  --restore [--dry]
 --boot-restore [--dry]  --forget <name>  --hook <state>  --hooks-json  --codex-hooks
 --tmux-conf [--write]  --do-broadcast <name>...  --help
 config [list|get|source|set|unset|path]

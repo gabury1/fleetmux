@@ -426,6 +426,21 @@ tt_sweep_hooks() {
             *) rm -f "$hf" "$STATE/cpu-$id" ;;                                           # ① 고아
         esac
     done
+    # 마지막 프롬프트(last-<id>)도 같이 쓴다. **판정을 따로 만들지 않는다** — 위 루프가 방금
+    #   같은 기준으로 훅 파일을 정리했으니, "이 id 의 훅 파일이 아직 서 있나" 한 줄이 곧 같은
+    #   판정이다. 두 벌로 나누면 재부팅 후 session id 재사용 때 기준이 어긋나 죽은 세션의
+    #   프롬프트가 새 세션 프리뷰 맨 위에 걸린다 — hook-*/cpu-* 에서 이미 겪은 사고다.
+    #   (쓰기 중인 tmp 는 .last-<id>.<pid> 라 이 글롭에 안 걸린다)
+    for hf in "$STATE"/last-*; do
+        [ -f "$hf" ] || continue
+        id=${hf##*/last-}
+        case "$live" in
+            *" $id="*)
+                created=${live#*" $id="}; created=${created%% *}
+                tt_hook_valid "$STATE/hook-$id" "${created:-0}" || rm -f "$hf" ;;
+            *) rm -f "$hf" ;;
+        esac
+    done
     return 0
 }
 

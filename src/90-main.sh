@@ -87,10 +87,35 @@ fi
 #   단순 tail은 안 된다 — 미접속 세션의 pane은 프리뷰 창보다 훨씬 길어서(실측 43줄 vs 28줄)
 #   꼬리 빈 줄만 퍼올려 화면이 통째로 비어 보인다. 그래서 꼬리 공백을 먼저 걷어내고 tail 한다.
 #   별도 서브커맨드로 뺀 이유: fzf --preview 문자열 안에서 인용을 겹치지 않아도 된다.
+#
+# 맨 위에는 **그 세션에 마지막으로 보낸 프롬프트**를 얹는다(3번 인자 = 세션 id, --list 의 3번 필드).
+#   화면 위로 밀려 사라지는 게 바로 그 한 줄이라, 화면 꼬리만으로는 "내가 뭘 시켰더라"에 답이 없다.
+#   ⚠ 이건 부가물이다 — 파일이 없거나 깨졌거나 id를 못 받으면 **헤더 없이 예전 출력 그대로** 나간다.
+#     프리뷰가 이 기능 때문에 깨지는 일은 없어야 한다(설계 4절).
 if [ "${1:-}" = "--preview" ]; then
     n="${2:-}"; [ -n "$n" ] || exit 0
     lines="${FZF_PREVIEW_LINES:-40}"                       # fzf가 프리뷰 창 높이를 넣어준다
     case "$lines" in ''|*[!0-9]*) lines=40 ;; esac
+    psid="${3:-}"; psid=${psid#\$}
+    hdr=""
+    case "$psid" in
+        ''|*[!0-9]*) ;;                                    # id를 못 받았다 → 헤더 없음(예전 그대로)
+        *) if [ -f "$STATE/last-$psid" ]; then
+               cols="${FZF_PREVIEW_COLUMNS:-80}"           # fzf가 프리뷰 창 폭도 넣어준다
+               case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
+               hdr=$(LC_ALL=C awk -v cols="$cols" "$TT_LASTP_VIEW_AWK" \
+                       "$STATE/last-$psid" 2>/dev/null) || hdr=""
+           fi ;;
+    esac
+    if [ -n "$hdr" ]; then
+        printf '%s\n' "$hdr"
+        # 헤더가 먹은 줄 수만큼 화면 꼬리를 줄인다 — 안 그러면 프리뷰가 넘쳐 **위가** 잘린다.
+        #   즉 방금 그린 헤더가 제일 먼저 밀려 나간다. 포크 없이 센다(wc는 프리뷰마다 포크 하나).
+        hl=0
+        while IFS= read -r _; do hl=$((hl + 1)); done <<< "$hdr"
+        lines=$((lines - hl))
+        [ "$lines" -lt 1 ] && lines=1
+    fi
     tmux capture-pane -ep -t "=$n:" 2>/dev/null | awk -v n="$lines" '
         { L[NR] = $0 }
         END {
@@ -296,8 +321,9 @@ if [ -z "$CUR" ] && [ -z "$("$SELF" --list 2>>"$STATE/hook.log" || true)" ]; the
     fi
 fi
 
-# --delimiter/--with-nth: 1번 필드(순수 이름)는 감추고 2번 필드(색칠된 표시줄)만 보여준다.
-#   그래서 {1}·{+1}은 공백이 들어간 이름도 잘리지 않은 채로 tt에 전달된다.
+# --delimiter/--with-nth: 1번 필드(순수 이름)와 3번 필드(세션 id)는 감추고 2번 필드(색칠된
+#   표시줄)만 보여준다. 그래서 {1}·{+1}은 공백이 들어간 이름도 잘리지 않은 채로 tt에 전달되고,
+#   {3}은 프리뷰가 last-<id> 를 찾는 열쇠가 된다(프리뷰 안에서 tmux에 되묻지 않아도 된다).
 # 프리뷰는 tail — 중요한 건 화면 하단(입력창·스피너·승인 프롬프트)인데 전체를 흘려보내면 잘린다.
 # 목록 생산자의 stderr 는 화면이 아니라 hook.log 로 간다 — 설정 파일에 깨진 줄이 있으면
 # 그 경고가 fzf 화면 위에 덧칠돼 관제탑을 못 읽게 만든다. 버리지 않는 이유는 86 과 같다(권고 N3).
@@ -305,11 +331,11 @@ fi
 # 같은 TT_KEY_SETTINGS 에서 나오므로, 키를 바꾸면 화면도 같이 바뀐다(어긋날 수가 없다).
 session=$("$SELF" --list 2>>"$STATE/hook.log" \
     | fzf --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
-          --delimiter=$'\t' --with-nth='2..' \
+          --delimiter=$'\t' --with-nth=2 \
           --footer="? help · $(tt_key_label "$TT_KEY_SETTINGS") settings" \
           --bind "?:execute($SELFQ --help </dev/tty >/dev/tty 2>&1; printf '  press any key to return' >/dev/tty; read -rsn1 </dev/tty)" \
           --color='pointer:#4ec9b0,prompt:#4ec9b0,hl:#56b6c2,hl+:#56b6c2,bg+:#18221e,fg+:regular,footer:#4a5a52,border:#4a5a52,label:#4ec9b0,preview-border:#4a5a52' \
-          --preview "$SELFQ --preview {1}" \
+          --preview "$SELFQ --preview {1} {3}" \
           --preview-window 'right,65%,border-rounded' --preview-label=' screen ' \
           --bind 'right:accept' \
           --bind 'left:abort' \

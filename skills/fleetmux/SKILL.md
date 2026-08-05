@@ -86,8 +86,13 @@ disagreement is worth reporting.
 cat ~/.cache/tt/hook-<tmux-session-id>   # "<state> <unix-ts> <agent-pid>"
 cat ~/.cache/tt/manifest                 # TAB: name, cwd, kind, command, conversation-id, conversation home
 cat ~/.cache/tt/finished                 # "<unix-ts> <name>" — finished, not yet seen
+cat ~/.cache/tt/last-<tmux-session-id>   # line 1: unix-ts, line 2+: last prompt sent to that session
 tail ~/.cache/tt/hook.log                # audit trail of every transition (rotated at log_max)
 ```
+
+`last-*` answers "what did I ask this one to do?" without scraping the pane — it is
+written from the `UserPromptSubmit` hook payload, capped at 4096 bytes, and deleted
+together with `hook-*` when the session ends. The popup preview shows its first 3 lines.
 
 `hook-*` states are `working`, `waiting`, `idle`. The timestamp answers "how long has
 it been like this?" and `hook.log` answers "when did it go quiet?" — both are cheaper

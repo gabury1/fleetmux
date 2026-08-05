@@ -52,9 +52,12 @@ TT_ACT_AWK='
 
 # 목록 생성: 내용 변경 시각 순(진짜 대화·작업이 최근인 세션이 위)
 #   세션명 굵게=recent_hours(기본 6시간) 내 대화 있음, 흐리게=그 이상 조용  ●=attached  ✻=Claude 작업중
-# 출력 한 줄 = "<이름>\t<표시용 색칠 문자열>". 이름을 탭으로 떼어 앞에 두는 이유:
+# 출력 한 줄 = "<이름>\t<표시용 색칠 문자열>\t<세션id>". 이름을 탭으로 떼어 앞에 두는 이유:
 #   picker가 {1}로 뽑는 값이 공백 든 이름에서도 온전해야 한다. 예전엔 공백 기준 첫 단어만 잘려
-#   tmux -t 접두 매칭에 걸려 엉뚱한 세션이 죽었다(실기기 재현). fzf는 --with-nth로 1번 필드를 감춘다.
+#   tmux -t 접두 매칭에 걸려 엉뚱한 세션이 죽었다(실기기 재현). fzf는 --with-nth로 2번 필드만 보여준다.
+#   3번 필드(세션 id, $ 없는 숫자)는 프리뷰가 last-<id>·hook-<id> 를 찾는 열쇠다. {1}은 이름이라
+#   그것만으로는 못 찾고, 프리뷰 안에서 display-message로 되묻는 길은 커서가 움직일 때마다
+#   포크가 하나씩 는다 — 여기 루프는 이미 sid를 손에 들고 있으니 그냥 얹어 보낸다(포크 0).
 # 주의: 목록에 괄호 금지 — fzf --bind의 reload(...) 구분자와 충돌한다
 if [ "${1:-}" = "--list" ]; then
     now=$(date +%s)
@@ -169,7 +172,7 @@ if [ "${1:-}" = "--list" ]; then
             [ "$name" = "${TT_CUR:-}" ] && continue
             [ "$attached" = - ] && attached=""    # 센티넬 해제 — 여기서부터는 표시용 빈 문자열
             if [ "$grp" = 0 ]; then   # 도구 세션: 청록, 맨 아래 그룹, 상태 장식 없음
-                printf '%s\t\033[38;5;%sm%s\033[0m \033[36m%s\033[0m\n' "$name" "$acc" "$name" "$attached"
+                printf '%s\t\033[38;5;%sm%s\033[0m \033[36m%s\033[0m\t%s\n' "$name" "$acc" "$name" "$attached" "$sid"
                 continue
             fi
             # 상태: 훅 기록 우선(정확), 없거나 훅 프로세스가 죽었으면 화면 판정 폴백
@@ -227,9 +230,9 @@ if [ "${1:-}" = "--list" ]; then
                 *" $sid=off "*)  rcmark=$'\033[38;5;245m⊘\033[0m' ;;
             esac
             if [ $(( now - ts )) -lt "$recent_s" ]; then
-                printf '%s\t\033[1m%s\033[0m \033[36m%s\033[0m %s %s %s\n' "$name" "$name" "$attached" "$mark" "$umark" "$rcmark"
+                printf '%s\t\033[1m%s\033[0m \033[36m%s\033[0m %s %s %s\t%s\n' "$name" "$name" "$attached" "$mark" "$umark" "$rcmark" "$sid"
             else
-                printf '%s\t\033[2m%s\033[0m \033[36m%s\033[0m %s %s %s\n' "$name" "$name" "$attached" "$mark" "$umark" "$rcmark"
+                printf '%s\t\033[2m%s\033[0m \033[36m%s\033[0m %s %s %s\t%s\n' "$name" "$name" "$attached" "$mark" "$umark" "$rcmark" "$sid"
             fi
         done || true
     # 여기서 나가는 줄은 **전부 진짜 tmux 세션 한 줄**이다 — 세션이 아닌 행(예전의 ⚙ 설정 행)은
