@@ -153,9 +153,11 @@ assert_eq "$(has "$OUT" 'export PATH=')" "yes" "PATH 넣는 법을 알려준다"
 assert_eq "$(has "$OUT" '지우려면')" "yes" "지우는 법을 알려준다"
 assert_eq "$(has "$OUT" "$LIBX")" "yes" "무엇을 어디 놓았는지 경로로 말한다"
 
-# ~/.claude 는 스킬이 없으면 안 만든다
-assert_eq "$(ex "$HOME/.claude")" "no" "스킬이 없으면 ~/.claude 를 안 건드린다"
-assert_eq "$(has "$OUT" 'SKILL.md 가 없다')" "yes" "스킬이 없으면 건너뛴다고 말한다"
+# ~/.claude 는 동의 없이는 안 만든다.
+#   (레포에 skills/fleetmux/SKILL.md 가 생긴 뒤로 이 실행은 "없어서 건너뛴 것"이 아니라
+#    "물을 수 없어서 안 깐 것"이다 — 스킬이 아예 없는 레포의 건너뛰기는 ⑨ 에서 잰다.)
+assert_eq "$(ex "$HOME/.claude")" "no" "동의 없이는 ~/.claude 를 안 건드린다"
+assert_eq "$(has "$OUT" '안 깔았다')" "yes" "안 깔았다고 말하고 나중에 까는 법을 알려준다"
 
 # ── ⑤ 두 번째 실행 — 멱등 ──────────────────────────────────────────────────
 cp -R "$HOME/.local" "$TTROOT/local.before"
@@ -237,6 +239,14 @@ rm -rf "$HOME/.claude"
 RC=0
 OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" < /dev/null 2>&1) || RC=$?
 assert_eq "$(ex "$HOME/.claude")" "no" "동의 없이는 ~/.claude 에 아무것도 안 만든다"
+
+# 스킬 파일이 아예 없는 레포 — 조용히 넘기지 않고 건너뛴다고 말한다.
+rm -rf "$REPO2/skills"
+RC=0
+OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" --yes < /dev/null 2>&1) || RC=$?
+assert_eq "$RC" "0" "스킬이 없는 레포에서도 rc 0"
+assert_eq "$(has "$OUT" 'SKILL.md 가 없다')" "yes" "스킬이 없으면 건너뛴다고 말한다"
+assert_eq "$(ex "$HOME/.claude")" "no" "스킬이 없으면 ~/.claude 를 안 만든다"
 
 # ── ⑩ shim 의 PATH 순서 판정 ───────────────────────────────────────────────
 # 훅이 안 붙는 가장 흔한 원인이다: 진짜 claude 가 shim 보다 PATH 앞에 있는 경우.
