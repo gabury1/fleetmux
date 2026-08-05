@@ -90,8 +90,10 @@ fi
 #
 # 맨 위에는 **그 세션에 마지막으로 보낸 프롬프트**를 얹는다(3번 인자 = 세션 id, --list 의 3번 필드).
 #   화면 위로 밀려 사라지는 게 바로 그 한 줄이라, 화면 꼬리만으로는 "내가 뭘 시켰더라"에 답이 없다.
-#   ⚠ 이건 부가물이다 — 파일이 없거나 깨졌거나 id를 못 받으면 **헤더 없이 예전 출력 그대로** 나간다.
-#     프리뷰가 이 기능 때문에 깨지는 일은 없어야 한다(설계 4절).
+#   모양은 `last prompt ❯` 라벨 한 줄 + 본문(접두 없이 창 폭 전체) + 구분선이다. 박스·세로선은
+#   중간 판으로 만들어 봤다가 버려졌다 — 자세한 이유는 35-lastprompt.sh 의 렌더 주석에 있다.
+#   ⚠ 이건 부가물이다 — 파일이 없거나 깨졌거나 id를 못 받거나 창이 너무 좁으면
+#     **헤더 없이 예전 출력 그대로** 나간다. 프리뷰가 이 기능 때문에 깨지는 일은 없어야 한다(설계 4절).
 if [ "${1:-}" = "--preview" ]; then
     n="${2:-}"; [ -n "$n" ] || exit 0
     lines="${FZF_PREVIEW_LINES:-40}"                       # fzf가 프리뷰 창 높이를 넣어준다
@@ -103,7 +105,11 @@ if [ "${1:-}" = "--preview" ]; then
         *) if [ -f "$STATE/last-$psid" ]; then
                cols="${FZF_PREVIEW_COLUMNS:-80}"           # fzf가 프리뷰 창 폭도 넣어준다
                case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
-               hdr=$(LC_ALL=C awk -v cols="$cols" "$TT_LASTP_VIEW_AWK" \
+               # 라벨·구분선 색은 설정의 accent 를 따른다 — 하드코딩하면 색을 바꿔도 여기만 남는다.
+               #   경고는 삼킨다: 프리뷰의 stderr 는 그대로 프리뷰 창에 그려져 화면을 덮는다.
+               acc=$(tt_conf_num accent 255 2>/dev/null) || acc=""
+               [ -n "$acc" ] || acc=$(tt_conf_default accent)
+               hdr=$(LC_ALL=C awk -v cols="$cols" -v acc="$acc" "$TT_LASTP_VIEW_AWK" \
                        "$STATE/last-$psid" 2>/dev/null) || hdr=""
            fi ;;
     esac
@@ -325,6 +331,11 @@ fi
 #   표시줄)만 보여준다. 그래서 {1}·{+1}은 공백이 들어간 이름도 잘리지 않은 채로 tt에 전달되고,
 #   {3}은 프리뷰가 last-<id> 를 찾는 열쇠가 된다(프리뷰 안에서 tmux에 되묻지 않아도 된다).
 # 프리뷰는 tail — 중요한 건 화면 하단(입력창·스피너·승인 프롬프트)인데 전체를 흘려보내면 잘린다.
+# --preview-label 은 ' screen ' 이 아니라 ' session ' 이다. 창 안에 이제 두 가지가 산다:
+#   위의 last prompt 헤더(우리가 쓴 글)와 그 아래 화면 꼬리(남의 출력). 바깥 라벨이 ' screen '
+#   이면 헤더까지 화면인 것처럼 말한다 — 라벨은 창 전체를 가리키므로 창 전체가 무엇인지,
+#   즉 "고른 세션"을 말해야 맞다. 헤더가 자기 이름(last prompt)을 스스로 대므로
+#   화면 꼬리에는 따로 이름표가 필요 없다.
 # 목록 생산자의 stderr 는 화면이 아니라 hook.log 로 간다 — 설정 파일에 깨진 줄이 있으면
 # 그 경고가 fzf 화면 위에 덧칠돼 관제탑을 못 읽게 만든다. 버리지 않는 이유는 86 과 같다(권고 N3).
 # footer 가 설정 키를 적는다 — 목록에서 ⚙ 행을 뺀 대신 여기서 발견성을 갚는다. 바인딩과 표기가
@@ -336,7 +347,7 @@ session=$("$SELF" --list 2>>"$STATE/hook.log" \
           --bind "?:execute($SELFQ --help </dev/tty >/dev/tty 2>&1; printf '  press any key to return' >/dev/tty; read -rsn1 </dev/tty)" \
           --color='pointer:#4ec9b0,prompt:#4ec9b0,hl:#56b6c2,hl+:#56b6c2,bg+:#18221e,fg+:regular,footer:#4a5a52,border:#4a5a52,label:#4ec9b0,preview-border:#4a5a52' \
           --preview "$SELFQ --preview {1} {3}" \
-          --preview-window 'right,65%,border-rounded' --preview-label=' screen ' \
+          --preview-window 'right,65%,border-rounded' --preview-label=' session ' \
           --bind 'right:accept' \
           --bind 'left:abort' \
           --bind "ctrl-r:reload($SELFQ --list)" \

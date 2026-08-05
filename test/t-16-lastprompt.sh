@@ -76,6 +76,48 @@ ups() {    # UserPromptSubmit 페이로드 한 벌. $1 = prompt 값(JSON 안에 
 body() { tail -n +2 "$LF" 2>/dev/null || true; }
 head1() { head -1 "$LF" 2>/dev/null || true; }
 
+# ── 표시폭 오라클 ──────────────────────────────────────────────────────────
+# ★헤더의 폭 단언은 **글자 수가 아니라 표시폭**으로 재야 한다. 자를 자리를 정하는 건 터미널이
+#   그리는 칸 수이지 글자 수가 아니고, 폭을 잘못 세면 우리가 붙인 … 자체가 fzf 에게 잘려
+#   나가 "잘렸다"는 표시조차 안 남는다.
+#   ⚠ src 의 wcw() 로 재면 **순환 논증**이다 — 폭 표가 틀리면 렌더도 검사도 똑같이 틀려
+#   그대로 통과한다(그게 지금 고치는 버그다). 그래서 이 테스트는 자기 폭 표를 따로 들고
+#   있다: EastAsianWidth 에서 **이 파일이 실제로 쓰는 글자만** 옮겨 적은 별개 구현이다.
+#     구분선 ─(U+2500)·❯(U+276F)·…(U+2026)·ASCII = 1칸
+#     한글 음절·한글 자모 확장-A(U+A960–A97C)·✅(U+2705)·❌(U+274C)·⭐(U+2B50)·⏰(U+23F0) = 2칸
+DISPW_AWK='
+    BEGIN { for (i = 1; i < 256; i++) O[sprintf("%c", i)] = i }
+    {
+        gsub(/\033\[[0-9;]*m/, "")
+        L = length($0); p = 1; t = 0
+        while (p <= L) {
+            c = O[substr($0, p, 1)]
+            if (c < 128)       { n = 1; v = c }
+            else if (c >= 240) { n = 4; v = c - 240 }
+            else if (c >= 224) { n = 3; v = c - 224 }
+            else if (c >= 192) { n = 2; v = c - 192 }
+            else               { n = 1; v = -1 }
+            for (q = 1; q < n; q++) v = v * 64 + (O[substr($0, p + q, 1)] % 64)
+            t += w(v); p += n
+        }
+        print t
+    }
+    function w(v) {
+        if (v >= 44032 && v <= 55203) return 2      # 한글 음절
+        if (v >= 43360 && v <= 43388) return 2      # 한글 자모 확장-A
+        if (v == 9989  || v == 10060) return 2      # ✅ ❌
+        if (v == 11088 || v == 9200)  return 2      # ⭐ ⏰
+        return 1
+    }'
+dispw()      { LC_ALL=C awk "$DISPW_AWK"; }
+strip_ansi() { LC_ALL=C awk '{ gsub(/\033\[[0-9;]*m/, ""); print }'; }
+# N번째 줄의 표시폭 — 색 이스케이프를 벗기고 **칸을 실제로 센다**(글자 수가 아니다).
+wof()     { printf '%s\n' "$1" | sed -n "${2}p" | dispw; }
+# 줄들 중 가장 넓은 표시폭. cols 를 넘는 줄이 하나라도 있으면 여기서 드러난다.
+maxw()    { printf '%s\n' "$1" | dispw | sort -n | tail -1; }
+# N번째 줄의 글자. 색만 벗긴다 — 본문에는 접두가 없으니 떼어낼 것도 없다.
+rowtext() { printf '%s\n' "$1" | strip_ansi | sed -n "${2}p"; }
+
 # ── ① 저장 ─────────────────────────────────────────────────────────────────
 rm -f "$LF"
 hook working "$(ups '첫 지시')"
@@ -157,6 +199,29 @@ umask 022
 hook working "$(ups '세 번째 지시')"
 assert_eq "$(mode_of "$LF")" "-rw-------" "umask 022 에서도 결과가 같다"
 umask "$oldmask"
+
+# ── ①-c 남은 tmp 조각 ──────────────────────────────────────────────────────
+# ★umask 는 **새로 만드는** 파일에만 걸린다. `> "$t"` 는 그 이름이 이미 있으면 열어서 자르기만
+#   하고 예전 모드를 그대로 둔다 — mv 는 rename 이라 그 헐거운 모드가 목적지까지 따라간다.
+#   조각(.last-<id>.<pid>)은 훅이 mv 전에 죽으면 남고 pid 는 재사용되므로, "이미 있는 이름"은
+#   실제로 일어난다.
+#
+#   조각 이름에는 훅 프로세스의 $$ 가 박히는데 밖에서는 그 pid 를 알 수 없다. 그래서 저장
+#   함수를 **이 셸 안으로 들여와** 부른다($$ = 이 셸). 들여오는 것은 bin/fmux 원문 그대로다 —
+#   TT_LASTP_MAX 부터 tt_last_prompt_save 의 닫는 중괄호까지가 순수 정의라 부작용이 없다.
+eval "$(sed -n '/^TT_LASTP_MAX=/,/^}$/p' "$TTBIN")"
+assert_eq "$(command -v tt_last_prompt_save)" "tt_last_prompt_save" "저장 함수를 이 셸로 들여왔다"
+rm -f "$LF"
+frag="$STATE/.last-9.$$"
+printf 'x' > "$frag"; chmod 666 "$frag"
+oldmask=$(umask); umask 000
+tt_last_prompt_save '$9' "$(ups '남은 조각 위에 쓴다')" 1700000000
+umask "$oldmask"
+assert_eq "$(mode_of "$LF")" "-rw-------" \
+    "★★남은 조각을 재사용해도 0600 이다 — 서브셸 전에 unlink 한다"
+assert_eq "$(body)" "남은 조각 위에 쓴다" "내용도 제대로 들어간다"
+assert_rc 1 test -e "$frag"
+unset -f tt_last_prompt_save
 
 # ── ② 이벤트 게이팅 ────────────────────────────────────────────────────────
 # ★PostToolUse 의 tool_input.prompt = Task 도구 서브에이전트 지시문. 훅 상태는 똑같이
@@ -259,40 +324,105 @@ assert_eq "$(pv 'not-a-number')" "$PANE" "숫자가 아닌 id 를 받아도 그�
 printf '1234567890\n' > "$LF"
 assert_eq "$(pv 9)" "$PANE" "본문 없는 파일이면 헤더 없이 그대로다"
 
-# 3줄 이하면 "… +N줄" 줄 자체가 없다
+# ── ⑤-a 헤더 구조 ─────────────────────────────────────────────────────────
+# ★사용자가 세 판 만에 고른 모양이다. 이 순서와 이 줄 수가 곧 계약이다:
+#     last prompt ❯     ← 라벨 한 줄. 셸 프롬프트처럼 읽힌다(dim + accent)
+#     첫 줄             ← 본문은 **다음 줄부터, 접두 없이** 창 폭 전체를 쓴다
+#     둘째 줄
+#     ──────────        ← 구분선 하나(dim + accent, 폭 = cols)
+#     pane one          ← 여기부터 기존 화면 꼬리
+#   중간 판이던 박스·세로선은 "못생겼다"로 명시적으로 버려졌다. 아래 폐기 단언이 부활을 막는다.
+printf '1\n첫 줄\n둘째 줄\n' > "$LF"
+out=$(pv 9 40 44)
+assert_eq "$(rowtext "$out" 1)" "last prompt ❯" "★1행은 라벨 줄이다 — 셸 프롬프트처럼 읽힌다"
+assert_eq "$(rowtext "$out" 2)" "첫 줄"   "★본문은 2행부터 — 접두 없이 왼쪽 끝에서 시작한다"
+assert_eq "$(rowtext "$out" 3)" "둘째 줄" "둘째 본문 줄"
+assert_eq "$(rowtext "$out" 4)" \
+    "$(awk 'BEGIN { s = ""; for (i = 0; i < 44; i++) s = s "─"; print s }')" \
+    "★본문 아래는 가로 구분선 하나다"
+assert_eq "$(wof "$out" 4)" "44" "★★구분선의 표시폭을 실제로 세면 정확히 cols(44)다"
+assert_eq "$(wof "$out" 1)" "13" "라벨 줄의 표시폭 = ❯ 포함 13칸"
+assert_eq "$(printf '%s\n' "$out" | sed -n 5p)" "pane one" "★화면 꼬리는 손대지 않는다 — 바이트 그대로"
+assert_contains "$out" "pane three" "헤더 아래로 화면 꼬리가 이어진다"
+
+# ★폐기된 안이 되살아나면 여기서 잡는다 — 박스·세로선·반전바.
+hdr4=$(printf '%s\n' "$out" | head -4)
+for ch in '╭' '╮' '╰' '╯' '│' '┃' '▌' '█'; do
+    case "$hdr4" in *"$ch"*) got=yes ;; *) got=no ;; esac
+    assert_eq "$got" "no" "폐기된 장식이 없다 [$ch]"
+done
+case "$hdr4" in *"$ESC[7m"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "반전바(ESC[7m)도 안 쓴다"
+
+# 색: accent 설정을 따르고, 라벨·구분선 **둘 다** dim 이다(본문이 읽혀야 한다)
+case "$(printf '%s\n' "$out" | sed -n 1p)" in "$ESC[2;38;5;73m"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "yes" "★라벨은 dim(2) + accent 기본값(73)으로 시작한다"
+case "$(printf '%s\n' "$out" | sed -n 4p)" in "$ESC[2;38;5;73m"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "yes" "★구분선도 dim + accent 다 — 장식이 본문보다 밝으면 안 된다"
+case "$(printf '%s\n' "$out" | sed -n 2p)" in *"$ESC["*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "본문에는 우리가 색을 안 입힌다"
+TT_ACCENT=200; export TT_ACCENT
+out200=$(pv 9 40 44)
+unset TT_ACCENT
+assert_contains "$out200" "$ESC[2;38;5;200m" "★accent 를 바꾸면 라벨·구분선 색도 따라간다"
+case "$out200" in *"$ESC[2;38;5;73m"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "기본값 73 이 하드코딩으로 남아 있지 않다"
+
+# 3줄이면 "… +N줄" 줄 자체가 없다 — 본문 예산 3줄을 본문이 다 쓴다
 printf '1\n1행\n2행\n3행\n' > "$LF"
 out=$(pv 9)
 case "$out" in *"…"*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "3줄이면 남은 줄 표시가 아예 없다"
-assert_eq "$(printf '%s\n' "$out" | head -1)" "❯ 1행" "첫 줄에 ❯ 가 붙는다"
-assert_eq "$(printf '%s\n' "$out" | sed -n 2p)" "  2행" "이어지는 줄은 두 칸 들여쓴다"
-assert_contains "$out" "pane three" "그 아래로 화면 꼬리가 이어진다"
+assert_eq "$(printf '%s\n' "$out" | sed -n 6p)" "pane one" "헤더는 라벨 1 + 본문 3 + 구분선 1 = 5줄이다"
 
-# 3줄을 넘으면 "… +N줄"
-printf '1\na\nb\nc\nd\ne\n' > "$LF"
-out=$(pv 9)
-assert_contains "$out" "… +2줄" "★3줄을 넘으면 남은 줄 수를 적는다"
-assert_eq "$(printf '%s\n' "$out" | grep -c '^❯ ')" "1" "❯ 는 첫 줄에만 붙는다"
+# 3줄을 넘으면 "… +N줄" — 그 줄도 본문 예산 한 줄을 먹으므로 본문은 2줄까지다
+printf '1\na\nb\nc\nd\ne\nf\n' > "$LF"
+out=$(pv 9 40 44)
+assert_eq "$(rowtext "$out" 4)" "… +4줄" "★3줄을 넘으면 본문 2줄 + 남은 줄 수를 적는다"
+assert_eq "$(rowtext "$out" 5)" \
+    "$(awk 'BEGIN { s = ""; for (i = 0; i < 44; i++) s = s "─"; print s }')" \
+    "그래도 구분선은 마지막 한 줄이다"
+assert_eq "$(printf '%s\n' "$out" | head -6 | tail -1)" "pane one" "라벨 1 + 본문 3 + 구분선 1 = 정확히 5줄"
+case "$(printf '%s\n' "$out" | sed -n 4p)" in "$ESC[2m"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "yes" "'… +N줄' 은 dim — 본문이 아니라 표시다"
 
 # 잘린 경우도 같은 자리에 드러낸다
 printf '1 trunc\na\nb\nc\nd\n' > "$LF"
-assert_contains "$(pv 9)" "… +1줄 (잘림)" "★잘렸다는 사실이 렌더에 드러난다"
+assert_eq "$(rowtext "$(pv 9 40 44)" 4)" "… +2줄 (잘림)" "★잘렸다는 사실이 렌더에 드러난다"
 printf '1 trunc\na\nb\n' > "$LF"
-assert_contains "$(pv 9)" "… (잘림)" "남은 줄이 없어도 잘림은 드러낸다"
+out=$(pv 9 40 44)
+assert_eq "$(rowtext "$out" 4)" "… (잘림)" "★4096 상한에 걸린 것도 같은 자리에 드러낸다"
+assert_eq "$(printf '%s\n' "$out" | head -6 | tail -1)" "pane one" "잘림 표시가 있어도 헤더는 5줄을 안 넘는다"
 
-# ★폭 — 프리뷰 폭을 넘는 줄은 잘린다. 안 자르면 fzf 가 접어서 줄 수 회계가 어긋난다.
+# ★폭 — 프리뷰 폭을 넘는 줄은 우리가 먼저 자른다. 안 자르면 fzf 가 **말없이** 잘라
+#   우리가 붙인 … 까지 사라진다 = "뒤가 더 있다"는 표시조차 안 남는다.
 long=$(awk 'BEGIN { s = ""; for (i = 0; i < 200; i++) s = s "x"; printf "%s", s }')
 printf '1\n%s\n' "$long" > "$LF"
-# cols=30 → 본문 폭 28 → 마지막 한 칸은 … 자리 → x 27개까지만 들어간다(총 표시폭 30)
-x27=$(awk 'BEGIN { s = ""; for (i = 0; i < 27; i++) s = s "x"; printf "%s", s }')
-assert_eq "$(pv 9 40 30 | head -1)" "❯ $x27…" \
-    "★긴 줄이 프리뷰 폭 안으로 잘린다 — 표시폭이 정확히 cols 다"
+# cols=30, 접두 없음 → 마지막 한 칸은 … 자리 → x 29개 + … = 정확히 30칸
+x29=$(awk 'BEGIN { s = ""; for (i = 0; i < 29; i++) s = s "x"; printf "%s", s }')
+out=$(pv 9 40 30)
+assert_eq "$(rowtext "$out" 2)" "$x29…" "★긴 줄이 프리뷰 폭 안으로 잘린다"
+assert_eq "$(wof "$out" 2)" "30" "★★잘린 본문 줄의 표시폭이 정확히 cols(30)다"
+assert_eq "$(maxw "$hdr4")" "44" "헤더 어느 줄도 cols 를 넘지 않는다"
 
 # 한글은 한 글자가 두 칸이다 — 바이트나 글자 수로 자르면 폭이 어긋난다.
-#   cols=20 → 본문 폭 18 → 한 칸은 … 자리 → 가 8개(16칸)까지만 들어간다.
+#   cols=20, 접두 없음 → … 자리 한 칸을 빼면 19칸 → 가 9개(18칸) + … = 19칸.
+#   넓은 글자는 한 칸을 쪼갤 수 없어 20 에 한 칸 못 미친다 — 넘지 않는 게 계약이다.
 k=$(awk 'BEGIN { s = ""; for (i = 0; i < 20; i++) s = s "가"; printf "%s", s }')
 printf '1\n%s\n' "$k" > "$LF"
-assert_eq "$(pv 9 40 20 | head -1)" "❯ 가가가가가가가가…" "★한글은 두 칸으로 세서 자른다"
+out=$(pv 9 40 20)
+assert_eq "$(rowtext "$out" 2)" "가가가가가가가가가…" "★한글은 두 칸으로 세서 자른다"
+assert_eq "$(wof "$out" 2)" "19" "★★한글 줄의 표시폭을 실제로 세면 19칸 — cols(20)을 안 넘는다"
+
+# ★너무 좁으면 헤더를 통째로 포기한다 — 못 그릴 바엔 없는 게 낫다(부가물 원칙).
+#   경계는 라벨 폭(13)이다. 라벨을 자르며 시작하는 헤더는 헤더 구실을 못 한다.
+export TT_FAKE_PANE="$PANE"
+printf '1\n짧은 지시\n' > "$LF"
+assert_eq "$(pv 9 40 12)" "$PANE" "★cols<13 이면 헤더를 안 그리고 예전 프리뷰 그대로 낸다"
+assert_eq "$(pv 9 40 0)" "$PANE" "cols 가 0 이어도 안 깨진다"
+out=$(pv 9 40 13)
+assert_eq "$(rowtext "$out" 1)" "last prompt ❯" "cols=13 은 그린다 — 경계 바로 위"
+assert_eq "$(wof "$out" 1)" "13" "그 폭에서 라벨이 딱 맞아떨어진다"
 
 # ── ⑤-b 렌더 소독 — 저장을 안 거친 파일이 들어와도 헤더가 안 깨진다 ─────────
 # 손으로 만든 파일·옛 판이 남긴 파일은 저장 소독을 안 거쳤다. 렌더는 파일을 믿지 않는다.
@@ -300,13 +430,12 @@ assert_eq "$(pv 9 40 20 | head -1)" "❯ 가가가가가가가가…" "★한글
 # ★탭. 폭 1 로 세던 판을 실측했더니 20칸 한도에서 58칸이 나갔다 — 터미널이 탭을 탭 스톱까지
 #   벌리는데 우리는 1칸으로 셌기 때문이다. 공백으로 펴서 센 폭과 그린 폭을 같게 만든다.
 printf '1\na%sb%sc\n' "$TAB" "$TAB" > "$LF"
-assert_eq "$(pv 9 40 20 | head -1)" "❯ a b c" "★렌더가 탭을 공백 한 칸으로 편다"
+assert_eq "$(rowtext "$(pv 9 40 20)" 2)" "a b c" "★렌더가 탭을 공백 한 칸으로 편다"
 tabline=$(awk -v t="$TAB" 'BEGIN { s = ""; for (i = 0; i < 40; i++) s = s t "x"; printf "%s", s }')
 printf '1\n%s\n' "$tabline" > "$LF"
-# cols=20 → 본문 폭 18 → 마지막 한 칸은 … 자리 → 17칸(" x" 8쌍 + 공백 하나)까지
-sp17=$(awk 'BEGIN { s = ""; for (i = 0; i < 8; i++) s = s " x"; printf "%s ", s }')
-assert_eq "$(pv 9 40 20 | head -1)" "❯ $sp17…" "★탭이 든 줄도 표시폭이 정확히 cols 다"
-case "$(pv 9 40 20)" in *"$TAB"*) got=yes ;; *) got=no ;; esac
+out=$(pv 9 40 20)
+assert_eq "$(wof "$out" 2)" "20" "★★탭이 든 줄도 표시폭이 정확히 cols(20) 다"
+case "$(printf '%s\n' "$out" | head -3)" in *"$TAB"*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "탭 자체가 프리뷰로 나가지 않는다"
 
 # ★C1(U+0080–9F). 8비트 CSI(U+009B)는 ESC 없이 커서를 움직인다 — 프리뷰가 깨지면 사용자
@@ -316,11 +445,93 @@ out=$(pv 9 40 60)
 case "$out" in *"$CSI"*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "★렌더가 C1(c2 9b)을 걷어낸다"
 assert_contains "$out" "빨강" "C1 만 빠지고 글자는 남는다"
-# 구분선은 DIM(ESC[2m)으로 그리므로 전체 출력에는 ESC 가 원래 있다 — 본문 줄만 본다
+assert_eq "$(rowtext "$out" 2)" "31m빨강0m" "C1 두 바이트만 빠지고 나머지는 그대로다"
+assert_eq "$(wof "$out" 2)" "9" "★C1 을 걷어낸 줄의 표시폭 = \"31m\" 3 + 빨강 4 + \"0m\" 2 = 9칸"
+# 라벨·구분선은 색 이스케이프로 그리므로 전체 출력에는 ESC 가 원래 있다 — 벗겨 낸 본문만 본다
 printf '1\n%s[31m생ESC\n' "$ESC" > "$LF"
-case "$(pv 9 40 60 | head -1)" in *"$ESC"*) got=yes ;; *) got=no ;; esac
+out=$(pv 9 40 60)
+case "$(printf '%s\n' "$out" | sed -n 2p | strip_ansi)" in *"$ESC"*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "★렌더가 생 ESC 도 걷어낸다"
-assert_eq "$(pv 9 40 60 | head -1)" "❯ [31m생ESC" "ESC 만 빠지고 나머지는 그대로다"
+assert_eq "$(rowtext "$out" 2)" "[31m생ESC" "ESC 만 빠지고 나머지는 그대로다"
+
+# ── ⑤-c 폭 표 — 빠져 있던 넓은 글자 ────────────────────────────────────────
+# ★실측: `✅`×30 @cols=20 이 37칸으로 나갔다. wcw() 의 이모지 구간이 `v >= 127744`(U+1F300)
+#   부터라, BMP 에 사는 ✅(U+2705)·❌(U+274C)·⭐(U+2B50)·⏰(U+23F0)과 한글 자모 확장-A
+#   (U+A960–A97C)가 통째로 1칸으로 세어졌다. 그냥 "줄이 길어지는" 문제가 아니다 —
+#   우리가 붙인 … 자체가 폭 밖으로 밀려 fzf 에게 잘리므로 **잘렸다는 표시조차 안 남는다**.
+#   바이트로 적는다 — bash 3.2 에는 $'\uXXXX' 가 없다(맥 기본 셸).
+EMO_OK='\342\234\205'      # ✅ U+2705
+EMO_X='\342\235\214'       # ❌ U+274C
+EMO_STAR='\342\255\220'    # ⭐ U+2B50
+EMO_CLOCK='\342\217\260'   # ⏰ U+23F0
+JAMO_A='\352\245\240'      # ꥠ U+A960 — 한글 자모 확장-A
+for pair in "$EMO_OK ✅ U+2705" "$EMO_X ❌ U+274C" "$EMO_STAR ⭐ U+2B50" \
+            "$EMO_CLOCK ⏰ U+23F0" "$JAMO_A ꥠ U+A960"; do
+    set -- $pair
+    oct="$1"; sym="$2"; cp="$3"
+    line=$(awk -v c="$(printf "$oct")" 'BEGIN { s = ""; for (i = 0; i < 30; i++) s = s c; printf "%s", s }')
+    printf '1\n%s\n' "$line" > "$LF"
+    out=$(pv 9 40 20)
+    # 두 칸짜리 글자 9개(18칸) + … = 19칸. 폭 표가 1칸으로 세면 39칸이 나간다.
+    assert_eq "$(wof "$out" 2)" "19" \
+        "★★$sym($cp)×30 @cols=20 — 첫 본문 줄의 표시폭을 실제로 세면 19칸(cols 를 안 넘는다)"
+    assert_eq "$(rowtext "$out" 2)" \
+        "$(awk -v c="$(printf "$oct")" 'BEGIN { s = ""; for (i = 0; i < 9; i++) s = s c; print s "…" }')" \
+        "$sym 는 9개까지만 들어가고 … 가 붙는다"
+done
+# 섞어 놔도 마찬가지다 — 자를 위치가 글자 경계와 안 맞으면 바로 드러난다.
+#   넓은 글자는 한 칸을 쪼갤 수 없으므로 cols 에 한 칸 못 미칠 수 있다. 계약은
+#   "cols 를 넘지 않고, 한 칸 이내로 꽉 찬다"이다 — 폭 표가 틀리면 곧바로 두 배 가까이 넘친다.
+fits() {   # $1=프리뷰 출력  $2=cols
+    _w=$(wof "$1" 2)
+    if [ "$_w" -le "$2" ] && [ "$_w" -ge $(($2 - 1)) ]; then echo ok; else echo "$_w vs cols=$2"; fi
+}
+mixed=$(awk -v a="$(printf "$EMO_OK")" -v b="$(printf "$EMO_X")" -v c="$(printf "$JAMO_A")" \
+    'BEGIN { s = ""; for (i = 0; i < 12; i++) s = s a "가" b "x" c; printf "%s", s }')
+printf '1\n%s\n' "$mixed" > "$LF"
+for c in 20 21 33 44 80; do
+    assert_eq "$(fits "$(pv 9 40 "$c")" "$c")" "ok" \
+        "★넓은 글자와 한글·ASCII 를 섞어도 cols=$c 를 안 넘고 한 칸 이내로 채운다"
+done
+
+# ── ⑤-d decode — 못 읽는 바이트는 한 바이트만 먹는다 ───────────────────────
+# ★`0xC2` 다음에 사용자가 친 글자가 오면 예전 판은 그 글자까지 삼켰다(실측).
+#   v = 2*64 + (65 % 64) = 129 → C1 그물(128–159)에 걸리고 CPLEN=2 라 A 가 사라진다.
+printf '1\n\302ABCDE\n' > "$LF"
+assert_eq "$(rowtext "$(pv 9 40 40)" 2)" "ABCDE" \
+    "★★0xC2 뒤의 A 가 사라지지 않는다 — 깨진 선행 바이트만 버린다"
+# 잘못된 선행 바이트 — 0xC0·0xC1(과잉 인코딩)·0xF5–0xFF(범위 밖). 정상 다바이트로 취급하면
+#   뒤 글자를 1~3개씩 데려간다(0xC0 + "X" → v=24 로 C0 취급 → X 까지 증발).
+printf '1\n\300X\301Y\365Z\377W\n' > "$LF"
+assert_eq "$(rowtext "$(pv 9 40 40)" 2)" "XYZW" \
+    "★★0xC0·0xC1·0xF5·0xFF 은 정상 선행 바이트가 아니다 — 뒤 글자를 안 데려간다"
+# ★위 한 줄만으로는 **선행 바이트 검사**를 못 잰다 — 뒤가 연속 바이트가 아니라서 연속 바이트
+#   검사가 먼저 잡아 준다(변이 실험으로 확인: `c < 192` 로 되돌려도 위 단언은 통과했다).
+#   뒤에 진짜 연속 바이트를 붙여야 선행 바이트 검사만 남는다.
+#     0xC0 0xA0 → 과잉 인코딩. 예전 판은 v=32(공백)로 계산해 **깨진 두 바이트를 그대로** 뱉었다.
+#     0xC1 0xA0 → v=96('`') 로 계산돼 역시 그대로 나갔다.
+#     0xF5 0x80 0x80 0x80 → v=1310720 (U+10FFFF 초과) 로 계산돼 네 바이트가 그대로 나갔다.
+for bad in '\300\240' '\301\240' '\365\200\200\200'; do
+    printf "1\nA${bad}B\n" > "$LF"
+    out=$(pv 9 40 40)
+    assert_eq "$(rowtext "$out" 2)" "AB" \
+        "★★뒤가 연속 바이트여도 잘못된 선행 바이트는 버린다 [$bad]"
+done
+# 3바이트 선행 뒤가 연속 바이트가 아니면 1바이트로 처리한다
+printf '1\n\340AB\n' > "$LF"
+out=$(pv 9 40 40)
+assert_eq "$(rowtext "$out" 2)" "AB" "★뒤가 연속 바이트가 아닌 0xE0 은 혼자 버려진다"
+case "$(printf '%s\n' "$out" | sed -n 2p)" in *$'\340'*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "깨진 선행 바이트가 프리뷰로 새지 않는다"
+# 잘린 시퀀스(줄 끝에서 끊긴 선행 바이트)도 같은 그물
+printf '1\nOK\342\234\n' > "$LF"
+out=$(pv 9 40 40)
+assert_eq "$(rowtext "$out" 2)" "OK" "잘린 UTF-8 꼬리는 통째로 버린다"
+assert_eq "$(wof "$out" 2)" "2" "깨진 바이트가 폭 계산에 유령 칸을 남기지 않는다"
+assert_eq "$(maxw "$(printf '%s\n' "$out" | head -3)")" "40" "구분선은 여전히 정확히 cols 다"
+# 진짜 U+FFFD 는 3바이트로 온전하므로 살아남는다 — 깨진 조각 판정과 헷갈리면 안 된다
+printf '1\nA\357\277\275B\n' > "$LF"
+assert_eq "$(rowtext "$(pv 9 40 40)" 2)" "$(printf 'A\357\277\275B')" "온전한 U+FFFD 는 글자로 남는다"
 
 # ★줄 수 회계 — 헤더가 먹은 만큼 화면 꼬리가 줄어든다
 export TT_FAKE_PANE=$(awk 'BEGIN { for (i = 1; i <= 20; i++) print "screen line " i }')
@@ -328,7 +539,10 @@ printf '1\na\nb\nc\nd\ne\n' > "$LF"
 out=$(pv 9 10 60)
 assert_eq "$(printf '%s\n' "$out" | grep -c .)" "10" "★프리뷰 총 줄 수가 FZF_PREVIEW_LINES 를 안 넘는다"
 assert_contains "$out" "screen line 20" "화면 꼬리는 여전히 '가장 아래'를 보여준다"
-assert_contains "$out" "❯ a" "헤더도 그대로 살아 있다"
+assert_eq "$(rowtext "$out" 2)" "a" "헤더도 그대로 살아 있다"
+# ★예산: 라벨 1 + 본문 3(= 본문 2 + "… +N줄") + 구분선 1 = 5줄이 화면 몫에서 빠진다. 5+5=10.
+assert_eq "$(printf '%s\n' "$out" | sed -n 6p)" "screen line 16" \
+    "★헤더가 정확히 5줄을 먹고 화면은 나머지 5줄을 쓴다"
 # 헤더가 없을 때는 20줄 창을 통째로 쓴다(회계가 헤더에만 반응한다는 증거)
 rm -f "$LF"
 assert_eq "$(pv 9 10 60 | grep -c .)" "10" "헤더가 없으면 화면이 창을 다 쓴다"
