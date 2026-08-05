@@ -89,12 +89,21 @@ install: $(OUT)
 	@echo "installed $(BINDIR)/fmux"
 # tt 심링크. `make install` 만 쳐도 쓸 수 있는 상태여야 한다 — PATH shim(libexec/claude)은
 # `command -v tt` 로 우리 존재를 확인하므로, 이 이름이 없으면 훅 주입이 통째로 안 붙는다.
-# 남의 tt(심링크가 아닌 파일)는 절대 덮지 않는다 — 설치기가 남의 도구를 지우면 안 된다.
-	@if [ -e $(BINDIR)/tt ] && [ ! -L $(BINDIR)/tt ]; then \
-		echo "skip: $(BINDIR)/tt 가 심링크가 아닌 파일이다 — 건드리지 않는다"; \
-	else \
-		ln -sf fmux $(BINDIR)/tt; \
+# 남의 tt 는 절대 덮지 않는다 — 설치기가 남의 도구를 지우면 안 된다.
+#   ⚠️ 예전 가드는 `[ -e ] && [ ! -L ]` 이었다: 일반 파일만 지키고 **남의 심링크는 갈아쳤다**.
+#   ~/.local/bin 에 개인 도구를 거는 가장 흔한 방식이 심링크라, 이 주석이 코드를 거짓 진술한
+#   상태였다(팀 배포 게이트 I2). install.sh 는 make 가 있으면 이 규칙을 그대로 물려받으므로
+#   여기와 install.sh 의 tt_link_ours 는 **같은 판정**이어야 한다: 비었거나 fmux 를 가리키는
+#   심링크일 때만 건다.
+	@if [ ! -e "$(BINDIR)/tt" ] && [ ! -L "$(BINDIR)/tt" ]; then \
+		ln -sf fmux "$(BINDIR)/tt"; \
 		echo "linked $(BINDIR)/tt -> fmux"; \
+	elif [ -L "$(BINDIR)/tt" ] && { [ "$$(readlink "$(BINDIR)/tt")" = fmux ] || [ "$$(readlink "$(BINDIR)/tt")" = "$(BINDIR)/fmux" ]; }; then \
+		ln -sf fmux "$(BINDIR)/tt"; \
+		echo "relinked $(BINDIR)/tt -> fmux"; \
+	else \
+		echo "skip: $(BINDIR)/tt 는 우리 것이 아니다 — 건드리지 않는다"; \
+		echo "      지금 그 자리: $$(ls -ld "$(BINDIR)/tt")"; \
 	fi
 
 .PHONY: all check verify install

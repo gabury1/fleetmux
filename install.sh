@@ -4,6 +4,8 @@
 #   ./install.sh              물어보면서 설치
 #   ./install.sh --dry-run    아무것도 안 바꾸고 할 일만 출력
 #   ./install.sh --yes        물음에 전부 yes (제안된 기본값을 그대로 받는다)
+#                             소환키만은 예외 — safe(아무 키도 안 뺏음)로 간다. 무prefix 키를
+#                             전역으로 뺏는 것은 --preset 으로 명시할 때만 일어난다.
 #
 # 규율 넷 — 이 파일을 고칠 사람에게:
 #   ① 멱등하다. 두 번 돌려도 안전하고, 이미 있는 것은 덮기 전에 알린다.
@@ -31,8 +33,11 @@ usage: ./install.sh [옵션]
 
   -n, --dry-run       아무것도 바꾸지 않고 할 일만 출력한다
   -y, --yes           물음에 전부 yes (제안된 기본값을 그대로 받는다)
+                      단, 소환키는 safe 로 간다 — 무prefix 키는 아무것도 안 뺏는다
       --prefix DIR    설치 위치 (기본 ~/.local — bin/ 과 libexec/tt/ 가 그 밑에 생긴다)
-      --preset NAME   소환키 프리셋: safe | mac | linux | wsl (기본은 플랫폼 감지)
+      --preset NAME   소환키 프리셋: safe | mac | linux | wsl
+                      물어볼 수 있으면 플랫폼 감지값을 제안한다. --yes 로는 안 뺏는다 —
+                      무prefix 키를 뺏는 것은 여기서 명시할 때만 일어난다.
   -h, --help          이 도움말
 
 무엇을 하나: 의존성 확인 → 바이너리 설치 → 훅 shim 배치 → tmux 스니펫 →
@@ -197,6 +202,33 @@ path_line() {   # PATH 를 넣는 한 줄 — fish 는 문법이 다르다
 # 설치된 fmux 가 있으면 그걸, 아직 없으면(dry-run) 레포의 것을 쓴다.
 FMUX="$REPO/bin/fmux"
 
+# ── tt 라는 이름 ────────────────────────────────────────────────────────────
+# shim(libexec/claude)이 `command -v tt` 로 우리 존재를 확인하므로 이 이름이 필요하다.
+# 그런데 ~/.local/bin 에 개인 도구를 거는 가장 흔한 방식이 **심링크**다 — 팀원이 이미
+# 다른 도구를 tt 로 쓰고 있을 수 있다. 예전 가드는 `[ -e ] && [ ! -L ]` 이라 일반 파일만
+# 지키고 남의 심링크는 경고도 백업도 없이 갈아쳤다(팀 배포 게이트 I2). 원래 대상이 어디에도
+# 안 남으므로 되돌릴 수 없고, 화면은 `ok …/tt → fmux` 만 찍었다.
+# 규칙: **비어 있거나 우리 것일 때만** 건다. 그 밖이면 무엇이 있는지 보여주고 사람이 정한다.
+tt_link_absent() {   # rc 0 = 그 자리가 비어 있다(끊어진 심링크는 비어 있는 게 아니다)
+    [ ! -e "$BINDIR/tt" ] && [ ! -L "$BINDIR/tt" ]
+}
+
+tt_link_ours() {     # rc 0 = 우리가 건 심링크다 (재실행이 멱등해야 하므로 다시 걸어도 된다)
+    local t
+    [ -L "$BINDIR/tt" ] || return 1
+    t=$(readlink "$BINDIR/tt" 2>/dev/null) || return 1
+    [ "$t" = fmux ] || [ "$t" = "$BINDIR/fmux" ]
+}
+
+tt_link_what() {     # 그 자리에 무엇이 있나 — 사람이 정하려면 이것부터 봐야 한다
+    if [ -L "$BINDIR/tt" ]; then
+        printf '심링크 → %s' "$(readlink "$BINDIR/tt" 2>/dev/null || printf '?')"
+    elif [ -d "$BINDIR/tt" ]; then printf '디렉토리'
+    elif [ -e "$BINDIR/tt" ]; then printf '일반 파일'
+    else printf '없음'
+    fi
+}
+
 # ── ① 의존성 ────────────────────────────────────────────────────────────────
 DEP_FAIL=''
 dep_fail() { DEP_FAIL="$DEP_FAIL  - $1"$'\n'; }
@@ -292,10 +324,10 @@ install_bin() {
 
     if is_dry; then
         plan "mkdir -p $BINDIR && cp bin/fmux $BINDIR/fmux (make install PREFIX=$PREFIX)"
-        if [ -e "$BINDIR/tt" ] && [ ! -L "$BINDIR/tt" ]; then
-            plan "$BINDIR/tt 는 심링크가 아닌 파일이다 → 건드리지 않는다(훅 주입이 안 붙는다)"
-        else
+        if tt_link_absent || tt_link_ours; then
             plan "ln -sf fmux $BINDIR/tt   (심링크 — shim 이 PATH 의 'tt' 를 찾는다)"
+        else
+            plan "$BINDIR/tt 는 우리 것이 아니다($(tt_link_what)) → 건드리지 않는다(훅 주입이 안 붙는다)"
         fi
     else
         if [ "$HAVE_MAKE" = 1 ]; then
@@ -306,7 +338,7 @@ install_bin() {
             mkdir -p "$BINDIR" || die "$BINDIR 를 만들 수 없다"
             cp "$REPO/bin/fmux" "$BINDIR/fmux" || die "$BINDIR/fmux 를 쓸 수 없다"
             chmod +x "$BINDIR/fmux" || die "$BINDIR/fmux 에 실행권한을 못 준다"
-            if [ -e "$BINDIR/tt" ] && [ ! -L "$BINDIR/tt" ]; then :; else ln -sf fmux "$BINDIR/tt"; fi
+            if tt_link_absent || tt_link_ours; then ln -sf fmux "$BINDIR/tt"; fi
         fi
         [ -x "$BINDIR/fmux" ] || die "$BINDIR/fmux 가 설치되지 않았다"
         did "$BINDIR/fmux"
@@ -314,15 +346,22 @@ install_bin() {
         FMUX="$BINDIR/fmux"
 
         # tt 심링크 — shim(libexec/claude)이 `command -v tt` 로 우리 존재를 확인한다.
-        # 그 이름이 남의 것이면 건드리지 않고 알린다. 남의 파일을 지우는 설치기는 없다.
-        if [ -L "$BINDIR/tt" ]; then
+        # 그 이름이 남의 것이면 건드리지 않고, **무엇이 있는지 보여주고 사람이 정하게 한다**.
+        # 되돌릴 수 없는 일은 설치기가 혼자 결정하지 않는다(게이트 I2).
+        if tt_link_ours; then
             did "$BINDIR/tt → fmux"
             ok "$BINDIR/tt → fmux"
-        elif [ -e "$BINDIR/tt" ]; then
-            warn "$BINDIR/tt 가 심링크가 아닌 파일이다 — 건드리지 않았다."
-            warn "     shim 은 PATH 의 'tt' 를 찾는다. 이게 fmux 가 아니면 훅 주입이 안 붙는다."
-        else
+        elif tt_link_absent; then
             warn "$BINDIR/tt 심링크를 못 만들었다 — 'ln -sf fmux $BINDIR/tt' 를 직접 쳐라"
+        else
+            warn "$BINDIR/tt 는 우리 것이 아니다 — 건드리지 않았다."
+            warn "     지금 그 자리: $(tt_link_what)"
+            warn "     남의 tt 를 말없이 빼앗지 않는다. 어떻게 할지는 네가 정해라:"
+            warn "       ① 그 도구를 계속 쓴다 — fmux 는 'fmux' 이름으로 그대로 쓸 수 있다."
+            warn "          다만 shim 은 PATH 의 'tt' 를 찾으므로 훅 주입이 안 붙는다(상태 마크가 안 뜬다)."
+            warn "       ② fmux 에게 이 이름을 준다 — 먼저 그 자리를 네 손으로 치워라:"
+            warn "          mv $BINDIR/tt $BINDIR/tt.yours && ln -sf fmux $BINDIR/tt"
+            warn "       ③ PATH 의 다른 디렉토리에 'tt' 라는 이름으로 걸어도 shim 은 그걸 찾는다."
         fi
 
         # 설치된 놈이 실제로 도는지 한 번 물어본다(tmux 를 안 부르는 문으로).
@@ -432,6 +471,13 @@ already_sourced() {   # $1=설정파일  $2=스니펫경로
         while :; do case "$rest" in '-'*' '*) rest=${rest#* } ;; *) break ;; esac; done
         while :; do case "$rest" in *[[:blank:]]) rest=${rest%?} ;; *) break ;; esac; done
         case "$rest" in '"'*'"'|"'"*"'") rest=${rest#?}; rest=${rest%?} ;; esac
+        # 틸데(~/…)는 펴서 본다 — README 가 가르치는 모양이고 tmux 도 그렇게 읽는다(게이트 I1).
+        # 안 펴면 문서대로 손으로 넣은 사람에게 재실행이 **중복 source 줄**을 하나 더 붙인다.
+        # 패턴을 \~ 로 인용하는 이유: bash 는 ${var#word} 의 word 에도 틸데 확장을 한다.
+        case "$rest" in
+            '~')   rest="$HOME" ;;
+            '~/'*) rest="$HOME/${rest#\~/}" ;;
+        esac
         [ "$rest" = "$2" ] && return 0
     done < "$1"
     return 1
@@ -550,7 +596,16 @@ install_preset() {
         preset_value "$PRESET" > /dev/null 2>&1 || die "모르는 프리셋: $PRESET (safe|mac|linux|wsl)"
         want="$PRESET"
         note "프리셋을 인자로 받았다: $want"
-    elif [ "$ASK_TTY" = 0 ] && [ "$ASSUME_YES" = 0 ]; then
+    elif [ "$ASSUME_YES" = 1 ]; then
+        # --yes 는 **safe 로 간다**(팀 배포 게이트 I3). 예전엔 감지 프리셋을 자동 채택했다 —
+        # 리눅스에서 `./install.sh --yes` 가 무prefix 키 두 개(C-Left M-Left)를 말없이 전역으로
+        # 뺏었고, 그동안 README 는 "steals no key until you say so" 를 약속하고 있었다.
+        # 키를 뺏는 것은 되돌리기 귀찮은 전역 변경이라 "기본값 수락"의 범주가 아니다 —
+        # 사람이 --preset 으로 **명시**할 때만 뺏는다.
+        want=safe
+        note "--yes 는 아무 키도 안 뺏는 safe 로 간다 — 무prefix 키는 명시할 때만 뺏는다"
+        note "  이 기계는 $guess 로 보인다. 빠른 키를 원하면: ./install.sh --yes --preset $guess"
+    elif [ "$ASK_TTY" = 0 ]; then
         # 무prefix 바인딩은 남의 키를 뺏는 일이다. 물을 수 없는 자리에서는 안 뺏는 쪽으로 간다.
         want=safe
         note "터미널이 아니라 묻지 않았다 — 아무 키도 안 뺏는 safe 로 간다"
@@ -597,8 +652,27 @@ install_preset() {
 # ── ⑥ 에이전트 스킬 ────────────────────────────────────────────────────────
 SKILL_SRC=''
 SKILL_DST=''
+SKILL_BAK=''
+
+# 우리 복사(cp -R "$SKILL_SRC/." "$SKILL_DST/")가 **덮어쓸 남의 내용**을 한 줄에 하나씩.
+# 비면 잃을 것이 없다는 뜻이다 — 그때는 백업을 만들 이유도 없다.
+#   왜 "디렉토리가 다르다"가 아니라 이걸 재나: cp 는 병합이라, SRC 에 없는 파일(사용자가 옆에
+#   둔 메모 등)은 애초에 위험하지 않다. 그걸 '다름'으로 세면 재실행마다 백업이 하나씩 쌓인다.
+skill_clobber_list() {
+    local f rel
+    [ -n "$SKILL_SRC" ] && [ -e "$SKILL_DST" ] || return 0
+    if [ ! -d "$SKILL_DST" ]; then printf '%s\n' "$SKILL_DST"; return 0; fi
+    # find 는 POSIX. 디렉토리는 안 센다 — cp -R 이 디렉토리를 지우지는 않는다.
+    find "$SKILL_SRC" -type f 2>/dev/null | while IFS= read -r f; do
+        rel=${f#"$SKILL_SRC"/}
+        [ -e "$SKILL_DST/$rel" ] || continue
+        cmp -s "$f" "$SKILL_DST/$rel" || printf '%s\n' "$rel"
+    done
+}
+
 install_skill() {
     step 6/8 "에이전트 스킬"
+    local clob=''
     SKILL_SRC="$REPO/skills/fleetmux"
     SKILL_DST="$HOME/.claude/skills/fleetmux"
 
@@ -611,7 +685,8 @@ install_skill() {
 
     if [ -e "$SKILL_DST" ]; then
         note "$SKILL_DST 가 이미 있다 → 덮어쓴다(우리가 넣은 파일만)"
-        note "  덮기 전에 $SKILL_DST.fmux-bak 로 통째로 백업한다"
+        note "  덮을 남의 내용이 있으면 그 전에 $SKILL_DST.fmux-bak 로 통째로 백업한다"
+        note "  그 백업이 이미 있으면 그건 네 원본이다 — 덮지 않고 타임스탬프를 붙여 옆에 남긴다"
     fi
     if ask_yn "에이전트 스킬을 $SKILL_DST 에 깔까?"; then
         if is_dry; then
@@ -619,12 +694,31 @@ install_skill() {
         else
             # 남의 파일을 되돌릴 수 없게 덮지 않는다 — 우리 이름과 같은 스킬을 이미 쓰던
             # 사람에게 --yes 는 "제안된 기본값 수락"이지 "네 스킬을 버려라"가 아니다(권고 N1).
-            if [ -e "$SKILL_DST" ]; then
-                rm -rf "$SKILL_DST.fmux-bak"
-                cp -R "$SKILL_DST" "$SKILL_DST.fmux-bak" \
+            #
+            # ⚠️ **백업은 한 번 만들면 절대 덮지 않는다**(팀 배포 게이트 C3). 예전엔 여기서
+            #   `rm -rf "$SKILL_DST.fmux-bak"` 로 시작했다 — 2회차 실행이 1회차가 남긴
+            #   **사용자 원본**을 먼저 지우고, 이미 우리 파일로 덮인 디렉토리를 그 자리에 다시
+            #   백업했다. 화면은 두 번 다 "백업해 뒀다"를 찍는데 사용자 원본은 기계 어디에도
+            #   안 남는다. 재실행이 안전하다는 README 의 약속을 정면으로 어긴 자리다.
+            #   지금 규칙: ① 우리 복사가 덮어쓸 남의 내용이 하나도 없으면 백업하지 않는다
+            #   (재실행마다 사본이 쌓이는 것도 그 자체로 사고다) ② .fmux-bak 이 이미 있으면
+            #   그건 원본이다 — 손대지 않고 이번 것만 타임스탬프를 붙여 옆에 남긴다.
+            clob=$(skill_clobber_list)
+            if [ -e "$SKILL_DST" ] && [ -z "$clob" ]; then
+                ok "$SKILL_DST 에 우리가 덮어쓸 남의 내용이 없다 — 백업할 것이 없다"
+            elif [ -e "$SKILL_DST" ]; then
+                note "덮어쓸 파일: $(printf '%s' "$clob" | tr '\n' ' ')"
+                SKILL_BAK="$SKILL_DST.fmux-bak"
+                if [ -e "$SKILL_BAK" ]; then
+                    note "$SKILL_BAK 이 이미 있다 — 그건 첫 실행이 남긴 네 원본이다. 덮지 않는다."
+                    # 초가 같은 두 실행이 같은 이름을 잡으면 백업이 백업 안에 겹쳐 들어간다.
+                    # $$ 로 실행마다 갈라 놓는다.
+                    SKILL_BAK="$SKILL_DST.fmux-bak.$(date +%Y%m%d-%H%M%S).$$"
+                fi
+                cp -R "$SKILL_DST" "$SKILL_BAK" \
                     || die "$SKILL_DST 를 백업하지 못했다 — 덮지 않고 멈춘다"
-                did "$SKILL_DST.fmux-bak (덮기 전 백업)"
-                ok "백업해 뒀다: $SKILL_DST.fmux-bak"
+                did "$SKILL_BAK (덮기 전 백업)"
+                ok "백업해 뒀다: $SKILL_BAK"
             fi
             mkdir -p "$SKILL_DST" || die "$SKILL_DST 를 만들 수 없다"
             cp -R "$SKILL_SRC/." "$SKILL_DST/" || die "$SKILL_DST 로 못 복사했다"
