@@ -130,8 +130,12 @@ assert_contains "$SRC" 'STATE/finished'       "finished 를 코드가 실제로 
 # 규율 — 이 문장들이 빠지면 스킬은 화면 긁기로 되돌아간다.
 assert_contains "$SK" "read-only" "읽기 전용이 기본이라고 못박는다"
 assert_contains "$SK" "Hook state is the fact" "훅이 사실이고 화면은 렌더링이라는 규율이 있다"
-assert_contains "$SK" "--settings--" "목록 맨 끝 설정 행이 세션이 아니라고 알린다"
-assert_contains "$SRC" "TT_SETTINGS_ROW='--settings--'" "설정 행 센티넬 값이 그대로다"
+# 목록에는 세션만 나간다 — 스킬이 "맨 끝 행은 세션이 아니니 건너뛰라"고 가르치면 그건
+# 이제 없는 화면을 설명하는 것이다. 코드와 스킬 양쪽에서 그 행이 사라졌는지 함께 잰다.
+assert_eq "$(grep -c -- '--settings--' "$SKILL" || true)" "0" "스킬이 없어진 설정 행을 더 이상 말하지 않는다"
+case "$SRC" in *TT_SETTINGS_ROW*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "코드에도 설정 행 센티넬이 없다"
+assert_contains "$SK" "row is a real tmux session" "목록의 모든 행이 진짜 세션이라고 못박는다"
 
 # 스킬은 Claude Code 전용이다 — codex 에는 스킬 개념이 없다. README 가 그렇게 적어야 한다.
 assert_contains "$RM" 'Claude Code only' "README 가 스킬이 Claude Code 전용이라고 적는다"

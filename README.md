@@ -92,8 +92,11 @@ Inside the popup:
 | `^N` `^E` `^X` `^R` | new · rename (syncs the Claude session title) · kill · refresh |
 | Tab + Enter | broadcast one prompt to several sessions (tool sessions are skipped) |
 | `^B` | same broadcast, but keeps the popup open — for repeated sends |
-| `^O` | settings screen — or pick the `⚙ settings` row at the bottom of the list |
+| `^O` | settings screen — the popup footer keeps this key on screen |
 | `?` | help |
+
+The list holds sessions and nothing else — every row is a real tmux session, so `^X`,
+`^E` and broadcast never have to ask whether the thing under the cursor is one.
 
 These in-popup keys are fixed. The `key_new` … `key_settings` config entries exist
 but nothing reads them yet — see [Configuration](#configuration).
@@ -187,8 +190,9 @@ tt config unset rc       # back to the default
 tt config path           # where the file is
 ```
 
-or press `^O` in the popup (also reachable as the `⚙ settings` row at the bottom of
-the list). Enter flips a switch on the spot; value keys ask for input and validate it.
+or press `^O` in the popup — the one door into the settings screen, and the popup
+footer prints that key so you never have to remember it. Enter flips a switch on the
+spot; value keys ask for input and validate it.
 
 The file lives at `~/.config/fleetmux/config` (`$XDG_CONFIG_HOME/fleetmux/config` if
 you set that). It is `key=value`, one per line, `#` for comments. fmux **never

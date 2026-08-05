@@ -60,8 +60,8 @@ string carries ANSI color and the marks:
 
 Bold name = active conversation within the last few hours; dim = quiet. Sessions in
 the accent color at the bottom are **tool sessions** (shells, `btop`, `lazydocker`,
-`yazi`) — not agents. The final row is the literal string `--settings--`; it is a UI
-row, not a session. Skip it.
+`yazi`) — not agents. **Every row is a real tmux session**: the list carries nothing
+else, so any name you read here can be passed straight to another command.
 
 Take the first field (before the tab) when you need a session name to pass to another
 command; names may contain spaces.
