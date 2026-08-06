@@ -69,4 +69,38 @@ assert_contains "$(scan "$BAIT" "$PAT_MAPF")"  'mapfile -t'     "the net actuall
 # And it does not catch the comment line — otherwise nobody could write down why it's forbidden.
 assert_eq "$(scan "$BAIT" "$PAT_LOWER" | grep -c 'this line is a comment' || true)" "0" "a whole-line comment is not caught by the net"
 
+# ── fzf --bind bodies must not contain shell syntax ─────────────────────────
+# fzf runs an execute(...) body through **$SHELL**, not through sh — so a bind body is not our
+# shell, it is whatever the user happens to log in with.
+#
+# Measured 2026-08-06: the ? binding ended with an inline `read -rsn1`, which is bash syntax.
+# On a Mac whose login shell is zsh, that read failed instantly and the help screen flashed up
+# and vanished. It had worked for months for the single reason that the author's $SHELL is bash
+# — the bug was invisible on the machine it was written on.
+#
+# The rule that came out of it: a bind body may invoke a command, and nothing else. Anything
+# that needs a shell goes inside bin/fmux, which has a bash shebang and therefore a shell we
+# chose. This measures the rule on the build artifact.
+# Only the text *inside* execute(...)/execute-silent(...)/reload(...) is the bind body. The rest
+# of the line is our own script and may use whatever bash syntax it likes — matching the whole
+# line would flag the `) || exit 0` that closes the command substitution.
+BINDS=$(grep -a -o -E '(execute|execute-silent|reload)\([^)]*\)' "$TTBIN" || true)
+assert_rc 0 test -n "$BINDS"
+assert_rc 0 test "$(printf '%s\n' "$BINDS" | grep -c .)" -ge 6
+
+assert_eq "$(printf '%s\n' "$BINDS" | grep -c 'read -' || true)" "0" \
+    "★no --bind body uses the read builtin (it runs under \$SHELL, which may not be bash)"
+assert_eq "$(printf '%s\n' "$BINDS" | grep -c ';' || true)" "0" \
+    "★no --bind body chains commands with ';' — chaining is shell syntax, so it belongs in bin/fmux"
+for bad in '&&' '||' '$(' '`'; do
+    assert_eq "$(printf '%s\n' "$BINDS" | grep -cF "$bad" || true)" "0" \
+        "no --bind body uses shell construct '$bad'"
+done
+
+# And the help screen must actually be able to wait, or ? is useless: the pause lives in the
+# entry point now, so the binding has to ask for it.
+assert_contains "$BINDS" '--help --pause' "the ? binding delegates the wait to fmux itself"
+assert_contains "$(grep -a -A3 'if \[ "\${2:-}" = "--pause" \]' "$TTBIN" || true)" 'read -' \
+    "and fmux is where the waiting actually happens"
+
 tt_test_done

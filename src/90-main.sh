@@ -246,10 +246,27 @@ PostToolUse working
 Stop idle
 PermissionRequest waiting-codex
 EOF
+    if [ "${2:-}" = "--pause" ]; then
+        printf '  press any key to return'
+        read -rsn1 _ < /dev/tty 2>/dev/null || read -r _ < /dev/tty 2>/dev/null || true
+        printf '\n'
+    fi
     exit 0
 fi
 
 # Help screen (entered via ? in the popup, or `tt --help` on the CLI)
+#
+# `--pause` prints the screen and then waits for one key. The popup binds ? to
+# `--help --pause`, and the waiting **must happen in here**, not in the binding.
+#
+# Why (measured 2026-08-06, on a Mac): fzf runs an execute(...) body through **$SHELL**, not
+# through sh. The binding used to end with an inline `read -rsn1`, which is bash syntax — on a
+# machine whose login shell is zsh that read fails instantly, so help flashed up and vanished
+# before it could be read. It worked on the author's machine for the single reason that the
+# author's $SHELL is bash.
+#
+# ⛔ Do not put shell syntax inside a --bind body. Anything that needs a shell must run inside
+#    this file, which has a bash shebang and therefore a shell we actually chose.
 if [ "${1:-}" = "--help" ]; then
     # Config is loaded once, as a bare statement (not in a subshell) at the top of the entry
     # point — the contract of 05-config.sh.
@@ -410,7 +427,7 @@ session=$("$SELF" --list 2>>"$STATE/hook.log" \
     | fzf --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
           --delimiter=$'\t' --with-nth=2 \
           --footer="? help · $(tt_key_label "$TT_KEY_SETTINGS") settings" \
-          --bind "?:execute($SELFQ --help </dev/tty >/dev/tty 2>&1; printf '  press any key to return' >/dev/tty; read -rsn1 </dev/tty)" \
+          --bind "?:execute($SELFQ --help --pause </dev/tty >/dev/tty 2>&1)" \
           --color='pointer:#4ec9b0,prompt:#4ec9b0,hl:#56b6c2,hl+:#56b6c2,bg+:#18221e,fg+:regular,footer:#4a5a52,border:#4a5a52,label:#4ec9b0,preview-border:#4a5a52' \
           --preview "$SELFQ --preview {1} {3}" \
           --preview-window 'right,65%,border-rounded' --preview-label=' session ' \
