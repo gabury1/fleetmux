@@ -1,0 +1,15 @@
+
+● The three failures share one cause: a here-doc that never
+  terminates leaves the scanner in string mode until EOF.
+
+  I can close it at a dedented terminator, the way the shell
+  does. That touches the state machine, so — your call.
+
+  ⎿  Proposed edit to src/parser/scan.rs  (+31 −7)
+
+  Do you want to make this edit to scan.rs?
+  ❯ 1. Yes
+    2. Yes, and do not ask again this session
+    3. No, tell Claude what to do differently
+
+  Enter to select · ↑/↓ to navigate · Esc to cancel

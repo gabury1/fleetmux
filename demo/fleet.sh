@@ -27,6 +27,20 @@ T set -g window-status-current-style 'fg=#4ec9b0,bold'
 for _s in api docs parser files; do
     T send-keys -t "$_s" "PS1='\$ '; clear" Enter
 done
+
+# What the preview shows is the tail of a session's screen, so the panes have to look like
+# agents. These are painted, not run: launching four real Claude sessions would cost tokens,
+# need an account, and give a different screen every take — and the demo is about what fmux
+# draws around them. Same reasoning as writing the hook state directly.
+#   The screens are representative, not captured from a real conversation.
+HERE=$(cd "$(dirname "$0")" && pwd)
+for _s in api parser docs; do
+    [ -f "$HERE/screens/$_s.txt" ] || continue
+    T send-keys -t "$_s" "clear; cat '$HERE/screens/$_s.txt'" Enter
+done
+# The tool session is a file manager, not an agent — it should read as one.
+T send-keys -t files "clear; printf '  ~/src\n\n   drwxr-xr-x  limiter\n   drwxr-xr-x  parser\n   -rw-r--r--  README.md\n   -rw-r--r--  Cargo.toml\n'" Enter
+sleep 1
 T source-file "$HOME/.config/fleetmux/tmux.conf"
 
 # A trigger the recorder can actually send. vhs cannot type Shift+Up (its modifiers take a

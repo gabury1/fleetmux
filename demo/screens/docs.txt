@@ -1,0 +1,13 @@
+
+● Rewrote the install section against a clean machine.
+
+  Three things in it were wrong: the shim path, the minimum
+  tmux version, and a line claiming the status bar wires
+  itself. All three now say what the code does.
+
+  ⎿  Updated README.md  (+62 −40)
+
+  Worth flagging: the old text told people to run the
+  installer twice. Never true — and nobody questions it.
+
+✻ Churned for 3m 41s

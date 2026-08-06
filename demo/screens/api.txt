@@ -1,0 +1,16 @@
+
+● Read src/limiter/bucket.py (78 lines)
+
+  take() calls time.sleep(), so every test that exercises a
+  refill spends real seconds. Injecting a clock instead, and
+  letting the tests drive it.
+
+  ⎿  Updated src/limiter/bucket.py  (+24 −9)
+  ⎿  Updated tests/test_bucket.py   (+41)
+
+  Running the suite — the sleep-based tests were the slow
+  ones, so this should come back well under the old 48s.
+
+● Bash(pytest tests/test_bucket.py -q)
+
+✻ Simmering… (12s · ↓ 1.2k tokens · esc to interrupt)

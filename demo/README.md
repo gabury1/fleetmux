@@ -20,5 +20,9 @@ Two details that are easy to get wrong when writing state by hand:
   modifiers take a character, not a named key — and the recording shows the popup appearing,
   not the keystroke.
 
+The four panes are **painted**, not run — `screens/*.txt` is representative agent output, not a
+captured conversation. Launching four real sessions would cost tokens, need an account, and give a
+different screen on every take, and what the demo is about is the cockpit drawn around them.
+
 The prompt is set to a bare `$` and the status line to a dark style on purpose: a published
 recording should not carry someone's hostname and home directory.
