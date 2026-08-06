@@ -294,58 +294,58 @@ run_inst "$STUB_OK" --preset nope
 assert_eq "$RC" "1" "an unknown preset halts"
 assert_eq "$(has "$OUT" 'safe|shift|mac|linux|wsl')" "yes" "lists the presets that can be used"
 
-# ── ⑦-c the suggestion is S-Left (one no-prefix keystroke) ──────────────────
+# ── ⑦-c the suggestion is S-Up (one no-prefix keystroke) ──────────────────
 # Reasoning: macOS Mission Control eats C-arrow first, Windows Terminal eats M-arrow first, and
 # Ctrl+letter is already used by shell line editing, vim, fzf. The only no-prefix single
 # keystroke that gets through all three is S-arrow.
-# Three things are measured here: ① is the suggestion actually S-Left ② does it say what it takes
+# Three things are measured here: ① is the suggestion actually S-Up ② does it say what it takes
 # ③ does it still not steal it where it could not ask.
 run_inst "$STUB_OK" --preset safe                # first return it to the not-stolen state
 run_inst "$STUB_OK" --dry-run
 assert_eq "$RC" "0" "dry-run is rc 0"
-assert_eq "$(has "$OUT" "suggested: shift — key_summon_fast='S-Left'")" "yes" "the suggestion is S-Left"
+assert_eq "$(has "$OUT" "suggested: shift — key_summon_fast='S-Up'")" "yes" "the suggestion is S-Up"
 assert_eq "$(has "$OUT" 'this takes the key away from every app in the pane')" "yes" "says right there what it takes"
 assert_eq "$(has "$OUT" "Pick a different key if you're already using it.")" "yes" "recommends a different key to someone already using it"
-assert_eq "$(has "$OUT" 'S-Left/S-Right to tmux window switching')" "yes" "writes down the known risk (window-switching bindings)"
+assert_eq "$(has "$OUT" 'S-Up/S-Down to tmux window switching')" "yes" "writes down the known risk (window-switching bindings)"
 # The suggestion is only words — where it cannot ask (not a terminal), it still steals nothing.
 assert_eq "$(has "$OUT" 'not a terminal, so we did not ask')" "yes" "says so when it cannot ask"
 assert_eq "$(has "$OUT" 'config set key_summon_fast')" "no" "does not even plan to bind a key where it could not ask"
 
-# --preset shift actually binds S-Left (is the suggestion's name a real preset?).
+# --preset shift actually binds S-Up (is the suggestion's name a real preset?).
 run_inst "$STUB_OK" --yes --preset shift
 assert_eq "$RC" "0" "--preset shift is rc 0"
-assert_eq "$(has "$(cat "$CONF")" 'key_summon_fast=S-Left')" "yes" "the shift preset lands in the config"
-assert_eq "$(grep -c '^bind -n S-Left ' "$SNIP" || true)" "1" "the snippet emits bind -n S-Left"
-assert_eq "$(grep -c '^unbind -n -q S-Left$' "$SNIP" || true)" "1" "even the key being bound is unbound first (idempotent on reapply)"
+assert_eq "$(has "$(cat "$CONF")" 'key_summon_fast=S-Up')" "yes" "the shift preset lands in the config"
+assert_eq "$(grep -c '^bind -n S-Up ' "$SNIP" || true)" "1" "the snippet emits bind -n S-Up"
+assert_eq "$(grep -c '^unbind -n -q S-Up$' "$SNIP" || true)" "1" "even the key being bound is unbound first (idempotent on reapply)"
 assert_eq "$(grep -c '^bind F ' "$SNIP" || true)" "1" "the prefix summon key stays as-is"
 
 # ── ⑦-d --yes does not auto-adopt the new suggestion either (regression guard) ──
 # The suggestion getting better and it being fine to take without consent are different
 # statements. Nails down the same discipline as ⑦-b again, this time **for the new default
-# suggestion (S-Left)** — without this line, a future change reasoning "the default changed, so
+# suggestion (S-Up)** — without this line, a future change reasoning "the default changed, so
 # --yes should follow along" would quietly slip through.
-assert_eq "$(grep -c '^bind -n S-Left ' "$SNIP" || true)" "1" "repro: S-Left is currently bound"
+assert_eq "$(grep -c '^bind -n S-Up ' "$SNIP" || true)" "1" "repro: S-Up is currently bound"
 run_inst "$STUB_OK" --yes
 assert_eq "$RC" "0" "--yes alone is rc 0"
-assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "--yes does not steal S-Left either"
-assert_eq "$(grep -c '^unbind -n -q S-Left$' "$SNIP" || true)" "1" "the S-Left that was taken gets returned via unbind"
+assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "--yes does not steal S-Up either"
+assert_eq "$(grep -c '^unbind -n -q S-Up$' "$SNIP" || true)" "1" "the S-Up that was taken gets returned via unbind"
 assert_eq "$(cnt "$CONF" '^key_summon_fast=')" "0" "no value is left in the config either"
 assert_eq "$(has "$OUT" '--yes goes to safe, stealing no key')" "yes" "says on screen why it is safe"
 assert_eq "$(has "$OUT" './install.sh --yes --preset shift')" "yes" "also says how to get it if wanted"
 
 # ── ⑦-e warns before overwriting a line that already uses that key ──────────
-# Does not ask a live tmux server — reads only config files. A dotfile that binds S-Left/S-Right
+# Does not ask a live tmux server — reads only config files. A dotfile that binds S-Up/S-Down
 # to window switching being common is exactly why this detection exists.
 cp "$TMUXCONF" "$FMUXROOT/tmuxconf.noclash"
-printf 'bind -n S-Left previous-window\n' >> "$TMUXCONF"
+printf 'bind -n S-Up previous-window\n' >> "$TMUXCONF"
 run_inst "$STUB_OK" --dry-run
 assert_eq "$(has "$OUT" 'found a line in your config already binding that key')" "yes" "warns before overwriting a clash"
-assert_eq "$(has "$OUT" 'bind -n S-Left previous-window')" "yes" "shows that line as-is"
+assert_eq "$(has "$OUT" 'bind -n S-Up previous-window')" "yes" "shows that line as-is"
 assert_eq "$(has "$OUT" "$TMUXCONF:")" "yes" "says which file and which line number"
-# Does not overreach onto someone else's other key — a line binding S-Right is not a clash with
-# the S-Left suggestion.
+# Does not overreach onto someone else's other key — a line binding S-Down is not a clash with
+# the S-Up suggestion.
 cp "$FMUXROOT/tmuxconf.noclash" "$TMUXCONF"
-printf 'bind -n S-Right next-window\n' >> "$TMUXCONF"
+printf 'bind -n S-Down next-window\n' >> "$TMUXCONF"
 run_inst "$STUB_OK" --dry-run
 assert_eq "$(has "$OUT" 'found a line in your config already binding that key')" "no" "a non-overlapping line is not called a clash"
 cp "$FMUXROOT/tmuxconf.noclash" "$TMUXCONF"
@@ -369,12 +369,12 @@ if [ -n "$SCRIPTBIN" ] && "$SCRIPTBIN" -qec 'true' /dev/null > /dev/null 2>&1 < 
     }
 
     run_inst "$STUB_OK" --preset safe            # starting from the not-stolen state
-    # ① a bare Enter = accepting the suggestion → binds S-Left
+    # ① a bare Enter = accepting the suggestion → binds S-Up
     run_inst_tty "$STUB_OK" '\nn\n'
     assert_eq "$RC" "0" "an interactive pty install is rc 0"
     assert_eq "$(has "$OUT" 'preset (shift|safe|mac|linux|wsl) [shift]')" "yes" "the prompt defaults to shift"
-    assert_eq "$(has "$(cat "$CONF")" 'key_summon_fast=S-Left')" "yes" "just Enter accepts S-Left"
-    assert_eq "$(grep -c '^bind -n S-Left ' "$SNIP" || true)" "1" "the snippet also gets S-Left bound"
+    assert_eq "$(has "$(cat "$CONF")" 'key_summon_fast=S-Up')" "yes" "just Enter accepts S-Up"
+    assert_eq "$(grep -c '^bind -n S-Up ' "$SNIP" || true)" "1" "the snippet also gets S-Up bound"
 
     # ② decline (safe) → goes with the prefix approach. No no-prefix key survives.
     run_inst_tty "$STUB_OK" 'safe\nn\n'
@@ -382,7 +382,7 @@ if [ -n "$SCRIPTBIN" ] && "$SCRIPTBIN" -qec 'true' /dev/null > /dev/null 2>&1 < 
     assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "declining leaves no no-prefix key at all"
     assert_eq "$(cnt "$CONF" '^key_summon_fast=')" "0" "declining leaves no value in the config either"
     assert_eq "$(grep -c '^bind F ' "$SNIP" || true)" "1" "declining leaves the prefix approach"
-    assert_eq "$(grep -c '^unbind -n -q S-Left$' "$SNIP" || true)" "1" "the S-Left it had taken gets returned"
+    assert_eq "$(grep -c '^unbind -n -q S-Up$' "$SNIP" || true)" "1" "the S-Up it had taken gets returned"
 
     # ③ a typo falls to the non-stealing side — an unknown answer must not be read as the suggestion
     run_inst_tty "$STUB_OK" 'shfit\nn\n'

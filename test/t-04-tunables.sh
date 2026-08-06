@@ -239,7 +239,12 @@ assert_contains "$h" "or 10 min"           "reads and prints the default unseen_
 
 printf 'key_summon=T\nkey_summon_fast=C-Left M-Left\nrecent_hours=3\nunseen_minutes=45\n' > "$CONF"
 h=$("$FMUXBIN" --help 2>/dev/null)
-assert_contains "$h" "C-Left M-Left"   "the changed key_summon_fast shows up on screen"
+# The screen spells the key out — "C-Left" is exact and unreadable to someone learning it. The
+# config keeps the tmux spelling; only the display is translated.
+assert_contains "$h" "Ctrl + Left  or  Alt + Left" \
+    "★the changed key_summon_fast shows up spelled out, not as tmux shorthand"
+assert_eq "$(printf '%s' "$h" | grep -c 'C-Left' || true)" "0" \
+    "and the raw tmux spelling is not what the reader is shown"
 assert_eq "$(printf '%s' "$h" | grep -c 'no summon key' || true)" "0" "when a key is bound, it does not say there is none"
 assert_contains "$h" "talked within 3h" "the changed recent_hours shows up on screen"
 assert_contains "$h" "or 45 min"        "the changed unseen_minutes shows up on screen"

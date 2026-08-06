@@ -7,7 +7,7 @@
 #                             the summon key is the one exception — it goes to safe (steals no
 #                             key). Stealing a no-prefix key globally only happens when you
 #                             spell it out with --preset.
-#                             (The suggestion when we can ask is shift = S-Left. The reasoning
+#                             (The suggestion when we can ask is shift = S-Up. The reasoning
 #                              for that key is written at the top of the "5) summon key preset"
 #                              section below.)
 #   curl -fsSL <URL> | bash   install without a repo (remote mode) — fetches the release archive
@@ -57,7 +57,7 @@ usage: ./install.sh [options]
                       except the summon key, which goes to safe — no no-prefix key is stolen
       --prefix DIR    install location (default ~/.local — bin/ and libexec/fmux/ go under it)
       --preset NAME   summon key preset: shift | safe | mac | linux | wsl
-                      when we can ask, we suggest shift (S-Left) — the only no-prefix single
+                      when we can ask, we suggest shift (S-Up) — the only no-prefix single
                       keystroke that reaches all three of macOS, Linux, and Windows Terminal.
                       In exchange it takes that key away from every app in that pane. --yes
                       never steals it — stealing a no-prefix key only happens when you spell
@@ -861,7 +861,7 @@ install_snippet() {
 # A single physical key arrives under a different name on each terminal — hence the list
 # (87-tmux-conf.sh).
 #
-# ── why the suggestion is S-Left (the reasoning is recorded here) ───────────
+# ── why the suggestion is S-Up (the reasoning is recorded here) ───────────
 # The prefix approach was rejected: "having to press twice is annoying." What's wanted is a
 # single no-prefix keystroke. Scanning the combinations, **Shift+arrow is the only single
 # keystroke that gets through on all three platforms**:
@@ -872,28 +872,28 @@ install_snippet() {
 #   S-arrow   : gets through on all three platforms. Not a stretch either (Shift sits right next
 #               to the arrows)
 #
-# The direction is **left** not out of taste but because a habit was already formed:
-#   - The user has used C-Left / M-Left to summon the popup from the left for weeks. S-Left
-#     continues that muscle memory.
-#   - Inside the popup, → enters (accept), ← closes (abort). That convention stays as-is — it's
-#     the common convention across TUI tools like ranger, lf, nnn, vifm, and two teammates have
-#     already installed it that way.
-#   - "left summons outside, left closes inside" doesn't get confusing because the context
-#     differs (confirmed by actual use).
+# The direction is **up**, and that is the one part that changed with use:
+#   - S-Up and S-Down are the arrows dotfiles most often bind to tmux window switching. The
+#     summon key should not be the one arrow pair people have already spent.
+#   - S-Up / S-Down are free in stock tmux — the defaults use M-arrow for resize and C-arrow for
+#     pane selection, and neither touches Shift.
+#   - Up reads as "raise the cockpit over what I am doing", which is what the popup does. Inside
+#     the popup the horizontal pair keeps its own meaning: → enters, ← closes — the convention
+#     ranger, lf, nnn and vifm all use.
 #
-# One known risk, stated honestly: **dotfiles that bind S-Left/S-Right to tmux window switching
-# are common.** That's why preset_conflicts below reads config files first and warns; anyone in
-# that situation should just pick a different preset at install time.
+# One risk remains, stated honestly: a Shift+arrow bound to *pane* navigation would collide.
+# preset_conflicts below reads config files first and warns; anyone in that situation should pick
+# a different preset at install time.
 #
 # The policy splits in two (paired with the key_summon_fast default comment in 05-config.sh):
-#   config default = empty (steals no key)  ·  installer's suggestion = shift (S-Left)
+#   config default = empty (steals no key)  ·  installer's suggestion = shift (S-Up)
 # The suggestion is only valid when there's a place for a human to look at it and say "yes."
 # So --yes and non-terminal contexts still go to safe — automatic approval must never take
 # someone else's key.
 preset_value() {
     case "${1:-}" in
         safe)  printf '' ;;
-        shift) printf 'S-Left' ;;
+        shift) printf 'S-Up' ;;
         mac)   printf 'M-b' ;;
         linux) printf 'C-Left M-Left' ;;
         wsl)   printf 'C-Left' ;;
@@ -913,7 +913,7 @@ preset_why() {
 }
 
 # The preset the prompt defaults to. Not the platform-detected value — it defaults to the one
-# key (S-Left) that works across all three platforms. The detected value is still shown on
+# key (S-Up) that works across all three platforms. The detected value is still shown on
 # screen, but that's information about "this machine looks like X," not the suggestion itself.
 PRESET_SUGGEST=shift
 
@@ -972,8 +972,8 @@ install_preset() {
     # running under --yes or CI still needs to see right there "what wasn't taken and how to
     # get it" — only the decision itself branches.
     note "suggested: $PRESET_SUGGEST — key_summon_fast='$sug' ($(preset_why "$PRESET_SUGGEST"))"
-    note "  this takes the key away from every app in the pane — vim, shell line editing, and fzf won't see S-Left in that pane."
-    note "  dotfiles that bind S-Left/S-Right to tmux window switching are common. Pick a different key if you're already using it."
+    note "  this takes the key away from every app in the pane — vim, shell line editing, and fzf won't see S-Up in that pane."
+    note "  dotfiles that bind S-Up/S-Down to tmux window switching are common. Pick a different key if you're already using it."
     clash=$(preset_conflicts "$sug")
     if [ -n "$clash" ]; then
         warn "found a line in your config already binding that key — our binding wins if you pick this preset:"
@@ -990,7 +990,7 @@ install_preset() {
         # (C-Left M-Left) globally, while the README was promising "steals no key until you say
         # so." Taking a key is a global change that's a pain to undo, so it doesn't belong in
         # the category of "accepting a default" — it's only taken when a human **explicitly**
-        # specifies --preset. This rule holds even after the suggestion became S-Left — the
+        # specifies --preset. This rule holds even after the suggestion became S-Up — the
         # suggestion getting better and it being fine to take without consent are different
         # statements.
         want=safe
@@ -1003,13 +1003,13 @@ install_preset() {
         note "  for a single keystroke: ./install.sh --preset $PRESET_SUGGEST   (this machine looks like $guess)"
     else
         note "choices:"
-        note "shift  S-Left — the suggestion above (default)"
+        note "shift  S-Up — the suggestion above (default)"
         note "safe   no no-prefix key — $(preset_why safe)"
         note "mac    M-b — $(preset_why mac)"
         note "linux  C-Left M-Left — $(preset_why linux)"
         note "wsl    C-Left — $(preset_why wsl)"
         note "detected: $(uname -s 2>/dev/null || echo unknown) → $guess. Still, the suggestion is $PRESET_SUGGEST —"
-        note "  the mac/linux/wsl presets each only work on their own platform; S-Left is the only one that works on all three."
+        note "  the mac/linux/wsl presets each only work on their own platform; S-Up is the only one that works on all three."
         note "  declining (safe) goes with the prefix approach — press prefix, then the summon key. Steals no key."
         want=$(ask_word "preset (shift|safe|mac|linux|wsl)" "$PRESET_SUGGEST")
         if ! preset_value "$want" > /dev/null 2>&1; then
@@ -1019,7 +1019,7 @@ install_preset() {
     fi
     v=$(preset_value "$want")
     note "$want: key_summon_fast='$v' — $(preset_why "$want")"
-    # If a key other than the suggestion was picked, check it again — the check above was for S-Left.
+    # If a key other than the suggestion was picked, check it again — the check above was for S-Up.
     if [ "$want" != "$PRESET_SUGGEST" ] && [ -n "$v" ]; then
         clash=$(preset_conflicts "$v")
         if [ -n "$clash" ]; then

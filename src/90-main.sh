@@ -24,6 +24,30 @@ fmux_key_label() {
     esac
 }
 
+# tmux key name → something a person recognises. "S-Up" is exact and unreadable; the screen that
+# teaches you the key has to spell it out. The **config keeps the tmux spelling** — this is display
+# only, and translating it in the wrong direction would write a key tmux cannot parse.
+#   S- Shift · C- Ctrl · M- Alt, and they stack: C-S-Up → Ctrl + Shift + Up
+# A space-separated list becomes "A  or  B" — key_summon_fast holds more than one on purpose,
+# because one physical key arrives under different names on different terminals.
+fmux_key_human() {
+    local out="" k mods rest
+    for k in ${1:-}; do
+        mods=""; rest="$k"
+        while :; do
+            case "$rest" in
+                S-*) mods="${mods}Shift + "; rest=${rest#S-} ;;
+                C-*) mods="${mods}Ctrl + ";  rest=${rest#C-} ;;
+                M-*) mods="${mods}Alt + ";   rest=${rest#M-} ;;
+                *)   break ;;
+            esac
+        done
+        [ -n "$out" ] && out="$out  or  "
+        out="$out$mods$rest"
+    done
+    printf '%s' "$out"
+}
+
 # Input prompt: Esc=cancel (rc 1) · Enter=confirm · backspace supported — hand-rolled
 # because read can't do Esc-to-cancel
 fmux_prompt() {
@@ -292,10 +316,10 @@ if [ "${1:-}" = "--help" ]; then
     #   before it starts reading.
     R7=$'\033[7m'
     if [ -n "$hfast" ]; then
-        hsummon="${T}${R7}${B} $hfast ${R}   ${D}press it anywhere in tmux — no prefix, one key${R}"
+        hsummon="${T}${R7}${B} $(fmux_key_human "$hfast") ${R}   ${D}press it anywhere in tmux — no prefix, one key${R}"
     else
         # Equally loud when it is missing. "You have no way to open this" is not a footnote.
-        hsummon="${R7}${B} no summon key ${R}   ${D}set one: fmux config set key_summon_fast S-Left${R}"
+        hsummon="${R7}${B} no summon key ${R}   ${D}set one: fmux config set key_summon_fast S-Up${R}"
     fi
     cat << EOF
 
@@ -322,11 +346,6 @@ if [ "${1:-}" = "--help" ]; then
   ${D}korean IME: if keys after the tmux prefix get eaten, keep holding Ctrl (^B ^D = detach)${R}
 EOF
     if [ "${2:-}" = "--pause" ]; then
-        # The summon key again, on the last line. This screen is longer than some popups, and a
-        # terminal that scrolls leaves the reader looking at the bottom — which is exactly where
-        # they were when they said they could not find it. Repeating one line is cheaper than
-        # assuming everyone sees the top.
-        printf '%s\n' "  $hsummon"
         printf '  press any key to return'
         read -rsn1 _ < /dev/tty 2>/dev/null || read -r _ < /dev/tty 2>/dev/null || true
         printf '\n'

@@ -65,26 +65,26 @@ assert_eq "$(count_lines "$out" '^bind F ')" "1" "the prefix key remains even wi
 # The unbind for a key must come before its bind, so reapplication stays idempotent
 assert_eq "$(count_lines "$out" '^unbind .*C-Left$')" "1" "a key being bound is unbound first too"
 
-# ── ④-b Does the generator accept the key (S-Left) the installer suggests? ───
+# ── ④-b Does the generator accept the key (S-Up) the installer suggests? ───
 # If the suggestion exists only in the preset name and the generator can't accept that value, the
 # installer says "bound" while binding nothing. So this checks that it also passes value
 # validation (fmux_conf_is_tmux_key).
 rm -f "$SNIP" "$CONF"
-printf 'key_summon_fast=S-Left\n' > "$CONF"
+printf 'key_summon_fast=S-Up\n' > "$CONF"
 out=$("$FMUXBIN" --tmux-conf)
-assert_contains "$out" "bind -n S-Left " "S-Left gets bound prefix-less"
-assert_eq "$(count_lines "$out" '^bind -n ')" "1" "only S-Left gets bound"
-assert_eq "$(count_lines "$out" '^unbind -n -q S-Left$')" "1" "the key being bound is unbound first (idempotent reapplication)"
-# When switching from an old key to S-Left, the old key's unbind must appear. tmux doesn't drop a
+assert_contains "$out" "bind -n S-Up " "S-Up gets bound prefix-less"
+assert_eq "$(count_lines "$out" '^bind -n ')" "1" "only S-Up gets bound"
+assert_eq "$(count_lines "$out" '^unbind -n -q S-Up$')" "1" "the key being bound is unbound first (idempotent reapplication)"
+# When switching from an old key to S-Up, the old key's unbind must appear. tmux doesn't drop a
 # binding just because the config line was deleted — without this unbind the old key would keep
 # living on the server.
 rm -f "$SNIP" "$CONF"
 printf 'key_summon_fast=C-Left M-Left\n' > "$CONF"
 "$FMUXBIN" --tmux-conf --write >/dev/null
 assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "2" "precondition: two old keys are bound first"
-printf 'key_summon_fast=S-Left\n' > "$CONF"
+printf 'key_summon_fast=S-Up\n' > "$CONF"
 "$FMUXBIN" --tmux-conf --write >/dev/null
-assert_eq "$(grep -c '^bind -n S-Left ' "$SNIP" || true)" "1" "only the new key gets bound"
+assert_eq "$(grep -c '^bind -n S-Up ' "$SNIP" || true)" "1" "only the new key gets bound"
 assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "1" "the old keys are no longer bound"
 assert_eq "$(grep -c '^unbind -n -q C-Left$' "$SNIP" || true)" "1" "the unbind for old key C-Left appears"
 assert_eq "$(grep -c '^unbind -n -q M-Left$' "$SNIP" || true)" "1" "the unbind for old key M-Left appears"

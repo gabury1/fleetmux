@@ -157,25 +157,25 @@ assert_contains "$(cat install.sh)" '.claude/skills/fleetmux'   "install.sh's sk
 # presets actually hand out — install.sh's presets are the door through which a teammate
 # gets that name.
 INST_SH=$(cat install.sh)
-for k in 'M-b' 'C-Left' 'M-Left' 'S-Left'; do
+for k in 'M-b' 'C-Left' 'M-Left' 'S-Up'; do
     assert_contains "$RM"      "$k" "README explains $k"
     assert_contains "$INST_SH" "$k" "install.sh's presets actually hand out $k"
 done
 
-# ── (4)-a does the fact "the suggestion is S-Left" say the same thing on screen, in the
+# ── (4)-a does the fact "the suggestion is S-Up" say the same thing on screen, in the
 #     docs, and in the code ────────────────────────────────────────────────────────────────
 # If the key the installer suggests, README's table/paragraph, and fmux --help's guidance say
 # different things, a teammate has no way to know which of the three to trust. Tie all three
 # to the same string.
 assert_contains "$INST_SH" 'PRESET_SUGGEST=shift' "install.sh's suggested default is shift"
-assert_contains "$INST_SH" "shift) printf 'S-Left'" "the shift preset actually produces S-Left"
+assert_contains "$INST_SH" "shift) printf 'S-Up'" "the shift preset actually produces S-Up"
 assert_contains "$INST_SH" "takes the key away from every app in the pane" "the suggestion text says what it takes away"
-assert_contains "$INST_SH" "dotfiles that bind S-Left/S-Right to tmux window switching are common" \
+assert_contains "$INST_SH" "dotfiles that bind S-Up/S-Down to tmux window switching are common" \
     "it recommends a different key to anyone already using this one"
-assert_contains "$RM" '`bind -n S-Left` — what `./install.sh` offers' "README's table has a Shift row"
+assert_contains "$RM" '`bind -n S-Up` — what `./install.sh` offers' "README's table has a Shift row"
 assert_contains "$RM" 'the only prefix-less single keystroke that survives all three' \
     "README states the reasoning for the Shift family"
-assert_contains "$RM" 'bind `S-Left`/`S-Right` to' "README states the known risk (window-switching bindings)"
+assert_contains "$RM" 'bind `S-Up`/`S-Down` to' "README states the known risk (window-switching bindings)"
 assert_contains "$RM" 'Why a single keystroke is what the installer offers' \
     "README has a paragraph on why a single keystroke"
 assert_contains "$RM" 'fmux config unset key_summon_fast   # rewrites the snippet' \
@@ -184,7 +184,7 @@ assert_contains "$RM" 'installing the config file alone steals nothing' \
     "README states the config default is still empty"
 # The screen (fmux --help) must say the same thing — the old key must not be taught only here.
 HELP=$("$FMUXBIN" --help 2>&1) || HELP=''
-assert_contains "$HELP" 'S-Left' "fmux --help documents S-Left"
+assert_contains "$HELP" 'S-Up' "fmux --help documents S-Up"
 assert_contains "$HELP" 'takes that key from everything in' "fmux --help also states what it takes away"
 assert_eq "$(printf '%s' "$HELP" | grep -c "key_summon_fast 'C-Left M-Left'" || true)" "0" \
     "the old suggestion (C-Left M-Left) does not linger in fmux --help"

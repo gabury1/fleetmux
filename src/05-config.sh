@@ -33,7 +33,7 @@ fmux_conf_default() {
         # that key from every app in that pane (vim, shell, fzf). That must only happen after a
         # human has said "yes" once.
         #   So policy splits in two: **the config default is empty, the installer's suggestion is
-        #   S-Left**. (The install.sh preset section writes at length on why S-Left. Summary:
+        #   S-Up**. (The install.sh preset section writes at length on why S-Up. Summary:
         #   Shift+arrow is the only no-prefix single keystroke that passes through all three of
         #   macOS, Linux, and Windows Terminal.)
         key_summon_fast) printf '' ;;
