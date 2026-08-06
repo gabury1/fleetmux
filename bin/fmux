@@ -48,12 +48,12 @@ TT_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
 TT_CONF="${TT_CONF_FILE:-$TT_CONF_DIR/config}"
 
 # Known keys. This order is exactly the order `tt config` lists them in.
-TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
+TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
 
 # Defaults. Unknown key → rc 1 — this function also doubles as the "is this a known key" check.
 tt_conf_default() {
     case "${1:-}" in
-        rc|snapshot|snapshot_on_exit|boot_restore) printf 'on' ;;
+        rc|snapshot|snapshot_on_exit|boot_restore|status_badges) printf 'on' ;;
         recent_hours)    printf '6' ;;
         unseen_minutes)  printf '10' ;;
         accent)          printf '73' ;;
@@ -3257,7 +3257,7 @@ fi
 # Boolean keys — keys that can be flipped instantly with Enter. Everything else needs a typed value.
 #   This list must stay in sync with the boolean branch of tt_conf_validate (85-config-cli.sh).
 tt_conf_is_bool() {
-    case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore) return 0 ;; *) return 1 ;; esac
+    case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore|status_badges) return 0 ;; *) return 1 ;; esac
 }
 
 # tt_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `tt config list`
@@ -3272,6 +3272,7 @@ tt_conf_desc() {
         rc)               printf 'auto-recover the remote-control link' ;;
         snapshot)         printf 'record the fleet on every popup/cron tick' ;;
         snapshot_on_exit) printf 'record the fleet on exit' ;;
+        status_badges)   printf 'draw ⏸ ✓ ✻ in the tmux status bar' ;;
         boot_restore)     printf 'auto-restore on boot' ;;
         recent_hours)     printf 'time window for bolding a name' ;;
         unseen_minutes)   printf 'minutes to keep status-bar ✓' ;;
@@ -3483,6 +3484,30 @@ tt_tmux_conf_render() {
         fi
     done
 
+    if tt_conf_on status_badges; then
+        printf '\n# Fleet badges in the status bar — ⏸ waiting · ✓ finished · ✻ working.\n'
+        printf '#   Knowing who is stuck without opening anything is the point of the tool, so this\n'
+        printf '#   is on by default. Turn it off with: tt config set status_badges off\n'
+        # ⛔ Never append unconditionally. This file is re-sourced on every config reload, and a
+        #    config that does not set status-right itself (the tmux default) keeps whatever was
+        #    there — so `set -ag` would stack another copy of the badges on every reload.
+        # ⛔ And never "save the original" into a user option either. Options are stored, not
+        #    expanded, so `set -g @base '#{status-right}'` saves the literal text #{status-right},
+        #    a self-reference. Expanding it instead (set -F) is worse: a status-right holding
+        #    %H:%M or #{session_name} would be frozen to the values it had at that instant.
+        # So: append only when our fragment is not already in there. The test is a no-op
+        # substitution — if removing the marker changes nothing, it was never there.
+        printf "if -F '#{==:#{s|--status||:status-right},#{status-right}}' \"set -ag status-right ' #(%s --status)'\"\n" "$SELF"
+        # Badges are only as fresh as the redraw interval. 5s is the cadence the hooks assume.
+        printf 'set -g status-interval 5\n'
+    else
+        # Off means off, including on a server where it is already drawn. `tmux show -gv` hands
+        # back the **unexpanded** format string, so cutting our fragment out of it and writing it
+        # back leaves the rest of the line exactly as it was, formats and all.
+        printf '\n# status_badges=off — take our fragment back out, leave the rest of the line alone.\n'
+        printf "run-shell \"'%s' --status-unbind\"\n" "$SELF"
+    fi
+
     if tt_conf_on snapshot_on_exit; then
         printf '\n# Record once more on the way out — so the manifest never misses the final moment.\n'
         # client-detached is -b. If the snapshot held onto whoever's leaving, detach would visibly lag.
@@ -3556,6 +3581,23 @@ tt_tmux_conf_write() {
     fi
     return 0
 }
+
+# Take our badge fragment back out of status-right.
+#
+# This lives here, in bash, rather than inline in the snippet. The snippet is tmux config, and a
+# run-shell body has to survive tmux quoting **and** shell quoting at once — the first attempt died
+# with "too many arguments" before running at all. The snippet now calls one command with one
+# argument, which is the same rule that got the ? binding fixed: anything needing a shell runs in
+# this file, which has a shebang we chose.
+#
+# `tmux show -gv` hands back the **unexpanded** format string, so whatever else is on that line —
+# %H:%M, #{session_name} — is written back exactly as it was, still live.
+if [ "${1:-}" = "--status-unbind" ]; then
+    cur=$(tmux show -gv status-right 2>/dev/null) || exit 0
+    new=$(printf '%s' "$cur" | sed 's| *#([^)]*--status)||g')
+    [ "$new" = "$cur" ] || tmux set -g status-right "$new" 2>/dev/null || true
+    exit 0
+fi
 
 if [ "${1:-}" = "--tmux-conf" ]; then
     # Contract (05-config.sh:53): the render below calls tt_conf_get repeatedly via $(...) — all
@@ -3911,7 +3953,8 @@ if [ "${1:-}" = "--help" ]; then
     ● attached    ✻ working    ⏸ awaiting approval    ✓ unseen result
     ⊘ remote control dropped — retried every minute; ${B}red ⊘${R} = gave up after 3 tries
 
-  ${T}status bar${R}  ${D}not wired automatically — fmux never rewrites your status line${R}
+  ${T}status bar${R}  ${D}the snippet appends the tally to status-right — yours survives${R}
+    ${D}tt config set status_badges off  takes it back out, live server included${R}
     tt --status prints it; nothing shows up until you put it in your own tmux config:
       ${D}set -g status-interval 5${R}
       ${D}set -ag status-right '#($SELF --status)'${R}

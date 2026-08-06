@@ -8,7 +8,7 @@
 # Boolean keys — keys that can be flipped instantly with Enter. Everything else needs a typed value.
 #   This list must stay in sync with the boolean branch of tt_conf_validate (85-config-cli.sh).
 tt_conf_is_bool() {
-    case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore) return 0 ;; *) return 1 ;; esac
+    case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore|status_badges) return 0 ;; *) return 1 ;; esac
 }
 
 # tt_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `tt config list`
@@ -23,6 +23,7 @@ tt_conf_desc() {
         rc)               printf 'auto-recover the remote-control link' ;;
         snapshot)         printf 'record the fleet on every popup/cron tick' ;;
         snapshot_on_exit) printf 'record the fleet on exit' ;;
+        status_badges)   printf 'draw ⏸ ✓ ✻ in the tmux status bar' ;;
         boot_restore)     printf 'auto-restore on boot' ;;
         recent_hours)     printf 'time window for bolding a name' ;;
         unseen_minutes)   printf 'minutes to keep status-bar ✓' ;;

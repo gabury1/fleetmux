@@ -225,12 +225,10 @@ The snippet is regenerated automatically whenever you change `key_summon`,
 `tt --status` prints the fleet tally `⏸2 ✻3` plus a `✓name` badge for work that
 finished while you were away — one line, meant for a tmux status bar.
 
-> **fmux does not wire your status bar.** Nothing in the snippet touches
-> `status-right`; the tally only appears once *you* add two lines to your own tmux
-> config. That is deliberate — `status-right` is a single value, so writing it would
-> overwrite whatever you already have there, and fmux's whole discipline is that it
-> owns one file and borrows one line. The two lines are in
-> [Troubleshooting](#troubleshooting) (Q4).
+> **The snippet wires this for you** (`status_badges`, on by default). It *appends* to
+> `status-right` rather than replacing it, so whatever you already had there survives,
+> formats and all. Turn it off with `tt config set status_badges off` — which also takes
+> the fragment back out of a running server, leaving the rest of your line untouched.
 
 ## Configuration
 
@@ -259,6 +257,7 @@ the env var for `recent_hours` is `TT_RECENT_HOURS`, and so on.
 | `rc` | `on` | `--cron`: auto-repair of dropped Remote Control links — **Linux only**, see [macOS](#macos--what-works-and-what-does-not) |
 | `snapshot` | `on` | `--snapshot`, and the once-a-minute snapshot inside `--cron` |
 | `snapshot_on_exit` | `on` | the tmux snippet's `client-detached` / `session-closed` hooks |
+| `status_badges` | `on` | the tmux snippet's `status-right` line — the `⏸ ✓ ✻` tally |
 | `boot_restore` | `on` | `--boot-restore` |
 | `recent_hours` | `6` | `--list`: bold (recent) vs dim (quiet) session names |
 | `unseen_minutes` | `10` | `--status`: how long a `✓name` badge stays in the status bar |
@@ -305,6 +304,10 @@ done, and it does not touch anything outside fmux.
   present, cwd exists) before it is used.
 - **`boot_restore=off`** makes `--boot-restore` exit early. `--restore`, which you run
   by hand, is unaffected — the switch guards the automatic path only.
+- **`status_badges=off`** stops the snippet appending the tally to `status-right`, and
+  takes the fragment back out of a server that already has it — the rest of your line is
+  written back exactly as it was, live formats and all. Unlike `set-hook`, this one *can*
+  be undone safely, because the fragment is ours and identifiable.
 - **`snapshot_on_exit=off`** takes the two `set-hook` lines out of the tmux snippet,
   so a *new* tmux server never gets them. A server that is already running keeps the
   hooks it was given until it restarts — the snippet does not un-set them, because
@@ -607,9 +610,12 @@ That is the hook path, and it depends entirely on the shim:
 
 ### Q4. The `⏸2 ✻3` tally never appears in the status bar
 
-Nothing is broken — **fmux does not wire your status bar**, on any platform. It would
-have to overwrite `status-right`, which is yours. Add these two lines to your own tmux
-config (not to the fmux snippet, which is regenerated):
+The snippet wires it (`status_badges`, on by default), so the usual cause is that the
+snippet is not reaching your server: check that your tmux config has the `source-file`
+line, and reload it once with `tmux source-file ~/.tmux.conf`.
+
+If you want it by hand instead — you turned `status_badges` off, or you keep your status
+line somewhere fmux does not write — these are the two lines:
 
 ```tmux
 set -g status-interval 5

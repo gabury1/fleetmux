@@ -197,4 +197,35 @@ TMUX='' "$TTBIN" --tmux-conf --write >/dev/null
 assert_eq "$(cat "$TT_TMUX_LOG")" "" "outside tmux, no server is touched at all"
 unset TMUX
 
+# ── status bar badges ───────────────────────────────────────────────────────
+# The badges are the reason the tool exists — knowing who is stuck without opening anything —
+# so they are on by default. That means the snippet writes to status-right, which is the user's
+# line, and two ways of doing that are traps this test nails shut.
+#
+# ⛔ A bare `set -ag status-right`. The snippet is re-sourced on every config reload, and a config
+#    that never sets status-right itself (the tmux default) keeps what is already there, so an
+#    unguarded append stacks another copy of the badges every single time.
+# ⛔ Saving the old line into a user option. Options are stored unexpanded, so it saves the literal
+#    text #{status-right} — a self-reference. Expanding it (set -F) is worse: a status-right
+#    holding %H:%M or #{session_name} freezes to the values it had at that instant.
+ON=$("$TTBIN" --tmux-conf 2>/dev/null)
+assert_contains "$ON" 'set -ag status-right' "on: it appends to status-right rather than replacing it"
+assert_contains "$ON" '#{s|--status||:status-right}' \
+    "★on: the append is guarded by a no-op-substitution test, so re-sourcing cannot stack copies"
+assert_contains "$ON" 'status-interval 5' "on: it sets a redraw interval the badges can keep up with"
+assert_eq "$(printf '%s\n' "$ON" | grep -c '@fmux_sr_base' || true)" "0" \
+    "★it does not stash the old status-right in a user option (that saves a self-reference, or freezes live formats)"
+assert_eq "$(printf '%s\n' "$ON" | grep -E '^[[:space:]]*set -ag status-right' | grep -c . || true)" "0" \
+    "★no unguarded append at the start of a line — every append sits behind the if"
+
+printf 'status_badges=off\n' > "$CONF"
+OFF=$("$TTBIN" --tmux-conf 2>/dev/null)
+assert_eq "$(printf '%s\n' "$OFF" | grep -c 'set -ag status-right' || true)" "0" "off: it appends nothing"
+assert_contains "$OFF" -- '--status-unbind' "★off: it actively takes the fragment back out of a live server"
+assert_eq "$(printf '%s\n' "$OFF" | grep -cF '$(' || true)" "0" \
+    "★off: no command substitution in the snippet — a run-shell body has to survive tmux quoting and shell quoting at once (the first attempt died with \"too many arguments\"), so the work happens inside fmux"
+assert_eq "$(printf '%s\n' "$OFF" | grep -c 'tmux show -gv' || true)" "0" \
+    "off: the snippet does not shell out to read tmux options either"
+: > "$CONF"
+
 tt_test_done

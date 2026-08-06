@@ -89,6 +89,30 @@ tt_tmux_conf_render() {
         fi
     done
 
+    if tt_conf_on status_badges; then
+        printf '\n# Fleet badges in the status bar — ⏸ waiting · ✓ finished · ✻ working.\n'
+        printf '#   Knowing who is stuck without opening anything is the point of the tool, so this\n'
+        printf '#   is on by default. Turn it off with: tt config set status_badges off\n'
+        # ⛔ Never append unconditionally. This file is re-sourced on every config reload, and a
+        #    config that does not set status-right itself (the tmux default) keeps whatever was
+        #    there — so `set -ag` would stack another copy of the badges on every reload.
+        # ⛔ And never "save the original" into a user option either. Options are stored, not
+        #    expanded, so `set -g @base '#{status-right}'` saves the literal text #{status-right},
+        #    a self-reference. Expanding it instead (set -F) is worse: a status-right holding
+        #    %H:%M or #{session_name} would be frozen to the values it had at that instant.
+        # So: append only when our fragment is not already in there. The test is a no-op
+        # substitution — if removing the marker changes nothing, it was never there.
+        printf "if -F '#{==:#{s|--status||:status-right},#{status-right}}' \"set -ag status-right ' #(%s --status)'\"\n" "$SELF"
+        # Badges are only as fresh as the redraw interval. 5s is the cadence the hooks assume.
+        printf 'set -g status-interval 5\n'
+    else
+        # Off means off, including on a server where it is already drawn. `tmux show -gv` hands
+        # back the **unexpanded** format string, so cutting our fragment out of it and writing it
+        # back leaves the rest of the line exactly as it was, formats and all.
+        printf '\n# status_badges=off — take our fragment back out, leave the rest of the line alone.\n'
+        printf "run-shell \"'%s' --status-unbind\"\n" "$SELF"
+    fi
+
     if tt_conf_on snapshot_on_exit; then
         printf '\n# Record once more on the way out — so the manifest never misses the final moment.\n'
         # client-detached is -b. If the snapshot held onto whoever's leaving, detach would visibly lag.
@@ -162,6 +186,23 @@ tt_tmux_conf_write() {
     fi
     return 0
 }
+
+# Take our badge fragment back out of status-right.
+#
+# This lives here, in bash, rather than inline in the snippet. The snippet is tmux config, and a
+# run-shell body has to survive tmux quoting **and** shell quoting at once — the first attempt died
+# with "too many arguments" before running at all. The snippet now calls one command with one
+# argument, which is the same rule that got the ? binding fixed: anything needing a shell runs in
+# this file, which has a shebang we chose.
+#
+# `tmux show -gv` hands back the **unexpanded** format string, so whatever else is on that line —
+# %H:%M, #{session_name} — is written back exactly as it was, still live.
+if [ "${1:-}" = "--status-unbind" ]; then
+    cur=$(tmux show -gv status-right 2>/dev/null) || exit 0
+    new=$(printf '%s' "$cur" | sed 's| *#([^)]*--status)||g')
+    [ "$new" = "$cur" ] || tmux set -g status-right "$new" 2>/dev/null || true
+    exit 0
+fi
 
 if [ "${1:-}" = "--tmux-conf" ]; then
     # Contract (05-config.sh:53): the render below calls tt_conf_get repeatedly via $(...) — all

@@ -60,7 +60,7 @@ assert_contains "$SRC" '"${1:-}" = "config"' "the tt config entry point actually
 # README lists "keys that are wired" separately from "keys that only get saved." If that
 # split disagrees with what the code decides (the not-wired marker in tt config list), the
 # doc is selling a toggle that does nothing.
-WIRED='rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max key_summon key_summon_fast'
+WIRED='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_summon key_summon_fast'
 UNWIRED='key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings'
 
 list=$("$TTBIN" config list 2>/dev/null) || list=''
@@ -259,7 +259,9 @@ done
 # claim — it's not a net that only runs one direction.
 snip=$("$TTBIN" --tmux-conf 2>/dev/null) || snip=''
 case "$snip" in *status-right*) wired=yes ;; *) wired=no ;; esac
-assert_eq "$wired" "no" "the snippet does not currently wire status-right (fact check)"
+# 2026-08-06: it got wired (status_badges, on by default), so the judgment flipped — exactly
+# what this block was built to do.
+assert_eq "$wired" "yes" "the snippet now wires status-right (fact check)"
 if [ "$wired" = no ]; then
     assert_contains "$RM" 'fmux does not wire your status bar' \
         "since nothing is wired, README says it does not attach automatically"
@@ -279,6 +281,10 @@ if [ "$wired" = no ]; then
 else
     assert_eq "$(grep -c 'does not wire your status bar' "$README" || true)" "0" \
         "once it is wired, the 'does not attach' notice must not linger"
+    assert_contains "$RM" 'status_badges' "README documents the switch that controls it"
+    assert_contains "$RM" 'tt config set status_badges off' "README says how to turn it off"
+    assert_eq "$(printf '%s' "$("$TTBIN" --help 2>/dev/null)" | grep -c 'not wired automatically' || true)" "0" \
+        "tt --help no longer claims the status bar is not wired"
 fi
 
 # ── (6) macOS --boot-restore boundary (deploy gate C2) ─────────────────────────────────────

@@ -339,7 +339,8 @@ if [ "${1:-}" = "--help" ]; then
     ● attached    ✻ working    ⏸ awaiting approval    ✓ unseen result
     ⊘ remote control dropped — retried every minute; ${B}red ⊘${R} = gave up after 3 tries
 
-  ${T}status bar${R}  ${D}not wired automatically — fmux never rewrites your status line${R}
+  ${T}status bar${R}  ${D}the snippet appends the tally to status-right — yours survives${R}
+    ${D}tt config set status_badges off  takes it back out, live server included${R}
     tt --status prints it; nothing shows up until you put it in your own tmux config:
       ${D}set -g status-interval 5${R}
       ${D}set -ag status-right '#($SELF --status)'${R}

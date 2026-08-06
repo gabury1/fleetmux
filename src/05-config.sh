@@ -9,12 +9,12 @@ TT_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
 TT_CONF="${TT_CONF_FILE:-$TT_CONF_DIR/config}"
 
 # Known keys. This order is exactly the order `tt config` lists them in.
-TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
+TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
 
 # Defaults. Unknown key → rc 1 — this function also doubles as the "is this a known key" check.
 tt_conf_default() {
     case "${1:-}" in
-        rc|snapshot|snapshot_on_exit|boot_restore) printf 'on' ;;
+        rc|snapshot|snapshot_on_exit|boot_restore|status_badges) printf 'on' ;;
         recent_hours)    printf '6' ;;
         unseen_minutes)  printf '10' ;;
         accent)          printf '73' ;;
