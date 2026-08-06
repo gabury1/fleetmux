@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# WORKING_PAT — "이 세션 지금 도는 중인가"를 화면 한 줄로 가르는 판정의 가드.
+# WORKING_PAT — a guard on the single-line-screen verdict that decides "is this session actively running right now."
 #
-# 왜 이 테스트가 있나: 2026-08-05, device-refactor 가 실제로 사고 중인데 목록에 ✻ 가 안 떴다.
-# 80-view.sh 의 박제 방지 가드가 "훅 갱신 20초 끊김 + 화면 판정 실패" 로 ✻ 를 지웠는데,
-# 도구를 안 쓰는 긴 사고 턴에서는 훅 갱신이 끊기는 게 정상이라 2차 근거인 이 패턴이
-# 유일한 방어선이었다. 그게 뚫렸다. 그래서 여기서 재는 것은 두 방향 전부다:
-#   ① 미탐 — 진짜 도는 화면을 놓치면 ✻ 가 사라진다(원래 버그).
-#   ② 오탐 — 노는 화면을 잡으면 함대가 노는 걸 일하는 것으로 보이게 한다(더 조용하고 더 나쁘다).
-#      특히 이 저장소 문서·fmux 자기 TUI 가 pane 에 떠 있는 경우가 실제 사고 경로였다.
+# Why this test exists: on 2026-08-05, device-refactor was actually mid-thought but ✻ did not show up
+# in the list. 80-view.sh's anti-stuck guard cleared ✻ on "hook update stalled 20s + screen verdict
+# failed," but in a long thinking turn that uses no tools, a stalled hook update is normal, so this
+# pattern — the secondary evidence — was the only remaining line of defense. It got breached. So what
+# this file measures runs in both directions:
+#   ① false negative — miss a genuinely running screen and ✻ disappears (the original bug).
+#   ② false positive — catch an idle screen and the fleet's idle state gets shown as working (quieter and worse).
+#      In particular, this repo's own docs or fmux's own TUI showing in a pane was the actual incident path.
 #
-# 판정 대상은 빌드 산출물(bin/fmux)에서 뽑아낸 진짜 패턴·진짜 함수다 — src 를 따로 읽으면
-# "고쳤는데 안 빌드한" 상태를 통과시킨다.
+# What is being tested is the real pattern and real function pulled straight out of the build artifact
+# (bin/fmux) — reading src separately would let a "fixed but not built" state pass.
 #
-# ⛔ 이 테스트는 tmux 를 부르지 않는다. 화면은 전부 test/fixtures/screen 의 실캡처 파일이다.
+# ⛔ This test never calls tmux. Every screen is a real capture file under test/fixtures/screen.
 set -u
 . "$(dirname "$0")/lib.sh"
 tt_test_sandbox
@@ -20,8 +21,9 @@ tt_test_sandbox
 TESTDIR=$(cd "$(dirname "$0")" && pwd) || exit 1
 FIX="$TESTDIR/fixtures/screen"
 
-# ── 산출물에서 판정부만 떼어온다 ─────────────────────────────────────────────
-# bin/fmux 는 통째로 source 하면 진입점(fzf 팝업)까지 돈다. 필요한 두 조각만 뽑아 eval 한다.
+# ── Pull only the verdict logic out of the build artifact ────────────────────
+# Sourcing bin/fmux wholesale runs all the way to the entry point (the fzf popup). Extract just the two
+# pieces we need and eval them.
 eval "$(sed -n '/^WORKING_PAT=/{p;q;}' "$TTBIN")"
 eval "$(sed -n '/^WAITING_PAT=/{p;q;}' "$TTBIN")"
 eval "$(awk '/^tt_working\(\) \{/ { f = 1 } f { print } f && /^\}/ { exit }' "$TTBIN")"
@@ -29,144 +31,157 @@ eval "$(awk '/^tt_working\(\) \{/ { f = 1 } f { print } f && /^\}/ { exit }' "$T
 assert_rc 0 test -n "${WORKING_PAT:-}"
 TT_RUN=$((TT_RUN + 1))
 if [ "$(type -t tt_working 2>/dev/null)" = function ]; then
-    printf '  ok   bin/fmux 에서 tt_working 을 떼어왔다\n'
+    printf '  ok   extracted tt_working from bin/fmux\n'
 else
     TT_FAIL=$((TT_FAIL + 1))
-    printf '  FAIL bin/fmux 에서 tt_working 을 못 떼어왔다 — 추출 awk 가 함수 모양을 못 따라간다\n'
+    printf '  FAIL failed to extract tt_working from bin/fmux — the extraction awk cannot follow the function shape\n'
 fi
 
-# ── 구조 가드 ────────────────────────────────────────────────────────────────
-# (가) 멀티바이트를 브래킷에 넣지 마라. `[✻✶…]` 는 C 로케일에서 문자 집합이 아니라 바이트 집합으로
-#      붕괴한다 — ✻ 의 세 바이트 중 하나만 스쳐도 통과하는 식이라 BSD grep 에서 무엇이 걸릴지 모른다.
-#      리터럴 교대 `(✻|✶|…)` 만 로케일·구현과 무관하게 문자 단위로 확정된다.
+# ── Structural guards ──────────────────────────────────────────────────────
+# (a) Never put multibyte glyphs inside a bracket expression. `[✻✶…]` collapses under the C locale
+#     from a character set into a byte set — grazing just one of ✻'s three bytes is enough to pass, so
+#     there is no telling what BSD grep will match. Only a literal alternation `(✻|✶|…)` is pinned
+#     down at the character level regardless of locale or implementation.
 for bad in '[✻' '[↑' '[↓' '[·'; do
     case "$WORKING_PAT" in
         *"$bad"*) got=yes ;; *) got=no ;;
     esac
-    assert_eq "$got" "no" "멀티바이트를 브래킷 '$bad' 로 쓰지 않는다(C 로케일에서 바이트 집합으로 붕괴)"
+    assert_eq "$got" "no" "does not write a multibyte glyph inside bracket '$bad' (collapses to a byte set under the C locale)"
 done
-# (나) ERE 밖 문법 금지 — 맥 기본 grep 은 BSD 다. 여기 걸리면 맥에서 판정이 통째로 죽는다.
+# (b) No syntax outside ERE — the default grep on Mac is BSD grep. If this trips, the verdict dies
+#     wholesale on Mac.
 for bad in '\d' '\s' '\b' '\w' '(?:' '(?='; do
     case "$WORKING_PAT" in
         *"$bad"*) got=yes ;; *) got=no ;;
     esac
-    assert_eq "$got" "no" "PCRE/GNU 확장 '$bad' 를 쓰지 않는다(BSD grep 이식성)"
+    assert_eq "$got" "no" "does not use PCRE/GNU extension '$bad' (BSD grep portability)"
 done
 
-# ── 케이스 판정 헬퍼 ─────────────────────────────────────────────────────────
-# tt_working 은 화면 뭉치를 받지만, 실제 판정은 그중 딱 한 줄에 대한 grep 이다.
-# 그 한 줄을 직접 먹여 대안별 책임을 또렷하게 잰다(화면 전체 경로는 아래 ③에서 따로 잰다).
-pat_case() {                 # pat_case <MATCH|no> <줄> <설명>
+# ── Case-verdict helper ────────────────────────────────────────────────────
+# tt_working takes a whole screen blob, but the actual verdict is a grep against just one line of it.
+# Feed that one line directly to measure each alternative's responsibility clearly (the full-screen
+# path is measured separately in ③ below).
+pat_case() {                 # pat_case <MATCH|no> <line> <description>
     local want="$1" line="$2" why="$3" got=no
     printf '%s\n' "$line" | grep -qaE "$WORKING_PAT" && got=MATCH
     assert_eq "$got" "$want" "[$LOCTAG] $why"
 }
 
-# ── ① 잡아야 하는 줄 / ② 잡으면 안 되는 줄 ─────────────────────────────────
-# 두 로케일에서 같은 답이 나와야 한다 — 훅은 cron 에서도 돌고, 거기엔 로케일이 없다.
+# ── ① lines that must be caught / ② lines that must not be caught ──────────
+# The answer must be the same in both locales — the hook also runs from cron, and there is no locale
+# there.
 run_cases() {
-    # (①) 미탐 방어 — 진짜 도는 화면
+    # (①) false-negative defense — genuinely running screens
     pat_case MATCH '✻ Choreographing… (43s · ↓ 1.9k tokens)' \
-        '기준선: WORKING 캡처 29행의 실제 선택줄'
+        'baseline: the actual selected line from line 29 of the WORKING capture'
     pat_case MATCH '* Deliberating… (20s · ↓ 499 tokens)' \
-        'ASCII 글리프 변종 — 이제 글리프 교대가 정면에서 잡는다'
+        'ASCII glyph variant — the glyph alternation now catches this head-on'
     pat_case MATCH '* Deliberating… (11s' \
-        '글리프 구멍이 실제로 드러나는 형태 — 토큰 카운터가 없어 타이머 대안이 못 구한다(옛 패턴 전부 미탐)'
+        'the shape where the glyph hole actually shows — no token counter, so the timer alternative cannot save it (the old pattern missed all of these)'
     pat_case MATCH '✻ Sautéed… (12s' \
-        '비ASCII 동사(é) — 옛 [A-Za-z]+ 가 é 에서 끊겨 전부 미탐이었다'
+        'non-ASCII verb (é) — the old [A-Za-z]+ broke at é and missed every one of these'
     pat_case MATCH '✻ Choreographing... (43s · ↓ 1.9k tokens)' \
-        '말줄임표가 ASCII 세 점으로 떨어진 경우 — 옛 패턴은 U+2026 만 받았다'
+        'case where the ellipsis renders as three ASCII dots — the old pattern only accepted U+2026'
     pat_case MATCH '✶ Sautéeing… (2m · ↑ 5k tokens)' \
-        '초 없이 분만 뜨는 타이머 + 상향 화살표 — 옛 [0-9]+m?s 가 s 를 강제해 통째로 놓쳤다'
+        'a timer showing only minutes with no seconds, plus an upward arrow — the old [0-9]+m?s forced an s and missed this entirely'
     pat_case no '✻ Sautéed for 1h 10m 46s' \
-        '★EVIDENCE 가 스피너로 지목한 형태 — 어느 캡처에도 없다(grep 0건). 잡으려던 ⑤ 대안이 완료줄을 같이 잡아 제거했다'
+        '★the shape EVIDENCE pointed to as a spinner — it does not exist in any capture (0 grep hits). The ⑤ alternative that tried to catch it also caught completion lines and was removed'
     pat_case MATCH '✻ Waiting for 1 dynamic workflow to finish' \
-        'WORKING 캡처 9행 실물 — 진행형이라 완료줄과 문법으로 갈린다'
+        'the real thing from line 9 of the WORKING capture — present-progressive, so grammar separates it from a completion line'
     pat_case MATCH '✻ Composing… (12s · esc to interrupt · ctrl+t to show todos)' \
-        '인터럽트 힌트가 괄호 안 뒤쪽에 오는 배치도 받는다'
+        'also accepts the layout where the interrupt hint comes later inside the parens'
     pat_case MATCH '✻ Simmering… (11s · ↓ 347 tokens · thought for 6s)' \
-        '옛 주석에 박제돼 있던 과거 실패 형태 — 회귀 방지'
+        'the past-failure shape that was frozen into an old comment — regression guard'
     pat_case MATCH '· Puttering... (1s · ↓ 12 tokens)' \
-        '중점(·) 프레임 + ASCII 말줄임표'
+        'middle-dot (·) frame + ASCII ellipsis'
 
-    # (②) 오탐 방어 — 노는 화면, 그리고 화면에 떠 있는 남의 텍스트
+    # (②) false-positive defense — idle screens, and someone else's text that happens to be on screen
     pat_case no '✻ Baked for 11m 42s' \
-        '★하드 제약: device-refactor 캡처의 실제 선택줄(유휴). for 형태를 무분별하게 넣으면 여기서 즉사한다'
+        '★hard constraint: the actual selected line from the device-refactor capture (idle). Carelessly adding a for-shape dies right here'
     pat_case no '✻ Worked for 7m 32s' \
-        '★하드 제약: member-refactor 캡처의 실제 선택줄(유휴)'
+        '★hard constraint: the actual selected line from the member-refactor capture (idle)'
     pat_case no '✻ Churned for 13m 39s' \
-        '완료줄 — 13분이라 시(h) 게이트에 안 걸린다는 것까지 확인'
-    pat_case no '  다음 할 일은 Qwen3-Next-80B의 컨텍스트를 8k~16k로 낮춰 메모리 압박을 줄이는 것입니다.' \
-        'general 캡처의 recap 꼬리 — k 접미 숫자가 있어도 안 걸려야 한다'
+        'a completion line — also confirms it does not trip the hour(h) gate since this is 13 minutes'
+    pat_case no '  and the next step is lowering the context to 8k-16k to ease the memory pressure.' \
+        'the recap tail of the general capture — must not match even with a k-suffixed number present'
     pat_case no '❯ /remote-control' \
-        'photo 캡처의 슬래시 명령 잔상'
-    pat_case no '  코드에 esc to interrupt 라는 문자열을 그냥 적어둔 줄입니다' \
-        '이 저장소 문서가 화면에 떠 있는 경우 — 옛 패턴은 맨 리터럴이라 무조건 걸렸다'
+        'a slash-command remnant from the photo capture'
+    pat_case no '  this is a line that just writes the string esc to interrupt in code' \
+        'a case where the docs of this repo are on screen — the old pattern was a bare literal so it matched unconditionally'
     pat_case no '  ◯ fmux-settings-tui  fmux                           3/4 agents done · 17m 52s · ↓ 366.8k tokens' \
-        'fmux 자기 TUI 진행줄 — 옛 패턴은 이걸 잡아 자신을 작업중으로 읽었다'
-    pat_case no '  - 스피너는 26s · ↓ 763 tokens 처럼 뜬다고 문서에 적어뒀다' \
-        '토큰 카운터 형식을 인용한 산문 — 타이머를 괄호 안으로 못박아 해결'
-    pat_case no '  ✻ 표시가 왜 안 뜨는지 조사했습니다 — 20초 가드 때문입니다' \
-        '이 버그를 논하는 대화 자체가 화면에 있는 경우(자기참조 오탐)'
+        'the TUI progress line that fmux draws about itself — the old pattern caught this and read itself as working'
+    pat_case no '  - the docs note that the spinner shows up like 26s · ↓ 763 tokens' \
+        'prose that quotes the token-counter format — solved by pinning the timer inside parens'
+    pat_case no '  ✻ investigated why the mark does not show up — it is because of the 20-second guard' \
+        'a case where the conversation discussing this very bug is on screen (self-referential false positive)'
     pat_case no '  ● Bash(make verify)' \
-        '도구 호출 줄 — 글리프 유사 기호 + 괄호'
+        'a tool-call line — glyph-lookalike symbol + parens'
     pat_case no '  ⎿  Read src/30-state.sh (191 lines)' \
-        '도구 결과 줄 — 괄호+숫자가 있어도 글리프·말줄임표 요구가 막는다'
+        'a tool-result line — even with parens+number, the glyph and ellipsis requirement blocks it'
     pat_case no '  (disable recaps in /config)' \
-        'lx-notes 캡처의 실제 선택줄 — 괄호로 시작하는 줄'
+        'the actual selected line from the lx-notes capture — a line that starts with a paren'
 }
 
 LOCTAG='UTF-8'; export LC_ALL=en_US.UTF-8; run_cases
 LOCTAG='C';     export LC_ALL=C;           run_cases
 export LC_ALL=en_US.UTF-8
 
-# ── ②-b ★닫힌 오탐 — 시(h) 단위 완료줄 ─────────────────────────────────────
-# 설계자 케이스 24번(`✻ Baked for 1h 5m 3s` 는 안 걸려야 한다)이 이제 지켜진다.
-# 한때 걸렸던 이유: ⑤ 대안 `(글리프) [^ ]+ for [0-9]+h` 가 `✻ Sautéed for 1h 10m 46s` 를
-# 잡으려고 "시(h) 단위"를 진행/완료의 판별자로 썼다. 그 전제가 실측으로 무너졌다 —
-#   · 캡처 어디에도 시 단위 진행형 for 줄이 없다(`grep -al 'Saut' …` = 0건). 이득이 0이었다.
-#   · 캡처의 for 줄은 전부 과거형 완료줄이다(`✻ Baked for 11m 42s` 가 device-refactor 의
-#     실제 선택줄이다). 시 단위로만 커지면 문법이 완전히 같아 글자로는 못 가른다.
-#   · 그리고 "훅 없는 분기에서만 터진다"던 옛 서술이 틀렸다: 80-view.sh 의 working 분기도
-#     훅 stale + CPU rc0 아님이면 화면 판정으로 내려온다. 완료줄은 다음 턴까지 화면에 남아
-#     ✻ 가 스스로 안 꺼진다 → 박제 방지 가드가 통째로 무력화됐다.
-# 그래서 ⑤를 제거했다. 아래 두 줄이 그 결정을 못박는다 — MATCH 로 되돌리면 박제가 돌아온다.
+# ── ②-b ★closed false positive — hour(h)-unit completion lines ──────────────
+# Designer case #24 (`✻ Baked for 1h 5m 3s` must not match) now holds.
+# Why it used to match: the ⑤ alternative `(glyph) [^ ]+ for [0-9]+h` was trying to catch
+# `✻ Sautéed for 1h 10m 46s` and used the "hour(h) unit" as the discriminator between in-progress
+# and completed. That premise collapsed under measurement in practice —
+#   · no capture anywhere has an hour-unit present-progressive for-line (`grep -al 'Saut' …` = 0 hits).
+#     The gain was zero.
+#   · every for-line in the captures is a past-tense completion line (`✻ Baked for 11m 42s` is the
+#     actual selected line in device-refactor). If it just grows to hour-scale the grammar is
+#     identical, so letters alone cannot tell them apart.
+#   · And the old claim that "this only fires on the no-hook branch" was wrong: the working branch of
+#     80-view.sh also falls through to the screen verdict when the hook is stale and CPU rc is not 0.
+#     A completion line stays on screen until the next turn so ✻ never turns itself off → the
+#     anti-stuck guard was neutralized wholesale.
+# So ⑤ was removed. The two lines below nail that decision down — reverting to MATCH brings the stuck
+# state back.
 got=no
 printf '%s\n' '✻ Baked for 1h 5m 3s' | grep -qaE "$WORKING_PAT" && got=MATCH
 assert_eq "$got" "no" \
-    '★1시간 넘게 돈 턴의 완료줄은 잡지 않는다(⑤ 대안 제거 — 되살리면 유휴 세션에 ✻ 가 영구 박제된다)'
-# ⑤를 빼도 잃는 게 없다는 근거: 유일하게 실재하던 진행형 for 줄은 ④가 그대로 받는다.
+    '★a completion line for a turn that ran over an hour is not caught (⑤ alternative removed — reviving it permanently freezes ✻ on idle sessions)'
+# The evidence that removing ⑤ loses nothing: the one progressive for-line that actually existed is
+# still caught by ④.
 got=no
 printf '%s\n' '✻ Waiting for 1 dynamic workflow to finish' | grep -qaE "$WORKING_PAT" && got=MATCH
 assert_eq "$got" "MATCH" \
-    '⑤ 제거 후에도 진행형 for 줄(WORKING 캡처 9행 실물)은 ④ 대안이 받는다'
-# 패턴 자체에 ⑤가 다시 들어오는 것을 구조로 막는다 — 위 두 케이스만으로는 "시 단위"를
-# 다른 모양으로 되살린 변형을 놓칠 수 있다.
+    'even after ⑤ is removed, the progressive for-line (the real thing from line 9 of the WORKING capture) is still caught by the ④ alternative'
+# Structurally block ⑤ from ever being reintroduced into the pattern itself — the two cases above
+# alone could miss a variant that revives "hour unit" in a different shape.
 case "$WORKING_PAT" in
     *'for [0-9]+h'*) got=yes ;; *) got=no ;;
 esac
-assert_eq "$got" "no" '★시(h) 단위 for 게이트를 패턴에 다시 넣지 않는다(완료줄과 구별 불가)'
+assert_eq "$got" "no" '★never puts the hour(h)-unit for-gate back into the pattern (indistinguishable from a completion line)'
 
-# ── ③ 실캡처 회귀 — tt_working 전 경로 ──────────────────────────────────────
-# 여기서는 한 줄이 아니라 화면 뭉치를 통째로 먹인다. 줄 고르는 awk(구분선·빈 줄 건너뛰기)까지
-# 같이 재는 유일한 자리다. 캡처는 2026-08-05 01:38~01:41 실측 원본을 **구조 보존 익명화**한 것 —
-# 판정에 쓰이는 줄(스피너·recap 꼬리·구분선·❯ 위치)은 원본 그대로고, 본문 산문만 갈아끼웠다.
+# ── ③ real-capture regression — the full tt_working path ────────────────────
+# Here it is fed the whole screen blob, not a single line. This is the only place that also measures
+# the line-picking awk (skipping separators and blank lines). The captures are the 2026-08-05
+# 01:38-01:41 real originals, **structure-preserving anonymized** — the lines the verdict uses
+# (spinner, recap tail, separator, ❯ position) are kept verbatim from the original; only the body
+# prose was swapped out.
 assert_rc 0 test -d "$FIX"
 for f in "$FIX"/*.screen; do
     base=${f##*/}
     case "$base" in
-        WORKING-*) want=0; label='작업중 캡처는 걸려야 한다' ;;
-        *)         want=1; label='유휴 캡처는 안 걸려야 한다' ;;
+        WORKING-*) want=0; label='a working capture must match' ;;
+        *)         want=1; label='an idle capture must not match' ;;
     esac
     got=0; tt_working < "$f" || got=$?
     assert_eq "$got" "$want" "$label — $base"
 done
-# 캡처 개수도 못박는다 — fixtures 가 통째로 비어도 위 루프는 조용히 0건으로 통과한다.
-assert_eq "$(ls "$FIX"/*.screen 2>/dev/null | grep -c .)" "8" "실캡처 8건이 다 있다(유휴 6 · 작업중 1 · 대기 1)"
+# Nail down the capture count too — even if fixtures were wiped out wholesale, the loop above would
+# silently pass with 0 hits.
+assert_eq "$(ls "$FIX"/*.screen 2>/dev/null | grep -c .)" "8" "all 8 real captures are present (6 idle, 1 working, 1 waiting)"
 
-# ── ④ 줄 고르기 자체 ────────────────────────────────────────────────────────
-# 패턴이 무엇을 보고 판단했는지를 못박는다. awk 가 다른 줄을 집기 시작하면 위 ③은
-# "엉뚱한 줄로 우연히 맞는" 상태로도 통과할 수 있다.
+# ── ④ the line-picking itself ────────────────────────────────────────────────
+# Nail down exactly what the pattern saw when it judged. If the awk starts picking a different line,
+# ③ above could still pass in a "coincidentally matched on the wrong line" state.
 pick_line() {
     awk '{ L[NR] = $0 }
          /^❯/ { p = NR }
@@ -177,46 +192,48 @@ pick_line() {
                if (i >= 1) print L[i] }' "$1"
 }
 assert_eq "$(pick_line "$FIX/device-refactor.screen")" '✻ Baked for 11m 42s' \
-    'device-refactor 에서 판정에 쓰이는 줄은 과거형 완료줄이다'
+    'in device-refactor, the line used for the verdict is a past-tense completion line'
 assert_eq "$(pick_line "$FIX/WORKING-sample-tui-worker.screen")" '✻ Choreographing… (43s · ↓ 1.9k tokens)' \
-    'WORKING 캡처에서 판정에 쓰이는 줄은 스피너 줄이다(진행줄이 아니라 — EVIDENCE 는 여기를 틀리게 적었다)'
+    'in the WORKING capture, the line used for the verdict is the spinner line (not a progress line — EVIDENCE wrote this one wrong)'
 
-# ── ⑤ WAITING_PAT — ⏸ 박제 해제의 증인 ──────────────────────────────────────
-# 2026-08-06 실측 버그: 상태바엔 "⏸ tui-worker" 가 뜨는데 목록엔 ⏸ 가 없었다.
-# 80-view.sh 의 60초 가드가 화면에서 프롬프트를 못 찾아 지운 것이고, 못 찾은 이유는
-# 증거 목록에 AskUserQuestion 과 플랜 승인이 빠져 있었기 때문이다.
+# ── ⑤ WAITING_PAT — the witness that unfreezes ⏸ ─────────────────────────────
+# Bug measured in practice on 2026-08-06: the status bar showed "⏸ tui-worker" but the list had no ⏸.
+# The 60-second guard in 80-view.sh could not find a prompt on screen and cleared it, and the reason it
+# could not find one is that AskUserQuestion and plan approval were missing from the evidence list.
 assert_rc 0 test -n "${WAITING_PAT:-}"
 
 assert_rc 0 grep -qaE "$WAITING_PAT" "$FIX/WAITING-sample-askuserquestion.screen"
-# 옛 패턴이 이 화면을 놓쳤다는 사실 자체를 못박는다 — 안 그러면 회귀가 조용히 돌아온다.
+# Nail down the very fact that the old pattern missed this screen — otherwise the regression comes
+# back quietly.
 if grep -qaE 'Would you like to run|Press enter to confirm|Yes, proceed|Do you want to' \
         "$FIX/WAITING-sample-askuserquestion.screen"; then got=yes; else got=no; fi
-assert_eq "$got" no '★옛 증거 목록은 AskUserQuestion 화면을 못 잡았다(이 테스트의 존재 이유)'
+assert_eq "$got" no '★the old evidence list could not catch the AskUserQuestion screen (the reason this test exists)'
 
-# 각 UI 를 어느 대안이 받는지 한 줄씩 — 하나를 지우면 어느 화면이 익명이 되는지 드러난다.
+# One line per which alternative catches each UI — delete one and it reveals which screen goes blind.
 for probe in \
-    'Do you want to proceed?|claude 도구 승인' \
-    'Would you like to proceed?|claude 플랜 승인' \
-    'Enter to select · Tab/Arrow keys to navigate · Esc to cancel|AskUserQuestion 꼬리' \
-    'Press enter to confirm|codex 승인' \
-    'Yes, proceed|codex 승인 선택지'
+    'Do you want to proceed?|claude tool approval' \
+    'Would you like to proceed?|claude plan approval' \
+    'Enter to select · Tab/Arrow keys to navigate · Esc to cancel|AskUserQuestion tail' \
+    'Press enter to confirm|codex approval' \
+    'Yes, proceed|codex approval choice'
 do
     line=${probe%%|*}; what=${probe#*|}
     if printf '%s\n' "  $line" | grep -qaE "$WAITING_PAT"; then got=yes; else got=no; fi
-    assert_eq "$got" yes "WAITING_PAT 이 받는다 — $what"
+    assert_eq "$got" yes "WAITING_PAT catches it — $what"
 done
 
-# 반대 방향: 도는 화면을 대기로 박제하면 안 된다. 'esc to interrupt' 는 작업중의 표지다.
+# The other direction: a running screen must not be frozen as waiting. 'esc to interrupt' is the mark
+# of working.
 if printf '%s\n' '  ✻ Choreographing… (43s · ↓ 1.9k tokens · esc to interrupt)' \
         | grep -qaE "$WAITING_PAT"; then got=yes; else got=no; fi
-assert_eq "$got" no '★작업중 스피너 줄은 WAITING_PAT 에 안 걸린다(걸리면 도는 세션이 ⏸ 로 박제된다)'
+assert_eq "$got" no '★a working spinner line does not match WAITING_PAT (matching would freeze a running session as ⏸)'
 
-# 유휴 캡처들도 대기로 오인되면 안 된다.
+# Idle captures must not be mistaken for waiting either.
 for f in "$FIX"/*.screen; do
     base=${f##*/}
     case "$base" in WAITING-*) continue ;; esac
     if grep -qaE "$WAITING_PAT" "$f"; then got=yes; else got=no; fi
-    assert_eq "$got" no "대기 아닌 캡처가 WAITING_PAT 에 안 걸린다 — $base"
+    assert_eq "$got" no "a non-waiting capture does not match WAITING_PAT — $base"
 done
 
 tt_test_done

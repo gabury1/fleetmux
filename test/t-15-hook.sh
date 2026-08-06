@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# --hook 수신부 — ⏸(승인 대기) 판정과 "훅이 대장을 갱신한다"는 사실.
+# --hook receiver — the waiting (approval-pending) verdict, and the fact that "the hook updates
+# the manifest".
 #
-# 이 파일이 지키는 것 둘:
-#   ① Notification 페이로드의 갈래 판정이 **대소문자에 안 흔들린다**. 소문자 접기를
-#      빠뜨리면 "Claude is WAITING FOR YOUR INPUT"(단순 유휴)이 ⏸ 로 새고, 부재중 함대의
-#      급한 신호와 그냥 심심한 세션이 구별되지 않는다. 접기를 bash4 문법으로 하면 맥에서
-#      통째로 죽는다 — 그쪽은 t-14 가 문법으로 막는다(게이트 B6).
-#   ② snapshot=off 여도 **훅 경로는 대장을 계속 갱신한다**. README 가 "snapshot=off 면
-#      매니페스트가 갱신을 멈춰 늙는다"고 적었던 것이 반증된 자리다(게이트 B9) — 문서를
-#      실제 동작에 맞춰 다시 썼으니, 그 문장의 근거를 여기 못박는다.
+# Two things this file guards:
+#   ① The branch verdict on a Notification payload is **case-insensitive**. Skip the lowercase
+#      fold and "Claude is WAITING FOR YOUR INPUT" (plain idle) leaks into waiting, and an absent
+#      fleet's urgent signal becomes indistinguishable from a session that is simply idle. Folding
+#      case with bash4 syntax kills the whole process on macOS — that side is blocked by syntax in
+#      t-14 (gate B6).
+#   ② Even when snapshot=off, **the hook path still keeps the manifest updated**. This is the spot
+#      that disproved the README's claim that "when snapshot=off the manifest stops updating and
+#      goes stale" (gate B9) — the doc has since been rewritten to match actual behavior, and this
+#      pins down the evidence for that sentence.
 #
-# ⛔ tmux 는 PATH 앞의 가짜가 전부 가로챈다. 진짜 바이너리에 절대 안 닿는다.
+# ⛔ tmux is fully intercepted by the fake at the front of PATH. The real binary is never reached.
 set -u
 . "$(dirname "$0")/lib.sh"
 tt_test_sandbox
@@ -20,7 +23,7 @@ CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")" "$STATE"
 TAB=$'\t'
 
-# ── ⛔ PATH 가드 — 어떤 단언보다 먼저 선다 ─────────────────────────────────
+# ── ⛔ PATH guard — stands before any assertion ─────────────────────────────
 mkdir -p "$TTROOT/bin"
 cat > "$TTROOT/bin/tmux" <<'SHIM'
 #!/usr/bin/env bash
@@ -38,67 +41,68 @@ export TMUX_PANE='%9'
 export TT_FAKE_DISP="\$9${TAB}zzhooktest${TAB}$HOME${TAB}claude${TAB}1"
 HF="$STATE/hook-9"
 
-hook() {   # $1=상태  $2=페이로드(없으면 빈 stdin)
+hook() {   # $1=state  $2=payload (empty stdin if omitted)
     printf '%s' "${2:-}" | "$TTBIN" --hook "$1" >/dev/null 2>&1 || true
 }
 state_of() { cut -d' ' -f1 "$HF" 2>/dev/null || true; }
 
-# ── ① 승인 대기 판정 ───────────────────────────────────────────────────────
+# ── ① Approval-pending verdict ───────────────────────────────────────────────
 rm -f "$HF"
 hook waiting '{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}'
-assert_eq "$(state_of)" "waiting" "권한 요청 알림은 ⏸ 로 잡는다"
+assert_eq "$(state_of)" "waiting" "a permission-request notification is caught as waiting"
 
 rm -f "$HF"
 hook waiting '{"hook_event_name":"Notification","message":"Claude is waiting for your input"}'
-assert_eq "$(state_of)" "" "단순 유휴 알림은 ⏸ 가 아니다"
+assert_eq "$(state_of)" "" "a plain idle notification is not waiting"
 
-# 여기가 소문자 접기의 이빨이다 — 접기를 빼면 같은 문장이 대문자라는 이유만으로 ⏸ 가 된다.
+# This is the bite of the lowercase fold — drop the fold and the same sentence becomes waiting
+# purely because it is uppercase.
 rm -f "$HF"
 hook waiting '{"hook_event_name":"Notification","message":"Claude Is WAITING FOR YOUR INPUT"}'
-assert_eq "$(state_of)" "" "대문자로 와도 단순 유휴는 ⏸ 가 아니다"
+assert_eq "$(state_of)" "" "plain idle in uppercase is still not waiting"
 
 rm -f "$HF"
 hook waiting '{"message":"CLAUDE NEEDS YOUR PERMISSION TO USE BASH"}'
-assert_eq "$(state_of)" "waiting" "대문자로 온 권한 요청도 ⏸ 로 잡는다"
+assert_eq "$(state_of)" "waiting" "a permission request in uppercase is still caught as waiting"
 
-# 근거가 아예 없으면(빈 stdin) 판단하지 않는다 — 예전과 같은 보수적 동작
+# With no evidence at all (empty stdin), do not make a verdict — the same conservative behavior as before
 rm -f "$HF"
 hook waiting ''
-assert_eq "$(state_of)" "" "페이로드가 없으면 ⏸ 로 안 친다"
+assert_eq "$(state_of)" "" "no payload means it is not marked waiting"
 
-# codex 는 이벤트 자체가 승인 요청이라 페이로드를 안 본다
+# codex has the event itself be the approval request, so it does not look at the payload
 rm -f "$HF"
 hook waiting-codex ''
-assert_eq "$(state_of)" "waiting" "codex PermissionRequest 는 그 자체로 ⏸ 다"
+assert_eq "$(state_of)" "waiting" "codex's PermissionRequest is itself waiting"
 
 # ── ② working/idle ─────────────────────────────────────────────────────────
 hook working '{}'
-assert_eq "$(state_of)" "working" "working 훅이 상태를 쓴다"
+assert_eq "$(state_of)" "working" "the working hook writes the state"
 hook idle '{}'
-assert_eq "$(state_of)" "idle" "idle 훅이 상태를 쓴다"
+assert_eq "$(state_of)" "idle" "the idle hook writes the state"
 
-# ── ③ snapshot=off 여도 훅은 대장을 갱신한다 (게이트 B9) ────────────────────
+# ── ③ the hook keeps updating the manifest even with snapshot=off (gate B9) ────
 printf 'snapshot=off\n' > "$CONF"
 rm -f "$STATE/manifest"
 out=$("$TTBIN" --snapshot 2>&1) || true
-assert_contains "$out" "snapshot=off" "스위치를 껐다 — --snapshot 은 실제로 거부한다"
+assert_contains "$out" "snapshot=off" "the switch is off — --snapshot actually refuses"
 assert_rc 1 test -f "$STATE/manifest"
 
 hook working '{"session_id":"7f3b1c22-0000-4000-8000-0123456789ab","cwd":"'"$HOME"'"}'
 assert_rc 0 test -f "$STATE/manifest"
 assert_contains "$(cat "$STATE/manifest")" "zzhooktest" \
-    "snapshot=off 여도 훅 경로가 대장에 줄을 넣는다 — 매니페스트는 늙지 않는다"
+    "even with snapshot=off, the hook path writes a line into the manifest — it never goes stale"
 assert_contains "$(cat "$STATE/manifest")" "7f3b1c22-0000-4000-8000-0123456789ab" \
-    "훅이 주워 온 대화 id 까지 들어간다"
+    "the conversation id the hook picked up lands in it too"
 
-# 그 갱신은 계속된다(한 번 생기고 마는 게 아니다) — cwd 를 바꾼 뒤 다시 쳐 본다
+# And that update keeps happening (it is not a one-time thing) — change cwd and hook again
 before=$(cat "$STATE/manifest")
 export TT_FAKE_DISP="\$9${TAB}zzhooktest${TAB}$HOME/moved${TAB}claude${TAB}1"
 mkdir -p "$HOME/moved"
 hook working '{"session_id":"7f3b1c22-0000-4000-8000-0123456789ab","cwd":"'"$HOME"'"}'
-assert_contains "$(cat "$STATE/manifest")" "$HOME/moved" "훅이 올 때마다 다시 쓴다"
-assert_eq "$(printf '%s' "$before" | grep -c '/moved' || true)" "0" "그 전에는 없던 값이다"
+assert_contains "$(cat "$STATE/manifest")" "$HOME/moved" "it is rewritten on every hook call"
+assert_eq "$(printf '%s' "$before" | grep -c '/moved' || true)" "0" "that value was not there before"
 
-assert_no_tmux_mutation "훅 경로가 살아있는 서버를 건드리지 않았다"
+assert_no_tmux_mutation "the hook path did not touch a live server"
 
 tt_test_done

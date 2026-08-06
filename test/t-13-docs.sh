@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# 문서와 코드가 갈라지면 여기서 터진다.
+# This is where the docs and the code split apart and it blows up.
 #
-# README 와 스킬은 팀원이 처음 읽는 것이고, 거기 적힌 명령·경로가 실재하지 않으면
-# "설치가 안 된다"가 아니라 "이 도구는 거짓말을 한다"가 된다. 그래서 문서를 검사한다:
-#   ① README 가 안내하는 파일·경로가 실재하는가 (install.sh, libexec 경로, 스킬)
-#   ② README 의 설정 표가 실제 기본값·배선 상태와 같은가 (거짓말하는 표 금지)
-#   ③ 스킬이 안내하는 tt 진입점이 실제 src 에 있는가
+# README and the skill are what a teammate reads first, and if the commands and paths written
+# there do not actually exist, the result is not "the install failed" but "this tool lies." So
+# we check the docs:
+#   (1) do the files/paths README points to actually exist (install.sh, libexec path, skill)
+#   (2) does README's config table match the real defaults and wiring state (no lying table)
+#   (3) do the tt entry points the skill teaches actually exist in src
 #
-# tmux 는 단 한 줄도 부르지 않는다. 여기서 쓰는 `tt config …` 는 tmux 를 안 타는 문이다.
+# Not a single line of tmux is called. The `tt config …` used here is a door that does not
+# touch tmux.
 set -u
 . "$(dirname "$0")/lib.sh"
 tt_test_sandbox
@@ -18,283 +20,298 @@ SKILL=skills/fleetmux/SKILL.md
 SRC=$(cat src/*.sh)
 RM=$(cat "$README")
 
-# ── ① README 가 안내하는 것이 실재하는가 ───────────────────────────────────
+# ── (1) does what README points to actually exist ──────────────────────────
 assert_rc 0 test -f "$README"
-assert_contains "$RM" './install.sh' "README 가 install.sh 를 안내한다"
+assert_contains "$RM" './install.sh' "README points to install.sh"
 assert_rc 0 test -x install.sh
 
-# 안내한 옵션이 실제로 있는 옵션이어야 한다. --help 는 의존성 검사 전에 exit 하므로
-# 아무것도 설치하지 않고 tmux 도 안 부른다.
+# The options it advertises must be options that actually exist. --help exits before the
+# dependency check, so it installs nothing and never calls tmux either.
 usage=$(./install.sh --help 2>&1) || usage=''
 for opt in --dry-run --yes --prefix --preset; do
-    assert_contains "$RM"    "$opt" "README 가 $opt 를 안내한다"
-    assert_contains "$usage" "$opt" "install.sh 가 $opt 를 실제로 받는다"
+    assert_contains "$RM"    "$opt" "README documents $opt"
+    assert_contains "$usage" "$opt" "install.sh actually accepts $opt"
 done
 
-# ── ①-b libexec 경로 오기 ──────────────────────────────────────────────────
-# shim 자리는 ~/.local/libexec/tt/ 다. 옛 README 는 libexec/fleetmux 라고 적었고,
-# 그 경로로 PATH 를 잡은 사람은 훅이 하나도 안 붙는 채로 조용히 산다.
+# ── (1)-b wrong libexec path ────────────────────────────────────────────────
+# The shim lives at ~/.local/libexec/tt/. The old README said libexec/fleetmux, and anyone
+# who set PATH to that path quietly lives with zero hooks firing.
 assert_eq "$(grep -c 'libexec/fleetmux' "$README" || true)" "0" \
-    "README 에 옛 경로 libexec/fleetmux 가 남아 있지 않다"
-assert_contains "$RM" '~/.local/libexec/tt/' "README 가 실제 shim 경로를 적는다"
-assert_contains "$(cat install.sh)" 'libexec/tt' "install.sh 도 같은 경로를 쓴다"
-assert_contains "$SRC" 'libexec/tt' "복원 PATH 보정도 같은 경로를 쓴다"
+    "the old path libexec/fleetmux does not linger in README"
+assert_contains "$RM" '~/.local/libexec/tt/' "README states the real shim path"
+assert_contains "$(cat install.sh)" 'libexec/tt' "install.sh uses the same path"
+assert_contains "$SRC" 'libexec/tt' "the restore-path PATH fixup uses the same path too"
 
-# ── ①-c 크론 안내가 실재하는 진입점인가 ────────────────────────────────────
+# ── (1)-c does the cron guidance point at a real entry point ───────────────
 for flag in --cron --boot-restore; do
-    assert_contains "$RM"  "$flag" "README 의 크론 안내가 $flag 를 쓴다"
-    assert_contains "$SRC" "\"\${1:-}\" = \"$flag\"" "$flag 진입점이 실제로 있다"
+    assert_contains "$RM"  "$flag" "README's cron guidance uses $flag"
+    assert_contains "$SRC" "\"\${1:-}\" = \"$flag\"" "the $flag entry point actually exists"
 done
 
-# ── ①-d Scripting surface 에 적은 문이 전부 실재하는가 ─────────────────────
+# ── (1)-d does every door listed under Scripting surface actually exist ────
 for flag in --list --status --preview --rc --snapshot --restore --forget \
             --hook --hooks-json --codex-hooks --tmux-conf --do-broadcast --help; do
-    assert_contains "$RM"  "$flag" "README 가 $flag 를 안내한다"
-    assert_contains "$SRC" "\"\${1:-}\" = \"$flag\"" "$flag 진입점이 실제로 있다"
+    assert_contains "$RM"  "$flag" "README documents $flag"
+    assert_contains "$SRC" "\"\${1:-}\" = \"$flag\"" "the $flag entry point actually exists"
 done
-assert_contains "$SRC" '"${1:-}" = "config"' "tt config 진입점이 실제로 있다"
+assert_contains "$SRC" '"${1:-}" = "config"' "the tt config entry point actually exists"
 
-# ── ② 설정 표가 정직한가 ───────────────────────────────────────────────────
-# README 는 "물린 키"와 "저장만 되는 키"를 나눠 적는다. 그 분류가 코드 판정
-# (tt config list 의 미배선 표시)과 어긋나면, 문서가 안 도는 토글을 파는 것이다.
+# ── (2) is the config table honest ──────────────────────────────────────────
+# README lists "keys that are wired" separately from "keys that only get saved." If that
+# split disagrees with what the code decides (the not-wired marker in tt config list), the
+# doc is selling a toggle that does nothing.
 WIRED='rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max key_summon key_summon_fast'
 UNWIRED='key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings'
 
 list=$("$TTBIN" config list 2>/dev/null) || list=''
-assert_contains "$list" "KEY" "tt config list 가 표를 낸다"
+assert_contains "$list" "KEY" "tt config list prints a table"
 
 for k in $WIRED; do
     row=$(printf '%s\n' "$list" | grep "^$k ") || row=''
-    case "$row" in *미배선*) got=unwired ;; *) got=wired ;; esac
-    assert_eq "$got" "wired" "$k 은 코드에서 물려 있다 (README 의 배선 표와 일치)"
-    assert_contains "$RM" "\`$k\`" "README 가 $k 를 적는다"
+    case "$row" in *"not wired"*) got=unwired ;; *) got=wired ;; esac
+    assert_eq "$got" "wired" "$k is wired in the code (matches README's wiring table)"
+    assert_contains "$RM" "\`$k\`" "README documents $k"
 done
 for k in $UNWIRED; do
     row=$(printf '%s\n' "$list" | grep "^$k ") || row=''
-    case "$row" in *미배선*) got=unwired ;; *) got=wired ;; esac
-    assert_eq "$got" "unwired" "$k 은 아직 안 물렸다 (README 의 미배선 목록과 일치)"
-    assert_contains "$RM" "\`$k\`" "README 가 미배선 키 $k 를 적는다"
+    case "$row" in *"not wired"*) got=unwired ;; *) got=wired ;; esac
+    assert_eq "$got" "unwired" "$k is still not wired (matches README's not-wired list)"
+    assert_contains "$RM" "\`$k\`" "README documents the not-wired key $k"
 done
 
-# 알려진 키 전부가 README 의 둘 중 한 목록에 있어야 한다 — 새 키를 추가하고 문서를
-# 안 고치면 여기서 걸린다.
+# Every known key must be classified in one of README's two lists — adding a key without
+# updating the docs is caught right here.
 keys=$(grep -m1 '^TT_CONF_KEYS=' src/05-config.sh | sed "s/^TT_CONF_KEYS='//; s/'$//")
 for k in $keys; do
     got=no
     case " $WIRED $UNWIRED " in *" $k "*) got=yes ;; esac
-    assert_eq "$got" "yes" "$k 이 README 의 설정 표에 분류돼 있다"
+    assert_eq "$got" "yes" "$k is classified in README's config table"
 done
 
-# ②-b 표에 적은 기본값이 진짜 기본값인가. README 행 모양: | `key` | `value` | … |
-#      key_summon_fast 만 빈 값이라 *(empty)* 로 적는다.
+# (2)-b is the default listed in the table the real default. README row shape:
+#        | `key` | `value` | … | — key_summon_fast is the only one written as *(empty)*
+#        because its value is blank.
 for k in $WIRED; do
     want=$("$TTBIN" config get "$k" 2>/dev/null) || want=''
     doc=$(grep "^| \`$k\` |" "$README" | head -1 | awk -F'|' '{print $3}' \
           | sed 's/^ *//; s/ *$//; s/^`//; s/`$//') || doc=''
     case "$doc" in '*(empty)*') doc='' ;; esac
-    assert_eq "$doc" "$want" "README 가 적은 $k 기본값이 코드 기본값과 같다"
+    assert_eq "$doc" "$want" "README's stated default for $k matches the code's default"
 done
 
-# ②-c "끄기의 의미" 가 실제 동작과 붙어 있는가 — 문서가 근거로 든 문자열이 코드에 있다.
-assert_contains "$RM"  'no-autorestore' "README 가 한 번만 건너뛰는 방법을 적는다"
-assert_contains "$SRC" 'no-autorestore' "no-autorestore 를 실제로 코드가 읽는다"
-assert_contains "$RM"  'older than 7 days' "README 가 매니페스트 낡음 경고 문구를 적는다"
-assert_contains "$SRC" 'older than 7 days' "그 경고 문구가 실제 코드에 있다"
-assert_contains "$SRC" 'rc=off' "rc=off 안내가 실제 코드에 있다"
+# (2)-c does "what turning it off means" stay attached to real behaviour — the string the doc
+# cites as evidence is actually in the code.
+assert_contains "$RM"  'no-autorestore' "README documents how to skip it just once"
+assert_contains "$SRC" 'no-autorestore' "the code actually reads no-autorestore"
+assert_contains "$RM"  'older than 7 days' "README documents the manifest-staleness warning text"
+assert_contains "$SRC" 'older than 7 days' "that warning text is actually in the code"
+assert_contains "$SRC" 'rc=off' "the rc=off notice is actually in the code"
 
-# ── ③ 스킬 ─────────────────────────────────────────────────────────────────
+# ── (3) skill ────────────────────────────────────────────────────────────
 assert_rc 0 test -f "$SKILL"
 SK=$(cat "$SKILL")
 FM=$(sed -n '1,8p' "$SKILL")
-assert_eq "$(head -1 "$SKILL")" "---" "프론트매터로 시작한다"
-assert_contains "$FM" "name: fleetmux" "name 필드가 있다"
-assert_contains "$FM" "description:" "description 필드가 있다"
-assert_eq "$(sed -n '2,8p' "$SKILL" | grep -c '^---$' || true)" "1" "프론트매터가 닫힌다"
+assert_eq "$(head -1 "$SKILL")" "---" "it opens with frontmatter"
+assert_contains "$FM" "name: fleetmux" "it has a name field"
+assert_contains "$FM" "description:" "it has a description field"
+assert_eq "$(sed -n '2,8p' "$SKILL" | grep -c '^---$' || true)" "1" "the frontmatter is closed"
 
-# 스킬이 안내하는 명령이 실제로 존재하는 진입점이어야 한다.
+# The commands the skill points to must be entry points that actually exist.
 for cmd in --status --list --preview --do-broadcast; do
-    assert_contains "$SK"  "tt $cmd" "스킬이 tt $cmd 를 안내한다"
-    assert_contains "$SRC" "\"\${1:-}\" = \"$cmd\"" "$cmd 진입점이 실제로 있다"
+    assert_contains "$SK"  "tt $cmd" "the skill documents tt $cmd"
+    assert_contains "$SRC" "\"\${1:-}\" = \"$cmd\"" "the $cmd entry point actually exists"
 done
 
-# 상태 파일 경로도 실재해야 한다 — 스킬이 없는 파일을 cat 하게 만들면 안 된다.
-assert_contains "$SK"  '~/.cache/tt/hook-' "스킬이 훅 상태 파일을 안내한다"
-assert_contains "$SRC" 'STATE/hook-'       "훅 상태 파일을 코드가 실제로 쓴다"
-assert_contains "$SK"  '~/.cache/tt/manifest' "스킬이 매니페스트를 안내한다"
-assert_contains "$SRC" 'MANIFEST="${TT_MANIFEST:-$STATE/manifest}"' "매니페스트 경로가 그대로다"
-assert_contains "$SK"  '~/.cache/tt/hook.log' "스킬이 감사 로그를 안내한다"
-assert_contains "$SRC" 'STATE/hook.log'       "감사 로그를 코드가 실제로 쓴다"
-assert_contains "$SK"  '~/.cache/tt/finished' "스킬이 finished 를 안내한다"
-assert_contains "$SRC" 'STATE/finished'       "finished 를 코드가 실제로 쓴다"
+# State file paths must be real too — the skill must never cat a file that does not exist.
+assert_contains "$SK"  '~/.cache/tt/hook-' "the skill documents the hook state file"
+assert_contains "$SRC" 'STATE/hook-'       "the code actually writes the hook state file"
+assert_contains "$SK"  '~/.cache/tt/manifest' "the skill documents the manifest"
+assert_contains "$SRC" 'MANIFEST="${TT_MANIFEST:-$STATE/manifest}"' "the manifest path is unchanged"
+assert_contains "$SK"  '~/.cache/tt/hook.log' "the skill documents the audit log"
+assert_contains "$SRC" 'STATE/hook.log'       "the code actually writes the audit log"
+assert_contains "$SK"  '~/.cache/tt/finished' "the skill documents finished"
+assert_contains "$SRC" 'STATE/finished'       "the code actually writes finished"
 
-# 규율 — 이 문장들이 빠지면 스킬은 화면 긁기로 되돌아간다.
-assert_contains "$SK" "read-only" "읽기 전용이 기본이라고 못박는다"
-assert_contains "$SK" "Hook state is the fact" "훅이 사실이고 화면은 렌더링이라는 규율이 있다"
-# 목록에는 세션만 나간다 — 스킬이 "맨 끝 행은 세션이 아니니 건너뛰라"고 가르치면 그건
-# 이제 없는 화면을 설명하는 것이다. 코드와 스킬 양쪽에서 그 행이 사라졌는지 함께 잰다.
-assert_eq "$(grep -c -- '--settings--' "$SKILL" || true)" "0" "스킬이 없어진 설정 행을 더 이상 말하지 않는다"
+# Discipline — drop these sentences and the skill falls back to screen-scraping.
+assert_contains "$SK" "read-only" "it pins read-only as the default"
+assert_contains "$SK" "Hook state is the fact" "it states the discipline that the hook is fact and the screen is only a rendering"
+# Only sessions appear in the list — if the skill still teaches "skip the last row, it is not
+# a session," that describes a screen that no longer exists. Measure both the code and the
+# skill together for whether that row is gone.
+assert_eq "$(grep -c -- '--settings--' "$SKILL" || true)" "0" "the skill no longer mentions the removed settings row"
 case "$SRC" in *TT_SETTINGS_ROW*) got=yes ;; *) got=no ;; esac
-assert_eq "$got" "no" "코드에도 설정 행 센티넬이 없다"
-assert_contains "$SK" "row is a real tmux session" "목록의 모든 행이 진짜 세션이라고 못박는다"
+assert_eq "$got" "no" "the code has no settings-row sentinel either"
+assert_contains "$SK" "row is a real tmux session" "it pins that every row in the list is a real session"
 
-# 스킬은 Claude Code 전용이다 — codex 에는 스킬 개념이 없다. README 가 그렇게 적어야 한다.
-assert_contains "$RM" 'Claude Code only' "README 가 스킬이 Claude Code 전용이라고 적는다"
-assert_contains "$RM" 'skills/fleetmux/SKILL.md' "README 가 스킬 파일 경로를 적는다"
+# The skill is Claude Code only — codex has no concept of skills. README must say so.
+assert_contains "$RM" 'Claude Code only' "README states the skill is Claude Code only"
+assert_contains "$RM" 'skills/fleetmux/SKILL.md' "README states the skill file path"
 
-# 설치기가 스킬을 어디로 깔지 말하는 곳과 README 가 말하는 곳이 같아야 한다.
-assert_contains "$RM"              '~/.claude/skills/fleetmux' "README 의 스킬 설치 위치"
-assert_contains "$(cat install.sh)" '.claude/skills/fleetmux'   "install.sh 의 스킬 설치 위치"
+# Where the installer says it puts the skill and where README says it goes must agree.
+assert_contains "$RM"              '~/.claude/skills/fleetmux' "README's skill install location"
+assert_contains "$(cat install.sh)" '.claude/skills/fleetmux'   "install.sh's skill install location"
 
-# ── ④ 소환키 문서 ──────────────────────────────────────────────────────────
-# 플랫폼별 제약은 코드가 아니라 사실이라 코드로 못 잰다. 다만 README 가 근거로 든
-# 키 이름이 설치기가 실제로 내주는 프리셋 값인지는 잴 수 있다 — 팀원이 그 이름을 얻는 문이
-# install.sh 의 프리셋이기 때문이다.
+# ── (4) summon-key docs ─────────────────────────────────────────────────────
+# Per-platform constraints are facts, not code, so they can't be measured from code. What can
+# be measured is whether the key names README cites as evidence are values the installer's
+# presets actually hand out — install.sh's presets are the door through which a teammate
+# gets that name.
 INST_SH=$(cat install.sh)
 for k in 'M-b' 'C-Left' 'M-Left' 'S-Left'; do
-    assert_contains "$RM"      "$k" "README 가 $k 를 설명한다"
-    assert_contains "$INST_SH" "$k" "$k 를 install.sh 프리셋이 실제로 내준다"
+    assert_contains "$RM"      "$k" "README explains $k"
+    assert_contains "$INST_SH" "$k" "install.sh's presets actually hand out $k"
 done
 
-# ── ④-a 제안이 S-Left 라는 사실이 화면·문서·코드에서 같은 말을 하는가 ───────
-# 설치기가 제안하는 키와 README 의 표·문단과 tt --help 의 안내가 다른 말을 하면,
-# 팀원은 셋 중 무엇을 믿을지 알 수 없다. 셋을 같은 문자열로 묶는다.
-assert_contains "$INST_SH" 'PRESET_SUGGEST=shift' "install.sh 의 제안 기본값이 shift 다"
-assert_contains "$INST_SH" "shift) printf 'S-Left'" "shift 프리셋이 실제로 S-Left 를 낸다"
-assert_contains "$INST_SH" '이 키를 pane 안 모든 앱에서 가져갑니다' "제안 문구가 무엇을 뺏는지 말한다"
-assert_contains "$INST_SH" '이미 쓰고 있다면 다른 키를 골라라' "이미 쓰는 사람에게 다른 키를 권한다"
-assert_contains "$RM" '`bind -n S-Left` — what `./install.sh` offers' "README 표에 Shift 행이 있다"
+# ── (4)-a does the fact "the suggestion is S-Left" say the same thing on screen, in the
+#     docs, and in the code ────────────────────────────────────────────────────────────────
+# If the key the installer suggests, README's table/paragraph, and tt --help's guidance say
+# different things, a teammate has no way to know which of the three to trust. Tie all three
+# to the same string.
+assert_contains "$INST_SH" 'PRESET_SUGGEST=shift' "install.sh's suggested default is shift"
+assert_contains "$INST_SH" "shift) printf 'S-Left'" "the shift preset actually produces S-Left"
+assert_contains "$INST_SH" "takes the key away from every app in the pane" "the suggestion text says what it takes away"
+assert_contains "$INST_SH" "dotfiles that bind S-Left/S-Right to tmux window switching are common" \
+    "it recommends a different key to anyone already using this one"
+assert_contains "$RM" '`bind -n S-Left` — what `./install.sh` offers' "README's table has a Shift row"
 assert_contains "$RM" 'the only prefix-less single keystroke that survives all three' \
-    "README 가 왜 Shift 계열인지 근거를 적는다"
-assert_contains "$RM" 'bind `S-Left`/`S-Right` to' "README 가 알려진 위험(창 전환 바인딩)을 적는다"
+    "README states the reasoning for the Shift family"
+assert_contains "$RM" 'bind `S-Left`/`S-Right` to' "README states the known risk (window-switching bindings)"
 assert_contains "$RM" 'Why a single keystroke is what the installer offers' \
-    "README 에 왜 한 타건인가 문단이 있다"
+    "README has a paragraph on why a single keystroke"
 assert_contains "$RM" 'tt config unset key_summon_fast   # rewrites the snippet' \
-    "README 가 어떻게 끄는지 적는다"
+    "README states how to turn it off"
 assert_contains "$RM" 'installing the config file alone steals nothing' \
-    "README 가 설정 기본값은 여전히 빈 값이라고 적는다"
-# 화면(tt --help)도 같은 말을 해야 한다 — 여기서만 옛 키를 가르치면 안 된다.
+    "README states the config default is still empty"
+# The screen (tt --help) must say the same thing — the old key must not be taught only here.
 HELP=$("$TTBIN" --help 2>&1) || HELP=''
-assert_contains "$HELP" 'S-Left' "tt --help 가 S-Left 를 안내한다"
-assert_contains "$HELP" 'takes that key from everything in' "tt --help 도 무엇을 뺏는지 말한다"
+assert_contains "$HELP" 'S-Left' "tt --help documents S-Left"
+assert_contains "$HELP" 'takes that key from everything in' "tt --help also states what it takes away"
 assert_eq "$(printf '%s' "$HELP" | grep -c "key_summon_fast 'C-Left M-Left'" || true)" "0" \
-    "tt --help 에 옛 제안(C-Left M-Left)이 남아 있지 않다"
+    "the old suggestion (C-Left M-Left) does not linger in tt --help"
 
-# 설정 기본값은 갈라진 채로 남아야 한다 — 제안이 바뀌었다고 기본값까지 따라가면 안 된다.
-assert_eq "$("$TTBIN" config get key_summon_fast)" "" "설정 기본값 key_summon_fast 는 여전히 빈 값"
+# The config default must stay split off — the default must not follow the suggestion just
+# because the suggestion changed.
+assert_eq "$("$TTBIN" config get key_summon_fast)" "" "the config default key_summon_fast is still empty"
 
-# 스니펫 생성기에는 **정적 후보 목록이 없어야 한다**(게이트 B3). 있으면 기본(safe) 프리셋에서도
-# 그 키들을 unbind 해 — 우리가 안 건 키를, 즉 남의 바인딩을 지운다. README 는 바로 옆에서
-# "steals no key until you say so" 를 약속한다.
+# The snippet generator must have **no static candidate list** (deploy gate B3). If it did, even
+# the default (safe) preset would unbind those keys — erasing bindings we never made, i.e.
+# someone else's. README promises right next to it that it "steals no key until you say so."
 assert_eq "$(grep -c 'TT_TMUX_UNBIND_CANDIDATES' src/*.sh install.sh | grep -v ':0$' | wc -l | tr -d ' ')" "0" \
-    "무prefix 키 정적 후보 목록이 코드에 없다"
-assert_contains "$RM" 'steals no key' "README 의 약속 문구가 그대로 있다"
+    "no static candidate list of no-prefix keys exists in the code"
+assert_contains "$RM" 'steals no key' "README's promise text is unchanged"
 
-# ── ④-b 문서가 자기 검증 상태를 밝히는가 (게이트 B10) ───────────────────────
-# 이 레포는 맥·WSL 에서 한 번도 돈 적이 없다. 그 표를 단정형으로 적으면 팀원의 첫 키 선택을
-# 검증 안 된 주장이 좌우한다.
-assert_contains "$RM" 'How much of this is measured?'  "README 가 표의 검증 상태를 밝힌다"
-assert_contains "$RM" 'not something we reproduced'    "미검증 행을 재현 못 했다고 적는다"
-assert_contains "$RM" 'reported' "미검증 행을 '보고된 것'이라고 표시한다"
-assert_contains "$RM" 'bindings (tmux key names), not physical keys' "표가 무엇을 재는지 밝힌다"
+# ── (4)-b does the doc disclose its own verification status (deploy gate B10) ──────────────
+# This repo has never once run on macOS or WSL. Writing that table as flat assertion would let
+# an unverified claim decide a teammate's first key choice.
+assert_contains "$RM" 'How much of this is measured?'  "README discloses the table's verification status"
+assert_contains "$RM" 'not something we reproduced'    "it states that unverified rows were not reproduced"
+assert_contains "$RM" 'reported' "it marks unverified rows as 'reported'"
+assert_contains "$RM" 'bindings (tmux key names), not physical keys' "it discloses what the table measures"
 
-# ── ④-c rc 는 리눅스 전용이라고 적는가 (게이트 B8) ──────────────────────────
-# 코드가 /proc 에 매달려 있다는 사실과 문서가 붙어 있어야 한다.
-assert_contains "$SRC" '/proc/$1/stat' "rc 판정이 실제로 /proc 에 매달려 있다"
-assert_contains "$RM"  'Linux only'    "README 가 rc 를 리눅스 전용이라고 적는다"
-assert_contains "$RM"  '/proc'         "README 가 그 이유(/proc)를 적는다"
-assert_contains "$RM"  'macOS — what works and what does not' "맥에서 되는 것·안 되는 것을 나눠 적는다"
-assert_contains "$SRC" '/proc 이 없다(macOS 미지원)' "tt --rc 도 그 경계를 화면에서 말한다"
+# ── (4)-c does it state that rc is Linux-only (deploy gate B8) ─────────────────────────────
+# The fact that the code hangs on /proc must be attached to the doc.
+assert_contains "$SRC" '/proc/$1/stat' "the rc verdict actually hangs on /proc"
+assert_contains "$RM"  'Linux only'    "README states rc is Linux-only"
+assert_contains "$RM"  '/proc'         "README states the reason (/proc)"
+assert_contains "$RM"  'macOS — what works and what does not' "it splits out what works and what does not on macOS"
+assert_contains "$SRC" 'no /proc (macOS unsupported)' "tt --rc also states that boundary on screen"
 
-# ── ④-d snapshot=off 서술이 코드와 맞는가 (게이트 B9) ───────────────────────
-# 훅 경로의 upsert 는 스위치 **밖**이다 — 그래서 매니페스트는 늙지 않는다. 옛 문장은 반증됐다.
+# ── (4)-d does the snapshot=off description match the code (deploy gate B9) ────────────────
+# The hook path's upsert is **outside** the switch — that's why the manifest never goes
+# stale. The old sentence was disproven.
 assert_eq "$(grep -c 'the manifest stops being updated' "$README" || true)" "0" \
-    "반증된 문장('manifest stops being updated')이 README 에 없다"
-assert_contains "$RM" 'unconditional `tt_mf_upsert`' "README 가 실제 동작을 근거로 적는다"
-assert_contains "$SRC" 'tt_mf_upsert "$sname"' "그 upsert 가 훅 경로에 실제로 있다"
+    "the disproven sentence ('manifest stops being updated') is not in README"
+assert_contains "$RM" 'unconditional `tt_mf_upsert`' "README cites the actual behaviour as evidence"
+assert_contains "$SRC" 'tt_mf_upsert "$sname"' "that upsert actually exists on the hook path"
 
-# ── ④-e 설치 절이 실제로 따라갈 수 있는가 (게이트 B11) ──────────────────────
-assert_eq "$(grep -c '<you>' "$README" || true)" "0" "복사할 수 없는 자리표시자가 없다"
-assert_contains "$RM" 'no published remote yet' "원격이 아직 없다는 사실을 적는다"
+# ── (4)-e can the install section actually be followed (deploy gate B11) ───────────────────
+assert_eq "$(grep -c '<you>' "$README" || true)" "0" "no uncopyable placeholders remain"
+assert_contains "$RM" 'no published remote yet' "it states the fact that there is no remote yet"
 assert_contains "$RM" 'export PATH="$HOME/.local/libexec/tt:$HOME/.local/bin:$PATH"' \
-    "README 가 PATH 넣는 줄을 그대로 적는다"
-assert_contains "$INST_SH" 'export PATH="%s:%s:$PATH"' "install.sh 가 같은 줄을 찍는다"
-assert_contains "$RM" 'command not found' "PATH 를 안 고치면 무슨 일이 나는지 적는다"
-assert_contains "$RM" 'Mission Control' "macOS Ctrl+화살표가 뺏길 수 있다고 적는다"
-assert_contains "$RM" 'Windows Terminal' "Windows Terminal 이 Alt+화살표를 먼저 먹는다고 적는다"
-assert_contains "$RM" 'best effort' "WSL 은 best-effort 라고 적는다"
-assert_contains "$RM" 'vmIdleTimeout' "vmIdleTimeout 이 답이 아니라고 적는다"
-assert_contains "$RM" 'Task Scheduler' "@reboot cron 대신 작업 스케줄러가 필요하다고 적는다"
+    "README states the PATH line verbatim"
+assert_contains "$INST_SH" 'export PATH="%s:%s:$PATH"' "install.sh prints the same line"
+assert_contains "$RM" 'command not found' "it states what happens if you don't fix PATH"
+assert_contains "$RM" 'Mission Control' "it states that macOS Ctrl+arrow can get taken"
+assert_contains "$RM" 'Windows Terminal' "it states Windows Terminal eats Alt+arrow first"
+assert_contains "$RM" 'best effort' "it states WSL is best-effort"
+assert_contains "$RM" 'vmIdleTimeout' "it states vmIdleTimeout is not the answer"
+assert_contains "$RM" 'Task Scheduler' "it states Task Scheduler is needed instead of @reboot cron"
 
-# 프리셋 이름은 install.sh 가 실제로 받는 것이어야 한다.
+# Preset names must be ones install.sh actually accepts.
 for p in safe mac linux wsl; do
-    assert_contains "$RM"               "$p" "README 가 프리셋 $p 를 적는다"
-    assert_contains "$(cat install.sh)" "$p)" "install.sh 가 프리셋 $p 를 받는다"
+    assert_contains "$RM"               "$p" "README states the preset $p"
+    assert_contains "$(cat install.sh)" "$p)" "install.sh accepts the preset $p"
 done
 
-# ── ⑤ 상태바 — 문서와 스니펫이 같은 말을 하는가 (게이트 C1) ─────────────────
-# 이게 t-13 이 통째로 놓쳤던 자리다: 네 곳(README 둘·SKILL.md·tt --help)이 상태바 집계를
-# **되는 기능으로 단정**하는데 배선 코드가 레포에 없었다. 팀원 100% 가 그 화면을 영원히 못 본다.
-# 그래서 여기서는 문장을 세지 않고 **스니펫이 실제로 무엇을 내는지 렌더해서** 문서와 맞춘다.
-# 나중에 누가 배선을 넣으면 이 판정이 자동으로 반대편을 요구한다 — 한 방향으로만 도는 그물이 아니다.
+# ── (5) status bar — do the doc and the snippet say the same thing (deploy gate C1) ────────
+# This is the spot t-13 missed entirely: four places (two spots in README, SKILL.md, and
+# tt --help) **flatly asserted** the status-bar tally as a working feature, and the wiring
+# code was not in the repo. 100% of teammates would never see that screen. So here we don't
+# count sentences — we **render what the snippet actually produces** and match it against the
+# doc. Once someone later wires it in, this same judgment automatically demands the opposite
+# claim — it's not a net that only runs one direction.
 snip=$("$TTBIN" --tmux-conf 2>/dev/null) || snip=''
 case "$snip" in *status-right*) wired=yes ;; *) wired=no ;; esac
-assert_eq "$wired" "no" "지금 스니펫은 status-right 를 배선하지 않는다(사실 확인)"
+assert_eq "$wired" "no" "the snippet does not currently wire status-right (fact check)"
 if [ "$wired" = no ]; then
     assert_contains "$RM" 'fmux does not wire your status bar' \
-        "배선이 없으니 README 가 '자동으로 안 붙는다'고 말한다"
-    assert_contains "$RM" 'set -ag status-right' "README 가 직접 넣을 줄을 알려준다"
-    assert_contains "$RM" 'set -g status-interval 5' "README 가 갱신 주기 줄도 알려준다"
+        "since nothing is wired, README says it does not attach automatically"
+    assert_contains "$RM" 'set -ag status-right' "README tells you the line to add yourself"
+    assert_contains "$RM" 'set -g status-interval 5' "README also tells you the refresh-interval line"
     assert_contains "$SK" 'Wiring it into `status-right` is manual' \
-        "스킬도 상태바를 본 적 없는 사람을 전제한다"
+        "the skill also assumes someone who has never seen the status bar"
     assert_contains "$("$TTBIN" --help 2>/dev/null)" 'not wired automatically' \
-        "tt --help 도 같은 말을 한다"
-    # 반증된 단정문이 남아 있으면 안 된다.
+        "tt --help says the same thing"
+    # The disproven flat claim must not linger.
     assert_eq "$(grep -c 'Status bar carries the fleet tally' "$README" || true)" "0" \
-        "'상태바가 집계를 나른다'는 옛 단정이 README 에 없다"
+        "the old claim ('status bar carries the tally') is not in README"
     assert_eq "$(grep -c 'the status-bar tally' "$README" || true)" "0" \
-        "macOS Works 목록의 옛 단정도 없다"
+        "the old claim in the macOS Works list is also gone"
     assert_eq "$(grep -c 'the same one the tmux status bar shows' "$SKILL" || true)" "0" \
-        "스킬의 옛 단정도 없다"
+        "the skill's old claim is also gone"
 else
     assert_eq "$(grep -c 'does not wire your status bar' "$README" || true)" "0" \
-        "배선이 생겼으면 '안 붙는다'는 안내가 남아 있으면 안 된다"
+        "once it is wired, the 'does not attach' notice must not linger"
 fi
 
-# ── ⑥ macOS --boot-restore 경계 (게이트 C2) ────────────────────────────────
-# 네트워크 게이트가 timeout·getent 에 매달려 있다 — 둘 다 맥 기본에 없다. 그런데 README 의
-# macOS **Works** 목록이 --boot-restore 를 품고 있었다. 크론 줄은 >/dev/null 2>&1 이라
-# 실패가 조용하다: 팀원은 "복원이 되는데 왜 안 됐지"를 영원히 디버깅한다.
-assert_contains "$SRC" 'timeout 5 getent hosts' "boot-restore 의 네트워크 게이트가 실제로 그 둘에 매달려 있다"
-assert_contains "$RM"  'macOS has neither `timeout`' "README 가 맥에 그 둘이 없다고 적는다"
-assert_contains "$RM"  'does not work' "README 가 안 되는 것을 안 된다고 적는다"
-assert_contains "$RM"  'ABORT: no DNS+tcp/443' "무슨 증상으로 나타나는지 적는다"
-assert_contains "$SRC" 'ABORT: no DNS+tcp/443' "그 문구가 실제 코드에 있다"
-# --restore(손으로)는 그 게이트를 안 지난다 — 맥에서도 된다. 그 구분이 문서에 있어야 한다.
-assert_contains "$RM" 'tt --restore` (by hand)' "손으로 치는 --restore 는 맥에서도 된다고 나눠 적는다"
+# ── (6) macOS --boot-restore boundary (deploy gate C2) ─────────────────────────────────────
+# The network gate hangs on timeout and getent — neither ships on macOS by default. Yet
+# README's macOS **Works** list included --boot-restore. The cron line ends in
+# >/dev/null 2>&1, so the failure is silent: a teammate would debug "it's supposed to restore,
+# why didn't it" forever.
+assert_contains "$SRC" 'timeout 5 getent hosts' "boot-restore's network gate actually hangs on those two"
+assert_contains "$RM"  'macOS has neither `timeout`' "README states macOS lacks both"
+assert_contains "$RM"  'does not work' "README states plainly that it does not work"
+assert_contains "$RM"  'ABORT: no DNS+tcp/443' "it states what symptom this shows up as"
+assert_contains "$SRC" 'ABORT: no DNS+tcp/443' "that string is actually in the code"
+# --restore (by hand) does not pass through that gate — it works on macOS too. That
+# distinction must be in the doc.
+assert_contains "$RM" 'tt --restore` (by hand)' "it states separately that --restore by hand works on macOS"
 
-# ── ⑦ 로그인 셸 판정 (게이트 I4) ────────────────────────────────────────────
-# getent 는 glibc 것이라 맥에 없다 → 폴백이 아니라 상수 /bin/bash 가 된다.
-assert_contains "$SRC" 'dscl . -read' "맥용 로그인 셸 폴백이 코드에 있다"
-assert_contains "$RM"  'dscl . -read' "README 가 그 폴백을 적는다"
+# ── (7) login-shell detection (deploy gate I4) ──────────────────────────────────────────────
+# getent belongs to glibc, so it doesn't exist on macOS -> not a fallback, a hardcoded /bin/bash.
+assert_contains "$SRC" 'dscl . -read' "the macOS login-shell fallback is in the code"
+assert_contains "$RM"  'dscl . -read' "README documents that fallback"
 
-# ── ⑧ --yes 는 키를 안 뺏는다 (게이트 I3) ───────────────────────────────────
-# README:106 의 "steals no key until you say so" 와 install.sh 의 --yes 가 서로 어긋나 있었다.
-assert_contains "$INST_SH" '--yes 는 아무 키도 안 뺏는 safe 로 간다' "install.sh 가 그렇게 말한다"
-assert_contains "$INST_SH" 'elif [ "$ASSUME_YES" = 1 ]; then' "그 분기가 실제로 코드에 있다"
-assert_contains "$RM" 'does **not** accept the detected key preset' "README 가 --yes 의 경계를 적는다"
+# ── (8) --yes does not steal a key (deploy gate I3) ─────────────────────────────────────────
+# README:106's "steals no key until you say so" and install.sh's --yes used to disagree.
+assert_contains "$INST_SH" '--yes goes to safe, stealing no key' "install.sh states that"
+assert_contains "$INST_SH" 'elif [ "$ASSUME_YES" = 1 ]; then' "that branch actually exists in the code"
+assert_contains "$RM" 'does **not** accept the detected key preset' "README states the boundary of --yes"
 
-# ── ⑨ Troubleshooting 절 ────────────────────────────────────────────────────
-# 팀원이 받는 문서는 README 하나뿐이다. 안내문 마지막 줄이 이 절을 가리킨다.
-assert_eq "$(grep -c '^## Troubleshooting' "$README" || true)" "1" "README 에 Troubleshooting 절이 있다"
+# ── (9) Troubleshooting section ─────────────────────────────────────────────────────────────
+# The only doc a teammate gets is this one README. The last line of the guide points here.
+assert_eq "$(grep -c '^## Troubleshooting' "$README" || true)" "1" "README has a Troubleshooting section"
 assert_contains "$RM" '`tt: command not found`' "Q1 — PATH"
-assert_contains "$RM" 'The summon key does nothing' "Q2 — 소환키"
-assert_contains "$RM" 'never does' "Q3 — ⏸ 가 안 뜬다"
-assert_contains "$RM" 'never appears in the status bar' "Q4 — 상태바 집계"
-assert_contains "$RM" 'restores nothing' "Q5 — rc·부팅 복원"
-# 각 답이 근거로 든 문자열이 코드에 실재해야 한다 — FAQ 가 없는 파일·없는 동작을 가르치면 안 된다.
-assert_contains "$SRC" 'STATE/boot.log'  "boot.log 경로가 코드에 있다"
-assert_contains "$RM"  '~/.cache/tt/boot.log' "Q5 가 그 로그를 안내한다"
-assert_contains "$(cat libexec/claude)" 'command -v tt' "Q3 이 말한 shim 발동 조건이 실제 코드다"
-assert_contains "$RM"  'command -v tt' "Q3 이 그 조건을 그대로 적는다"
+assert_contains "$RM" 'The summon key does nothing' "Q2 — summon key"
+assert_contains "$RM" 'never does' "Q3 — the pause badge never shows"
+assert_contains "$RM" 'never appears in the status bar' "Q4 — status-bar tally"
+assert_contains "$RM" 'restores nothing' "Q5 — rc / boot restore"
+# The string each answer cites as evidence must actually exist in the code — the FAQ must not
+# teach a file or behaviour that does not exist.
+assert_contains "$SRC" 'STATE/boot.log'  "the boot.log path exists in the code"
+assert_contains "$RM"  '~/.cache/tt/boot.log' "Q5 documents that log"
+assert_contains "$(cat libexec/claude)" 'command -v tt' "the shim-firing condition Q3 states is real code"
+assert_contains "$RM"  'command -v tt' "Q3 states that condition verbatim"
 
 tt_test_done

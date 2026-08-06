@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# 임계값·색 배선(T5) — 설정 네 키(recent_hours·unseen_minutes·accent·log_max)가 **실제로
-# 동작을 바꾸는가**, 그리고 "미배선" 표시가 지금 배선 현황과 일치하는가.
+# Threshold & color wiring (T5) — do the four config keys (recent_hours, unseen_minutes, accent,
+# log_max) **actually change behavior**, and does the "not wired" marker match the current wiring?
 #
-# 이 파일이 지켜야 하는 것:
-#   ① 네 키는 값을 바꾸면 출력이 바뀐다. "설정 파일에 저장됐다"는 조회로는 아무것도 증명
-#      되지 않는다 — 저장은 되는데 아무도 안 읽는 상태가 정확히 이 태스크가 없앤 문제다.
-#   ② 손으로 고친 설정 파일의 이상한 값이 관제탑을 죽이면 안 된다. 화이트리스트 파서는 값의
-#      문자셋만 보므로 `recent_hours=6h`·`accent=999`·`08` 같은 값이 그대로 들어온다.
-#      그 값이 $(( … )) 로 들어가면 산술 오류 + set -e 로 --list 가 통째로 죽는다.
-#   ③ "미배선" 표시가 팝업과 CLI 양쪽에 있고, 둘의 판정이 같고, 실제 배선과 맞는다.
+# What this file must guarantee:
+#   ① Changing the value of any of the four keys changes the output. A query that only confirms
+#      "it was saved to the config file" proves nothing — saved-but-nobody-reads-it is exactly the
+#      problem this task eliminated.
+#   ② A weird value in a hand-edited config file must not kill the control tower. The whitelist
+#      parser only checks the value's character set, so values like `recent_hours=6h`, `accent=999`,
+#      `08` pass through as-is. If that value flows into $(( … )), an arithmetic error plus set -e
+#      would kill --list outright.
+#   ③ The "not wired" marker is shown in both the popup and the CLI, the two agree, and it matches
+#      the actual wiring.
 #
-# tmux 는 한 번도 실행하지 않는다 — 가짜 tmux 를 PATH 앞에 세워 무엇이 오갔는지만 잰다.
+# tmux is never actually run — a fake tmux sits at the front of PATH, and we only measure what
+# passed through it.
 set -u
 . "$(dirname "$0")/lib.sh"
 tt_test_sandbox
@@ -22,10 +26,10 @@ mkdir -p "$STATE"
 TAB=$'\t'
 ESC=$'\033'
 
-# ── ⛔ PATH 가드 — 이 파일의 어떤 단언보다 먼저 선다 ────────────────────────
-# 아래에서 진짜 `--list`·`--status`·`--cron` 을 부른다. 가짜 tmux 를 세우는 코드가 그보다
-# 뒤에 있으면 그 구간이 개발자 기계의 진짜 tmux 서버로 나간다(이 저장소에서 kill-server
-# 사고가 났던 계열이라 순서를 못박는다).
+# ── ⛔ PATH guard — comes before any assertion in this file ──────────────────
+# The lines below call the real `--list`, `--status`, `--cron`. If the code that sets up the fake
+# tmux runs any later than this, that stretch would reach the developer machine's real tmux server
+# (this repo has a kill-server incident in its history, so the order is pinned down here).
 mkdir -p "$TTROOT/bin"
 cat > "$TTROOT/bin/tmux" <<'SHIM'
 #!/usr/bin/env bash
@@ -44,201 +48,208 @@ export PATH="$TTROOT/bin:$PATH"
 
 now=$(date +%s)
 
-# --list 한 행의 "표시 부분"(탭 뒤)을 준다. 색 코드는 벗기지 않는다 — 이 테스트가 재는 게
-# 바로 그 색과 굵기다.
+# Returns one --list row's "display part" (after the tab). Color codes are not stripped — this
+# test's whole point is measuring exactly that color and weight.
 list_row() {
     "$TTBIN" --list 2>/dev/null | grep -a "^$1$TAB" || true
 }
 
-# ── ① accent — 강조색 256색 번호 ────────────────────────────────────────────
-# --help 는 tmux 없이도 보이는 표면이라 색 배선의 가장 싼 증거다.
+# ── ① accent — the accent color's 256-color number ───────────────────────────
+# --help is a surface visible even without tmux, so it's the cheapest evidence of color wiring.
 printf 'accent=200\n' > "$CONF"
-assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;200m" "accent 가 --help 색에 반영된다"
+assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;200m" "accent is reflected in the --help color"
 : > "$CONF"
-assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "기본 accent 도 그대로 동작한다"
+assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "the default accent works the same way"
 
-# --list 의 도구 세션 줄도 같은 색을 쓴다(그쪽이 진짜 화면이다).
+# --list's tool-session row uses the same color too (that's the real screen).
 export TT_FAKE_LS="\$0${TAB}1000${TAB}0${TAB}-${TAB}alpha"
-export TT_FAKE_PANE=bash          # claude 도 codex 도 아니다 → 도구 세션(그룹 0)
+export TT_FAKE_PANE=bash          # neither claude nor codex → tool session (group 0)
 rm -f "$STATE/hook-0"
 printf 'accent=200\n' > "$CONF"
-assert_contains "$(list_row alpha)" "$ESC[38;5;200m" "accent 가 --list 도구 세션 색에 반영된다"
+assert_contains "$(list_row alpha)" "$ESC[38;5;200m" "accent is reflected in the --list tool-session color"
 
-# 손으로 고친 범위 밖 값 — 이스케이프 시퀀스 안으로 들어가는 자리라 반드시 걸러야 한다.
+# A hand-edited out-of-range value — this lands inside an escape sequence, so it must be filtered.
 printf 'accent=999\n' > "$CONF"
-assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "범위 밖 accent 는 기본값으로 돌아간다"
-assert_contains "$("$TTBIN" --help 2>&1 >/dev/null)" "accent" "그때 이유를 한 줄 말한다"
+assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "an out-of-range accent falls back to the default"
+assert_contains "$("$TTBIN" --help 2>&1 >/dev/null)" "accent" "and states the reason in one line at that point"
 assert_rc 0 "$TTBIN" --help
-# 앞의 0 은 8진수가 아니다 — 그냥 73 이어야 한다(bash 산술이었다면 여기서 죽는다).
+# The leading 0 is not octal — it must read as plain 73 (if this were bash arithmetic, it would die here).
 printf 'accent=073\n' > "$CONF"
-assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "앞자리 0 이 붙어도 10진수로 읽는다"
+assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "a leading zero is still read as decimal"
 
-# ── ② recent_hours — 이름을 굵게 쓰는 기준 ──────────────────────────────────
-# 에이전트 세션 하나를 세워 "2시간 전 대화" 상태로 만든다. 훅 파일의 pid 0 + 기록시각이
-# 세션 생성시각보다 뒤 = 이 세션의 것으로 인정된다(tt_hook_valid ②).
+# ── ② recent_hours — the threshold for showing a name in bold ────────────────
+# Sets up one agent session in a "talked 2 hours ago" state. The hook file's pid 0 plus a recorded
+# time later than the session's creation time = recognized as belonging to this session
+# (tt_hook_valid ②).
 export TT_FAKE_PANE=claude
 printf 'idle %s 0\n' "$(( now - 7200 ))" > "$STATE/hook-0"
 
 : > "$CONF"
 row=$(list_row alpha)
 case "$row" in *"$ESC[1m"*) got=bold ;; *"$ESC[2m"*) got=dim ;; *) got=none ;; esac
-assert_eq "$got" "bold" "기본 recent_hours=6 이면 2시간 전 세션은 굵다"
+assert_eq "$got" "bold" "with the default recent_hours=6, a session from 2 hours ago is bold"
 
 printf 'recent_hours=1\n' > "$CONF"
 row=$(list_row alpha)
 case "$row" in *"$ESC[1m"*) got=bold ;; *"$ESC[2m"*) got=dim ;; *) got=none ;; esac
-assert_eq "$got" "dim" "recent_hours=1 이면 같은 세션이 흐려진다"
+assert_eq "$got" "dim" "with recent_hours=1, the same session dims"
 
 printf 'recent_hours=3\n' > "$CONF"
 row=$(list_row alpha)
 case "$row" in *"$ESC[1m"*) got=bold ;; *"$ESC[2m"*) got=dim ;; *) got=none ;; esac
-assert_eq "$got" "bold" "recent_hours=3 이면 다시 굵어진다 — 경계가 값을 따라 움직인다"
+assert_eq "$got" "bold" "with recent_hours=3 it goes bold again — the boundary moves with the value"
 
-# 정수가 아닌 값은 기본값으로 접고 목록은 계속 뜬다(산술 오류로 죽지 않는다).
+# A non-integer value folds to the default and the list still renders (no death from an arithmetic error).
 printf 'recent_hours=6h\n' > "$CONF"
 row=$(list_row alpha)
 case "$row" in *"$ESC[1m"*) got=bold ;; *"$ESC[2m"*) got=dim ;; *) got=none ;; esac
-assert_eq "$got" "bold" "정수가 아닌 recent_hours 는 기본값 6 으로 접힌다"
+assert_eq "$got" "bold" "a non-integer recent_hours folds to the default 6"
 assert_rc 0 "$TTBIN" --list
-# 8진수 함정: `08` 은 문자셋 검사를 통과하지만 bash 산술에선 즉사한다.
+# The octal trap: `08` passes the character-set check but dies instantly in bash arithmetic.
 printf 'recent_hours=08\n' > "$CONF"
 assert_rc 0 "$TTBIN" --list
-assert_contains "$(list_row alpha)" "$ESC[1m" "recent_hours=08 은 8시간으로 읽힌다"
+assert_contains "$(list_row alpha)" "$ESC[1m" "recent_hours=08 is read as 8 hours"
 
-# ── ③ unseen_minutes — 상태바 ✓ 유지 시간 ───────────────────────────────────
-# finished 대장에 "6분 40초 전에 끝난 세션"을 하나 둔다. 세션은 살아 있고(=session_id 가
-# 나온다) 아직 안 들어가봤다(last_attached=0 < ts) → 뱃지 조건은 오직 경과 시간뿐이다.
+# ── ③ unseen_minutes — how long the status bar keeps the ✓ badge ─────────────
+# Puts one "session that finished 6 min 40 sec ago" into the finished ledger. The session is alive
+# (session_id comes back) and hasn't been attached to yet (last_attached=0 < ts) → the badge
+# condition is elapsed time alone.
 export TT_FAKE_DISP='$0|0'
 fin_ts=$(( now - 400 ))
 : > "$CONF"
 printf '%s alpha\n' "$fin_ts" > "$STATE/finished"
-assert_contains "$("$TTBIN" --status 2>/dev/null)" "✓alpha" "기본 unseen_minutes=10 이면 400초 전 완료는 아직 보인다"
+assert_contains "$("$TTBIN" --status 2>/dev/null)" "✓alpha" "with the default unseen_minutes=10, a finish from 400 seconds ago is still visible"
 
 printf 'unseen_minutes=5\n' > "$CONF"
 printf '%s alpha\n' "$fin_ts" > "$STATE/finished"
 out=$("$TTBIN" --status 2>/dev/null)
 case "$out" in *✓alpha*) got=yes ;; *) got=no ;; esac
-assert_eq "$got" "no" "unseen_minutes=5 면 400초 전 완료는 상태바에서 사라진다"
-# 사라진 건 뱃지뿐 — 대장에는 남아야 한다(들어가볼 때까지 유지가 원래 계약이다).
-assert_contains "$(cat "$STATE/finished")" "alpha" "뱃지가 꺼져도 finished 기록은 남는다"
+assert_eq "$got" "no" "with unseen_minutes=5, a finish from 400 seconds ago disappears from the status bar"
+# Only the badge disappears — it must remain in the ledger (the contract is to keep it until someone attaches).
+assert_contains "$(cat "$STATE/finished")" "alpha" "the finished record remains even after the badge turns off"
 rm -f "$STATE/finished"
 
-# ── ④ log_max — 훅 로그 회전 임계 ───────────────────────────────────────────
-# 회전은 --cron 이 부른다. rc·snapshot 을 꺼두면 그 진입점에서 tmux 로 나가는 길이 전부
-# 닫혀, 이 단언은 회전 하나만 잰다.
+# ── ④ log_max — the hook-log rotation threshold ──────────────────────────────
+# Rotation is triggered by --cron. With rc and snapshot turned off, every path from that entry
+# point out to tmux is closed, so this assertion measures rotation alone.
 mklog() { i=0; : > "$STATE/hook.log"; while [ "$i" -lt 300 ]; do printf 'line %s ----------\n' "$i" >> "$STATE/hook.log"; i=$((i + 1)); done; }
 
 printf 'rc=off\nsnapshot=off\nlog_max=200\n' > "$CONF"
 mklog
 "$TTBIN" --cron >/dev/null 2>&1 || true
-assert_contains "$(cat "$STATE/hook.log")" "rotated" "log_max=200 이면 로그가 회전한다"
+assert_contains "$(cat "$STATE/hook.log")" "rotated" "with log_max=200, the log rotates"
 
-printf 'rc=off\nsnapshot=off\n' > "$CONF"      # 기본 1MB
+printf 'rc=off\nsnapshot=off\n' > "$CONF"      # default 1MB
 mklog
 "$TTBIN" --cron >/dev/null 2>&1 || true
 case "$(cat "$STATE/hook.log")" in *rotated*) got=yes ;; *) got=no ;; esac
-assert_eq "$got" "no" "기본 log_max 면 같은 로그가 회전하지 않는다"
+assert_eq "$got" "no" "with the default log_max, the same log does not rotate"
 
 printf 'rc=off\nsnapshot=off\nlog_max=200\n' > "$CONF"
 mklog
 TT_LOG_MAX=1048576 "$TTBIN" --cron >/dev/null 2>&1 || true
 case "$(cat "$STATE/hook.log")" in *rotated*) got=yes ;; *) got=no ;; esac
-assert_eq "$got" "no" "TT_LOG_MAX 환경변수가 설정 파일을 이긴다"
+assert_eq "$got" "no" "the TT_LOG_MAX environment variable overrides the config file"
 rm -f "$STATE/hook.log"
 
-# 그리고 그 하위호환의 대가였던 거짓말이 없어졌다 — 예전엔 10-util.sh 가 TT_LOG_MAX 전역을
-# 스스로 세워서, 진짜 환경변수가 없는데도 출처가 늘 env 로 보였다(그래서 토글이 거절됐다).
+# And the lie that was the price of that backward compatibility is gone — 10-util.sh used to set
+# the TT_LOG_MAX global itself, so the source always showed as env even when no real environment
+# variable was set (which is why the toggle used to be rejected).
 printf 'log_max=4096\n' > "$CONF"
-assert_eq "$("$TTBIN" config get log_max)" "4096" "log_max 를 설정 파일에서 읽는다"
-assert_eq "$("$TTBIN" config source log_max)" "file" "출처도 file 이라고 말한다"
-assert_eq "$(TT_LOG_MAX=999 "$TTBIN" config get log_max)" "999" "TT_LOG_MAX 환경변수가 이긴다"
-assert_eq "$(TT_LOG_MAX=999 "$TTBIN" config source log_max)" "env" "그땐 출처가 env 다"
+assert_eq "$("$TTBIN" config get log_max)" "4096" "reads log_max from the config file"
+assert_eq "$("$TTBIN" config source log_max)" "file" "and reports the source as file too"
+assert_eq "$(TT_LOG_MAX=999 "$TTBIN" config get log_max)" "999" "the TT_LOG_MAX environment variable wins"
+assert_eq "$(TT_LOG_MAX=999 "$TTBIN" config source log_max)" "env" "then the source is env"
 
-# ── ⑤ "미배선" 표시가 배선 현황과 일치하는가 ────────────────────────────────
+# ── ⑤ Does the "not wired" marker match the actual wiring? ───────────────────
 : > "$CONF"
 cli=$("$TTBIN" config list)
 
-# 배선된 열 키 — T4(rc·snapshot·boot_restore) + T6(tmux 스니펫 셋) + T5(이 태스크의 넷).
-# 이 목록이 늘어야 할 때 안 늘면 화면이 거짓말을 한다. 반대로 아직 안 문 키에 표시가
-# 빠져도 거짓말이다 — 그래서 양쪽을 다 잰다.
+# Wired keys — T4 (rc, snapshot, boot_restore) + T6 (the tmux snippet set) + T5 (this task's four).
+# If this list should grow and doesn't, the screen lies. Conversely, if a marker is missing on a
+# key that isn't wired yet, that's a lie too — so both directions are measured.
 for k in rc snapshot boot_restore snapshot_on_exit key_summon key_summon_fast \
          recent_hours unseen_minutes accent log_max; do
     row=$(printf '%s\n' "$cli" | grep -a "^$k ")
-    case "$row" in *미배선*) got=yes ;; *) got=no ;; esac
-    assert_eq "$got" "no" "config list: $k 은 물려 있으니 표시가 없다"
+    case "$row" in *"not wired"*) got=yes ;; *) got=no ;; esac
+    assert_eq "$got" "no" "config list: $k is wired, so it shows no marker"
 done
-# 아직 안 물린 여덟 — 단축키 재매핑(T7)이 아직 없다.
+# The eight not yet wired — key rebinding (T7) doesn't exist yet.
 for k in key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings; do
     row=$(printf '%s\n' "$cli" | grep -a "^$k ")
-    case "$row" in *미배선*) got=yes ;; *) got=no ;; esac
-    assert_eq "$got" "yes" "config list: $k 은 아직 안 물렸으니 표시가 붙는다"
+    case "$row" in *"not wired"*) got=yes ;; *) got=no ;; esac
+    assert_eq "$got" "yes" "config list: $k is not wired yet, so it carries a marker"
 done
-assert_eq "$(printf '%s\n' "$cli" | grep -c '← 미배선')" "8" "지금 미배선인 키는 정확히 여덟이다"
-assert_contains "$cli" "값은 저장되지만" "표시가 무슨 뜻인지 표 밑에 한 줄로 설명한다"
+assert_eq "$(printf '%s\n' "$cli" | grep -c '← not wired')" "8" "exactly eight keys are currently not wired"
+assert_contains "$cli" "value is saved but no code reads it yet" "explains what the marker means in one line below the table"
 
-# 값을 실제로 바꾸는 순간에도 말한다 — 목록을 안 보고 바로 set 하는 사람이 제일 잘 속는다.
+# It says so at the moment a value is actually changed too — someone who sets a value without ever
+# looking at the list is the easiest to mislead.
 : > "$CONF"
-assert_contains "$("$TTBIN" config set key_new ctrl-y 2>&1)" "아직 아무 동작에도 안 물렸다" \
-    "미배선 키를 set 하면 그 사실을 그 자리에서 말한다"
+assert_contains "$("$TTBIN" config set key_new ctrl-y 2>&1)" "is not wired to any action yet" \
+    "setting a not-wired key states that fact right there"
 assert_eq "$("$TTBIN" config set key_new ctrl-y 2>/dev/null)" "key_new=ctrl-y" \
-    "그 안내는 stderr 로만 간다 — stdout 의 key=value 는 그대로다"
+    "that notice goes to stderr only — stdout's key=value stays unchanged"
 out=$("$TTBIN" config set accent 200 2>&1)
-case "$out" in *물렸다*) got=yes ;; *) got=no ;; esac
-assert_eq "$got" "no" "배선된 키를 set 할 땐 아무 말도 덧붙이지 않는다"
+case "$out" in *"not wired"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "setting a wired key adds no extra remark"
 : > "$CONF"
 
-# 팝업 설정화면과 CLI 의 판정은 같은 함수에서 나온다 — 어느 한쪽만 보고 설정하는 사람이
-# 다른 결론을 얻으면 안 된다. 키 이름을 손으로 적지 않고 두 출력을 맞대어 잰다.
+# The popup settings screen and the CLI both draw their verdict from the same function — someone
+# who only looks at one of them must not reach a different conclusion. Rather than hand-writing key
+# names, this compares the two outputs against each other.
 pop=$("$TTBIN" --config-list)
 mismatch=""
 for k in $(printf '%s\n' "$cli" | sed -n '2,$p' | awk '{ print $1 }'); do
-    case "$k" in ''|미배선*) continue ;; esac
+    case "$k" in ''|"not"*) continue ;; esac
     a=no; b=no
-    case "$(printf '%s\n' "$cli" | grep -a "^$k ")" in *미배선*) a=yes ;; esac
-    case "$(printf '%s\n' "$pop" | grep -a "^$k$TAB")" in *미배선*) b=yes ;; esac
+    case "$(printf '%s\n' "$cli" | grep -a "^$k ")" in *"not wired"*) a=yes ;; esac
+    case "$(printf '%s\n' "$pop" | grep -a "^$k$TAB")" in *"not wired"*) b=yes ;; esac
     [ "$a" = "$b" ] || mismatch="$mismatch $k"
 done
-assert_eq "$mismatch" "" "CLI 와 팝업의 미배선 판정이 키마다 일치한다"
+assert_eq "$mismatch" "" "the CLI's and popup's not-wired verdicts agree key by key"
 
-# 표시가 우연이 아니라 **코드에서 뽑은** 것인지, 그리고 근거를 못 얻었을 때의 처신.
-# 스크립트를 stdin 으로 먹이면 자기 절대경로 해석이 bash 실행파일로 떨어져 스캔이 아무것도
-# 못 찾는다 — 근거 0인 상황이 실제로 만들어진다. 그때는 아무 표시도 하지 않아야 한다:
-# 전부 "미배선"으로 칠하는 쪽이 훨씬 큰 거짓말이다.
+# Whether the marker is **pulled from code** rather than coincidental, and how it behaves when it
+# can't get evidence. Feeding the script in via stdin makes its own absolute-path resolution
+# collapse to the bash executable, so the scan finds nothing — a genuine zero-evidence situation.
+# In that case it must show no marker at all: painting everything as "not wired" would be the far
+# bigger lie.
 out=$(bash -s -- config list < "$TTBIN" 2>/dev/null) || out=''
-case "$out" in *미배선*) got=yes ;; *) got=no ;; esac
-assert_eq "$got" "no" "배선 근거를 못 얻으면 미배선 표시를 아예 안 붙인다"
-assert_contains "$out" "key_new" "그래도 표 자체는 정상으로 나온다"
+case "$out" in *"not wired"*) got=yes ;; *) got=no ;; esac
+assert_eq "$got" "no" "when wiring evidence can't be obtained, no not-wired marker is attached at all"
+assert_contains "$out" "key_new" "the table itself still renders normally"
 
-# ── ⑥ --help 첫 화면은 지금 이 기계의 설정을 말한다 (게이트 B7) ─────────────
-# installer 가 마지막에 "tt --help 가 전부 설명한다"로 팀원을 보낸다 — 설치 직후 가장 먼저
-# 읽는 화면이다. 예전엔 여기가 Option+← 와 6h/10 min 을 하드코딩했다. 기본값은 무prefix 키를
-# 하나도 안 걸므로(key_summon_fast 가 빈 값) 그 첫 줄은 **없는 키를 가르치는 거짓말**이었다.
+# ── ⑥ The --help first screen states this machine's current config (gate B7) ─
+# The installer sends teammates off with "tt --help explains everything" at the end — it's the
+# first screen read right after install. This used to hardcode Option+← and 6h/10 min here. The
+# default binds no prefix-less key at all (key_summon_fast is empty), so that first line was
+# **a lie teaching a key that doesn't exist**.
 : > "$CONF"
 h=$("$TTBIN" --help 2>/dev/null)
-assert_eq "$(printf '%s' "$h" | grep -c 'Option+←' || true)" "0" "안 걸린 키를 가르치지 않는다"
-assert_contains "$h" "prefix + F"          "기본 소환키를 설정에서 읽어 보여준다"
-assert_contains "$h" "no prefix-less key"  "무prefix 키가 없으면 없다고 말한다"
-assert_contains "$h" "key_summon_fast"     "켜는 방법을 그 자리에 적는다"
-assert_contains "$h" "talked within 6h"    "기본 recent_hours 를 읽어 쓴다"
-assert_contains "$h" "or 10 min"           "기본 unseen_minutes 를 읽어 쓴다"
+assert_eq "$(printf '%s' "$h" | grep -c 'Option+←' || true)" "0" "it doesn't teach a key that isn't bound"
+assert_contains "$h" "prefix + F"          "reads the default summon key from config and shows it"
+assert_contains "$h" "no prefix-less key"  "says so when there is no prefix-less key"
+assert_contains "$h" "key_summon_fast"     "writes how to turn it on right there"
+assert_contains "$h" "talked within 6h"    "reads and prints the default recent_hours"
+assert_contains "$h" "or 10 min"           "reads and prints the default unseen_minutes"
 
 printf 'key_summon=T\nkey_summon_fast=C-Left M-Left\nrecent_hours=3\nunseen_minutes=45\n' > "$CONF"
 h=$("$TTBIN" --help 2>/dev/null)
-assert_contains "$h" "prefix + T"      "바꾼 key_summon 이 화면에 나온다"
-assert_contains "$h" "C-Left M-Left"   "바꾼 key_summon_fast 가 화면에 나온다"
-assert_eq "$(printf '%s' "$h" | grep -c 'no prefix-less key' || true)" "0" "걸렸으면 없다고 안 한다"
-assert_contains "$h" "talked within 3h" "바꾼 recent_hours 가 화면에 나온다"
-assert_contains "$h" "or 45 min"        "바꾼 unseen_minutes 가 화면에 나온다"
-assert_eq "$(printf '%s' "$h" | grep -c 'talked within 6h' || true)" "0" "옛 하드코딩 값이 남아 있지 않다"
+assert_contains "$h" "prefix + T"      "the changed key_summon shows up on screen"
+assert_contains "$h" "C-Left M-Left"   "the changed key_summon_fast shows up on screen"
+assert_eq "$(printf '%s' "$h" | grep -c 'no prefix-less key' || true)" "0" "when a key is bound, it doesn't say there is none"
+assert_contains "$h" "talked within 3h" "the changed recent_hours shows up on screen"
+assert_contains "$h" "or 45 min"        "the changed unseen_minutes shows up on screen"
+assert_eq "$(printf '%s' "$h" | grep -c 'talked within 6h' || true)" "0" "the old hardcoded value is not left behind"
 
-# 소환키를 아예 다 비운 사람에게도 정직해야 한다
+# Must be honest even to someone who empties out every summon key
 printf 'key_summon=\nkey_summon_fast=\n' > "$CONF"
 h=$("$TTBIN" --help 2>/dev/null)
-assert_contains "$h" "key_summon is empty" "prefix 키까지 비면 그 사실을 말한다"
+assert_contains "$h" "key_summon is empty" "when even the prefix key is empty, it says so"
 
-# ── 봉인 확인 ──────────────────────────────────────────────────────────────
-# 이 파일은 --list·--status·--cron 을 실제로 부른다. 전부 봉인된 가짜 tmux 를 지나갔고,
-# 그중 상태를 바꾸는 하위명령은 한 건도 없었어야 한다.
-assert_no_tmux_mutation "이 파일이 부른 tmux 는 전부 읽기 전용이었다"
+# ── Seal check ────────────────────────────────────────────────────────────
+# This file actually calls --list, --status, --cron. All of them passed through the sealed fake
+# tmux, and not one of them should have been a state-mutating subcommand.
+assert_no_tmux_mutation "every tmux call this file made was read-only"
 
 tt_test_done

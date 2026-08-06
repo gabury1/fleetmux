@@ -1,67 +1,72 @@
 #!/usr/bin/env bash
-# bash 3.2 계약 — 맥 기본 /bin/bash 에서 죽는 문법이 하나라도 들어오면 여기서 터진다.
+# The bash 3.2 contract — if even one piece of syntax that dies on macOS's default /bin/bash
+# slips in, it blows up right here.
 #
-# 왜 이 파일이 생겼나(2026-08-05, 팀 배포 게이트 B6):
-#   src/50-hook.sh 에 `${payload,,}` 가 있었다. bash 4.0 전용 문법이고, 맥 기본 셸은 3.2 다.
-#   **파싱은 통과하고 확장 시점에 죽기 때문에** 증상이 조용하다 — 설치도 되고 목록도 뜨는데
-#   ⏸(승인 대기)만 영영 안 뜬다. README·SKILL 이 둘 다 "the one that matters"라고 못박은
-#   바로 그 신호가, 아무 에러 없이 사라진다. 이 기계(리눅스·bash 5)에서는 전 테스트가
-#   통과하므로 **동작 테스트로는 절대 못 잡는다.** 그래서 문법을 정적으로 훑는다.
+# Why this file exists (2026-08-05, team deploy gate B6):
+#   src/50-hook.sh had `${payload,,}`. That's bash-4.0-only syntax, and macOS's default shell
+#   is 3.2. **It parses fine and dies at expansion time**, so the symptom is quiet — the
+#   install succeeds, the list shows up, and only the pause badge (⏸, waiting for approval)
+#   never appears, ever. README and SKILL both pin that exact signal down as "the one that
+#   matters," and it vanishes with no error at all. On this machine (Linux, bash 5) every
+#   behavioural test passes, so **behavioural tests alone can never catch it.** So instead we
+#   scan the syntax statically.
 #
-# 검사 대상은 "팀원 기계에서 도는 것" 전부다: bin/fmux 의 재료(src/*.sh), 설치기, PATH shim.
-# 전줄 주석(^#)은 뺀다 — 05-config.sh 는 "${var^^} 는 없다"라고 **적어 두는** 것이 옳고,
-# 그 문장을 못 쓰게 만들면 다음 사람이 이유를 모른 채 같은 실수를 한다.
+# What gets scanned is everything that "runs on a teammate's machine": the ingredients of
+# bin/fmux (src/*.sh), the installer, the PATH shim. Whole-line comments (^#) are excluded —
+# 05-config.sh is right to **write down** "${var^^} does not exist," and if that sentence can't
+# be written, the next person makes the same mistake without knowing why.
 set -u
 . "$(dirname "$0")/lib.sh"
 tt_test_sandbox
 cd "$(dirname "$0")/.." || exit 1
 
-# 금지 문법 → 사람이 읽는 이름. 셋 다 "3.2 에서 죽는다"가 이유다.
-#   ${v,,} ${v^^}  대소문자 변환      → tr '[:upper:]' '[:lower:]' 로 쓴다(05-config.sh 관례)
-#   declare -A     연관배열           → "\n<키>\t<값>" 줄 표 + case 글롭(80-view.sh 관례)
-#   mapfile/readarray                 → while IFS= read -r 루프
+# Forbidden syntax -> human-readable name. All three exist for the same reason: "dies on 3.2."
+#   ${v,,} ${v^^}  case conversion      -> written as tr '[:upper:]' '[:lower:]' (05-config.sh convention)
+#   declare -A     associative array    -> "\n<key>\t<value>" line table + case-glob (80-view.sh convention)
+#   mapfile/readarray                   -> a while IFS= read -r loop
 PAT_LOWER='\$\{[A-Za-z_][A-Za-z0-9_]*,,'
 PAT_UPPER='\$\{[A-Za-z_][A-Za-z0-9_]*\^\^'
 PAT_ASSOC='(declare|typeset|local)[[:space:]]+-[A-Za-z]*A'
 PAT_MAPF='(^|[^-A-Za-z_])(mapfile|readarray)[[:space:]]'
 
-# 전줄 주석을 뺀 본문만 훑는다.
+# Scan only the body, with whole-line comments stripped out.
 code_of() { grep -v '^[[:space:]]*#' "$1"; }
 
-scan() {   # $1=파일  $2=정규식  → 걸린 줄(파일:줄번호 포함)
+scan() {   # $1=file  $2=regex  -> matching lines (with file:line prefix)
     code_of "$1" | grep -nE "$2" | sed "s|^|$1: |" || true
 }
 
 FILES=$(ls src/*.sh install.sh libexec/claude libexec/codex 2>/dev/null)
 
 for f in $FILES; do
-    assert_eq "$(scan "$f" "$PAT_LOWER")" "" "$f 에 bash4 전용 \${v,,} 가 없다"
-    assert_eq "$(scan "$f" "$PAT_UPPER")" "" "$f 에 bash4 전용 \${v^^} 가 없다"
-    assert_eq "$(scan "$f" "$PAT_ASSOC")" "" "$f 에 연관배열 선언이 없다"
-    assert_eq "$(scan "$f" "$PAT_MAPF")"  "" "$f 에 mapfile·readarray 가 없다"
+    assert_eq "$(scan "$f" "$PAT_LOWER")" "" "$f has no bash4-only \${v,,}"
+    assert_eq "$(scan "$f" "$PAT_UPPER")" "" "$f has no bash4-only \${v^^}"
+    assert_eq "$(scan "$f" "$PAT_ASSOC")" "" "$f has no associative-array declaration"
+    assert_eq "$(scan "$f" "$PAT_MAPF")"  "" "$f has no mapfile/readarray"
 done
 
-# 산출물도 같이 본다 — src 를 고치고 make 를 안 돌리면 팀원이 받는 파일은 옛 문법 그대로다.
+# Check the build output too — if src is fixed but make wasn't rerun, what a teammate gets is
+# still the old syntax.
 for p in "$PAT_LOWER" "$PAT_UPPER" "$PAT_ASSOC" "$PAT_MAPF"; do
-    assert_eq "$(scan bin/fmux "$p")" "" "bin/fmux 에 bash4 전용 문법이 없다"
+    assert_eq "$(scan bin/fmux "$p")" "" "bin/fmux has no bash4-only syntax"
 done
 
-# ── 그물이 진짜인지 자기검사 ────────────────────────────────────────────────
-# 정규식이 오타 하나로 아무것도 안 잡는 그물이 되면, 이 파일은 영원히 초록불만 켠다.
-# 그래서 "잡혀야 하는 것"을 일부러 만들어 한 번 잡아본다.
+# ── self-test: is the net actually catching anything ───────────────────────────────────────
+# If one typo in a regex turns it into a net that catches nothing, this file stays green
+# forever. So we deliberately manufacture "something that should get caught" and catch it once.
 BAIT="$TTROOT/bait.sh"
 cat > "$BAIT" <<'EOF'
-# 이 줄은 주석이라 안 잡혀야 한다: ${v,,} ${v^^} declare -A mapfile
+# this line is a comment and must NOT be caught: ${v,,} ${v^^} declare -A mapfile
 x=${payload,,}
 y=${name^^}
 declare -A tbl
 mapfile -t lines < f
 EOF
-assert_contains "$(scan "$BAIT" "$PAT_LOWER")" 'x=${payload,,}' "그물이 \${v,,} 를 실제로 잡는다"
-assert_contains "$(scan "$BAIT" "$PAT_UPPER")" 'y=${name^^}'    "그물이 \${v^^} 를 실제로 잡는다"
-assert_contains "$(scan "$BAIT" "$PAT_ASSOC")" 'declare -A tbl' "그물이 연관배열을 실제로 잡는다"
-assert_contains "$(scan "$BAIT" "$PAT_MAPF")"  'mapfile -t'     "그물이 mapfile 을 실제로 잡는다"
-# 그리고 주석 줄은 안 잡는다 — 안 그러면 "왜 쓰면 안 되는지"를 못 적게 된다.
-assert_eq "$(scan "$BAIT" "$PAT_LOWER" | grep -c '이 줄은 주석' || true)" "0" "전줄 주석은 그물에 안 걸린다"
+assert_contains "$(scan "$BAIT" "$PAT_LOWER")" 'x=${payload,,}' "the net actually catches \${v,,}"
+assert_contains "$(scan "$BAIT" "$PAT_UPPER")" 'y=${name^^}'    "the net actually catches \${v^^}"
+assert_contains "$(scan "$BAIT" "$PAT_ASSOC")" 'declare -A tbl' "the net actually catches an associative array"
+assert_contains "$(scan "$BAIT" "$PAT_MAPF")"  'mapfile -t'     "the net actually catches mapfile"
+# And it does not catch the comment line — otherwise nobody could write down why it's forbidden.
+assert_eq "$(scan "$BAIT" "$PAT_LOWER" | grep -c 'this line is a comment' || true)" "0" "a whole-line comment is not caught by the net"
 
 tt_test_done
