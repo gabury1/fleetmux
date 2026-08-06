@@ -3984,16 +3984,24 @@ if [ "${1:-}" = "--help" ]; then
     #   prefix + <key> still works and is still listed by `fmux config list`; it is left off this
     #   screen on purpose, so the one keystroke that matters is not competing with a two-keystroke
     #   alternative nobody reaches for.
+    # Drawn as a chip — reverse video, the key inside it — not as a labelled row.
+    #   Everything else on this screen is a key you press *after* the popup is open. This is the
+    #   one that opens it, and it is the one people fail to find (measured: a teammate had a
+    #   working install and no way to get in). A row that looks like every other row does not
+    #   carry that. The chip is the only reverse-video thing on the page, so the eye lands on it
+    #   before it starts reading.
+    R7=$'\033[7m'
     if [ -n "$hfast" ]; then
-        hsummon="${B}${T}$hfast${R}  ${D}anywhere in tmux, no prefix${R}"
+        hsummon="${T}${R7}${B} $hfast ${R}   ${D}press it anywhere in tmux — no prefix, one key${R}"
     else
-        hsummon="${B}not set${R}  ${D}— turn it on: fmux config set key_summon_fast S-Left${R}"
+        # Equally loud when it is missing. "You have no way to open this" is not a footnote.
+        hsummon="${R7}${B} no summon key ${R}   ${D}set one: fmux config set key_summon_fast S-Left${R}"
     fi
     cat << EOF
 
   ${B}fmux — tmux session manager${R}  ${D}works with claude & codex sessions${R}
 
-  ${T}summon${R}     $hsummon
+  $hsummon
 
   ${T}navigate${R}
     →/Enter    enter session          ←/Esc    close    ^D  detach tmux (back to shell)

@@ -232,7 +232,7 @@ assert_eq "$(printf '%s' "$h" | grep -c 'Option+←' || true)" "0" "it doesn't t
 # not competing with a two-keystroke alternative.
 assert_eq "$(printf '%s' "$h" | grep -c 'prefix + ' || true)" "0" \
     "★the help screen does not teach the prefix route — one summon key, stated once"
-assert_contains "$h" "not set"             "says so when no prefix-less key is bound"
+assert_contains "$h" "no summon key"       "says so when no prefix-less key is bound"
 assert_contains "$h" "key_summon_fast"     "writes how to turn it on right there"
 assert_contains "$h" "talked within 1h"    "reads and prints the default recent_hours"
 assert_contains "$h" "or 10 min"           "reads and prints the default unseen_minutes"
@@ -240,7 +240,7 @@ assert_contains "$h" "or 10 min"           "reads and prints the default unseen_
 printf 'key_summon=T\nkey_summon_fast=C-Left M-Left\nrecent_hours=3\nunseen_minutes=45\n' > "$CONF"
 h=$("$FMUXBIN" --help 2>/dev/null)
 assert_contains "$h" "C-Left M-Left"   "the changed key_summon_fast shows up on screen"
-assert_eq "$(printf '%s' "$h" | grep -c 'not set' || true)" "0" "when a key is bound, it does not say there is none"
+assert_eq "$(printf '%s' "$h" | grep -c 'no summon key' || true)" "0" "when a key is bound, it does not say there is none"
 assert_contains "$h" "talked within 3h" "the changed recent_hours shows up on screen"
 assert_contains "$h" "or 45 min"        "the changed unseen_minutes shows up on screen"
 assert_eq "$(printf '%s' "$h" | grep -c 'talked within 6h' || true)" "0" "the old hardcoded value is not left behind"
@@ -248,7 +248,7 @@ assert_eq "$(printf '%s' "$h" | grep -c 'talked within 6h' || true)" "0" "the ol
 # Must be honest even to someone who empties out every summon key
 printf 'key_summon=\nkey_summon_fast=\n' > "$CONF"
 h=$("$FMUXBIN" --help 2>/dev/null)
-assert_contains "$h" "not set" "with every summon key emptied, the screen says so instead of showing a blank"
+assert_contains "$h" "no summon key" "with every summon key emptied, the screen says so instead of showing a blank"
 assert_contains "$h" "key_summon_fast" "and tells you the one command that fixes it"
 
 # ── Seal check ────────────────────────────────────────────────────────────
