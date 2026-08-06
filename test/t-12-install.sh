@@ -612,6 +612,43 @@ assert_eq "$(ls -d "$HOME/.claude/skills/fleetmux.fmux-bak."* 2>/dev/null | wc -
 assert_eq "$(cat "$HOME"/.claude/skills/fleetmux.fmux-bak.*/SKILL.md | grep -c 'a line I edited later' || true)" "1" \
     "that copy contains the line the person edited"
 
+# ── ⑫-b `curl | bash` must still be able to ask ──────────────────────────────
+# Measured 2026-08-06, on the day the repo went public: the very first real install off the
+# README one-liner produced a binary and nothing else. `curl … | bash` puts the *script* on
+# stdin, so `[ -t 0 ]` was false and every question auto-answered "no" — the tmux snippet was
+# never linked, no summon key was bound, and the popup could not be opened at all. Nothing in
+# the output said a choice had been skipped.
+#
+# So this measures the distinction the old code collapsed:
+#   "stdin is a pipe"  ≠  "no human is here"
+# The installer now asks through /dev/tty. Runs under a pty, with stdin fed from a pipe —
+# exactly the `curl | bash` shape — and requires that a question is actually printed.
+# Skipped where no pty tool exists; the no-tty path below is measured either way.
+if script -qec true /dev/null > /dev/null 2>&1; then
+    PTYOUT="$TTROOT/pty.out"
+    PTYHOME="$TTROOT/ptyhome"; mkdir -p "$PTYHOME"
+    printf 'n\nn\nn\nn\nn\nn\n' > "$TTROOT/answers"
+    FMUX_TTY='' script -qec \
+        "HOME=$PTYHOME FMUX_TTY= bash -c 'cat $REPO/install.sh | bash -s -- --prefix $PTYHOME/.local --preset safe'" \
+        /dev/null < "$TTROOT/answers" > "$PTYOUT" 2>&1 || true
+    assert_eq "$(cnt "$PTYOUT" '\[y/N\]')" "2" \
+        "★piped into bash under a terminal, it still asks (the README one-liner is this exact shape)"
+    assert_eq "$(cnt "$PTYOUT" 'not a terminal, so we did not ask')" "0" \
+        "★it does not claim there is no terminal when there is one"
+else
+    printf '  skip no pty tool (script) — cannot measure the curl-pipe ask path here\n'
+fi
+
+# And the genuine no-one-is-here case must keep answering itself "no". FMUX_TTY=off forces it
+# (the sandbox exports it), because a suite run from a terminal could otherwise open /dev/tty
+# and behave differently depending on whether a human was watching.
+NOTTYHOME="$TTROOT/nottyhome"; mkdir -p "$NOTTYHOME"
+OUT=$(HOME="$NOTTYHOME" FMUX_TTY=off bash "$REPO/install.sh" \
+        --prefix "$NOTTYHOME/.local" --preset safe < /dev/null 2>&1) || true
+assert_eq "$(has "$OUT" 'not a terminal, so we did not ask')" "yes" \
+    "with no terminal at all it still refuses to assume consent"
+assert_eq "$(ex "$NOTTYHOME/.tmux.conf")" "no" "and it changes nothing it was not allowed to change"
+
 # ── ⑬ did the real tmux leak ─────────────────────────────────────────────────
 assert_eq "$(ex "$LEAK")" "no" "the fake tmux/fzf was never called with anything but -V"
 assert_eq "$(cnt "$CALLS" '^tmux -V$')" "$(cnt "$CALLS" '^tmux ')" "every tmux call was -V"

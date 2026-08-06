@@ -128,10 +128,37 @@ die() {
 is_dry() { [ "$DRY" = 1 ]; }
 
 # ── asking ──────────────────────────────────────────────────────────────────
-# If stdin is not a terminal (pipe, CI, test), never ask — go with "no".
 # Anything that needs consent doesn't happen without it — silence is not consent.
+#
+# But "stdin is not a terminal" is NOT the same as "no human is here, so answer no",
+# and treating them as the same broke the documented install path. Measured 2026-08-06:
+# with `curl … | bash`, stdin is the pipe carrying the script, so every question
+# auto-answered "no" — the tmux snippet was never linked, no summon key was bound, and the
+# agent skill was never installed. The user was left with a binary and no way to open the
+# popup, and nothing about the output said that had happened. **The headline install path
+# silently produced a half install.**
+#
+# So when stdin is not a terminal, ask the controlling terminal directly through /dev/tty
+# and read answers from fd 3. If there is no controlling terminal either (cron, CI, a test
+# harness), there really is no one to ask, and only then do questions answer themselves
+# with "no".
+#
+# FMUX_TTY=off forces that no-one-is-here path. Tests need it: a test run from a terminal
+# can still open /dev/tty, so without this the suite's behaviour would depend on whether a
+# human happened to be watching.
 ASK_TTY=0
-[ -t 0 ] && ASK_TTY=1
+TTY_FD=''
+if [ -t 0 ]; then
+    ASK_TTY=1
+elif [ "${FMUX_TTY:-}" != off ] && exec 3< /dev/tty 2>/dev/null; then
+    ASK_TTY=1
+    TTY_FD=3
+fi
+
+# read a line from wherever the human actually is
+ask_read() {   # $1=variable name
+    if [ -n "$TTY_FD" ]; then read -r "$1" <&3; else read -r "$1"; fi
+}
 
 ask_yn() {   # $1=question  → rc 0 means yes
     local q="$1" ans=''
@@ -144,7 +171,7 @@ ask_yn() {   # $1=question  → rc 0 means yes
         return 1
     fi
     printf '  %s [y/N] ' "$q"
-    read -r ans || ans=''
+    ask_read ans || ans=''
     case "$ans" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
@@ -152,7 +179,7 @@ ask_word() {   # $1=question  $2=default  → answer on stdout
     local q="$1" def="$2" ans=''
     if [ "$ASSUME_YES" = 1 ] || [ "$ASK_TTY" = 0 ]; then printf '%s' "$def"; return 0; fi
     printf '  %s [%s] ' "$q" "$def" >&2
-    read -r ans || ans=''
+    ask_read ans || ans=''
     [ -n "$ans" ] || ans="$def"
     printf '%s' "$ans"
 }

@@ -16,6 +16,10 @@ tt_test_sandbox() {
     TTROOT=$(mktemp -d "${TMPDIR:-/tmp}/fmux-test.XXXXXX") || exit 1
     export HOME="$TTROOT/home"
     export XDG_CONFIG_HOME="$TTROOT/home/.config"
+    # install.sh asks the controlling terminal through /dev/tty when stdin is a pipe. A test
+    # run from a terminal can open /dev/tty too, so without this the suite would answer
+    # questions differently depending on whether a human happened to be watching it.
+    export FMUX_TTY=off
     mkdir -p "$HOME" "$XDG_CONFIG_HOME"
     # Isolate the socket name so tests never attach to a real tmux server.
     # TMUX_TMPDIR alone isn't enough — if this shell is already inside a tmux client, a bare
