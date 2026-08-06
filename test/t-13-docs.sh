@@ -226,7 +226,14 @@ assert_contains "$SRC" 'tt_mf_upsert "$sname"' "that upsert actually exists on t
 
 # ── (4)-e can the install section actually be followed (deploy gate B11) ───────────────────
 assert_eq "$(grep -c '<you>' "$README" || true)" "0" "no uncopyable placeholders remain"
-assert_contains "$RM" 'no published remote yet' "it states the fact that there is no remote yet"
+# The repo went public on 2026-08-06. README used to say there was no published remote —
+# now the opposite must hold, and the claim must match what install.sh actually defaults to.
+assert_eq "$(grep -c 'no published remote yet' "$README" || true)" "0" \
+    "the obsolete 'no published remote yet' sentence is gone from README"
+assert_contains "$RM" 'raw.githubusercontent.com/gabury1/fleetmux' "README gives the real one-liner address"
+assert_contains "$(cat install.sh)" 'gabury1/fleetmux' "install.sh defaults to that same address (README does not point somewhere the installer will not go)"
+assert_eq "$(grep -l 'OWNER/fleetmux' "$README" install.sh 2>/dev/null | grep -c .)" "0" \
+    "no placeholder slug survives in README or install.sh"
 assert_contains "$RM" 'export PATH="$HOME/.local/libexec/tt:$HOME/.local/bin:$PATH"' \
     "README states the PATH line verbatim"
 assert_contains "$INST_SH" 'export PATH="%s:%s:$PATH"' "install.sh prints the same line"
