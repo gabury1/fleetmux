@@ -355,25 +355,22 @@ and install that.
 ### A. One line, from a release
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/fleetmux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/gabury1/fleetmux/main/install.sh | bash
 ```
 
 Or read it first — which is the reasonable thing to do with any `curl | sh`, and we are
 not going to pretend otherwise:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/fleetmux/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/gabury1/fleetmux/main/install.sh -o install.sh
 less install.sh          # look at what you are about to run
 bash install.sh
 ```
 
-> **The URL is a placeholder.** There is no published remote yet — this repo is still
-> private, so `OWNER/fleetmux` is not a real address and the one-liner cannot work yet.
-> The installer stops and says so rather than fetching something bogus. When the repo
-> goes public, two places change:
-> the `SLUG` default at the top of the remote-mode section in `install.sh`, and the two
-> URLs in this section. Until then, use a clone (**B** below), or point the installer at
-> a fork with `FMUX_SLUG=owner/repo`.
+> Remote mode installs the **latest release tag**, not `main`, and verifies the archive
+> against the release's `SHA256SUMS` before unpacking. If the checksum does not match it
+> stops — it does not warn and continue. To install from a fork or a mirror, point it
+> somewhere else with `FMUX_SLUG=owner/repo`.
 
 What remote mode does, in order:
 

@@ -358,14 +358,18 @@ assert_eq "$RC" "1" "a nonexistent tag halts it"
 assert_eq "$(has "$OUT" 'could not download the archive')" "yes" "says it could not fetch it"
 assert_eq "$(ex "$TTROOT/p9b")" "no" "does not mistake an empty file for an archive and install it"
 
-# ── ⑨ it does not go out to a placeholder address ────────────────────────────
+# ── ⑨ with no FMUX_SLUG it uses the real published address ───────────────────
+# The repo went public on 2026-08-06, so the default is a real slug, not a placeholder.
+# What is measured here is that the default is actually wired: with FMUX_SLUG unset the
+# request must go to that address and to nothing else. The stub network only serves the
+# test slug, so the run still fails — the point is *where* it knocked, not that it succeeded.
 : > "$NETLOG"
 RC=0
 OUT=$(PATH="$STUB:$NET:$SEAL" bash "$ALONE/install.sh" --prefix "$TTROOT/p10" < /dev/null 2>&1) || RC=$?
-assert_eq "$RC" "1" "running remote with no FMUX_SLUG halts (the repo is still private)"
-assert_eq "$(has "$OUT" 'no public distribution address yet')" "yes" "says why it cannot fetch"
-assert_eq "$(has "$OUT" 'README')" "yes" "says where to fix it once it is public"
-assert_eq "$(cnt "$NETLOG" 'OWNER')" "0" "no actual request goes out to the placeholder URL"
+assert_eq "$RC" "1" "with the stub network serving only the test slug, the default-slug run fails rather than installing something bogus"
+assert_eq "$(cnt "$NETLOG" 'gabury1/fleetmux')" "1" "★the default slug is wired — with FMUX_SLUG unset the request goes to the published repo"
+assert_eq "$(cnt "$NETLOG" 'OWNER')" "0" "no placeholder address survives anywhere in the installer"
+assert_eq "$(ex "$TTROOT/p10")" "no" "nothing is installed when the fetch fails"
 
 # ── ⑩ --dry-run — it fetches but changes not one user file ───────────────────
 : > "$NETLOG"

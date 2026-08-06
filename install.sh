@@ -275,12 +275,8 @@ REMOTE=0
 [ -f "$REPO/bin/fmux" ] && [ -d "$REPO/src" ] && [ -f "$REPO/Makefile" ] || REMOTE=1
 
 # Public distribution address. **This is a placeholder because the repo is still private.**
-#   Once it's public, only two places need fixing: this default and the URL in README's
-#   Install section.
 # Forks, private mirrors, and testing override it with FMUX_SLUG (FMUX_SLUG=owner/repo ./install.sh).
-SLUG="${FMUX_SLUG:-OWNER/fleetmux}"
-SLUG_IS_PLACEHOLDER=0
-[ "$SLUG" = 'OWNER/fleetmux' ] && SLUG_IS_PLACEHOLDER=1
+SLUG="${FMUX_SLUG:-gabury1/fleetmux}"
 
 DL=''        # download tool: curl | wget
 SHA_CMD=''   # checksum tool: sha256sum (Linux) | shasum -a 256 (macOS). Empty if neither exists.
@@ -393,14 +389,6 @@ remote_fetch() {
 
     pick_downloader
     command -v tar > /dev/null 2>&1 || die "tar is not present — cannot unpack the archive"
-
-    if [ "$SLUG_IS_PLACEHOLDER" = 1 ]; then
-        warn "this build has no public distribution address yet — the repo is still private, so it's a placeholder ($SLUG)."
-        warn "     once it's public, two places need fixing: the SLUG default in install.sh, and the URL in README's Install section."
-        warn "     to install remotely right now, give the address directly:  FMUX_SLUG=owner/repo bash install.sh"
-        warn "     or clone the repo and run ./install.sh from inside it (local mode)."
-        die "don't know where to fetch from"
-    fi
 
     TMPD=$(mktemp -d "${TMPDIR:-/tmp}/fmux-install.XXXXXX") || die "could not create a temp directory"
     ok "temp directory: $TMPD  (deleted when this finishes or fails)"
