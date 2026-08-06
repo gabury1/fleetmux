@@ -209,10 +209,12 @@ if [ "${1:-}" = "--list" ]; then
                     tt_cpu_sample "$sid" "${hpid:-0}" "$now" ;;
                 waiting)
                     # 박제 방지: 승인을 거부하면 codex는 Stop을 안 쏜다 —
-                    # 60초 넘게 갱신 없는데 화면에 승인 프롬프트가 없으면 취소된 것으로 본다
+                    # 60초 넘게 갱신 없는데 화면에 승인 프롬프트가 없으면 취소된 것으로 본다.
+                    # 증인 목록은 WAITING_PAT(30-state.sh) 하나로 모았다 — 여기 인라인으로 두었더니
+                    # 목록만 ⏸ 를 지우고 상태바는 띄우는 어긋남을 아무도 못 잡았다(AskUserQuestion 실측).
                     if [ $(( now - ${_hts:-0} )) -gt 60 ] \
                         && ! tmux capture-pane -p -t "=$name:" 2>/dev/null \
-                             | grep -qaE 'Would you like to run|Press enter to confirm|Yes, proceed|Do you want to'; then
+                             | grep -qaE "$WAITING_PAT"; then
                         mark=""
                     else
                         mark=$'\033[38;5;215m⏸\033[0m'

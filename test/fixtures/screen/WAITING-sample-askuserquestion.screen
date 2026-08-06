@@ -1,0 +1,33 @@
+  Ran 1 shell command
+
+● Anonymization committed (115 tests pass). Now the translation — the size, honestly:
+
+    ┌──────────────────┬────────────┬─────────────────────────────────────────────┐
+    │ target           │ ko lines   │ kind                                        │
+    ├──────────────────┼────────────┼─────────────────────────────────────────────┤
+    │ src/*.sh         │      1,353 │ comments 1,173 + runtime strings 180        │
+    ├──────────────────┼────────────┼─────────────────────────────────────────────┤
+    │ install.sh       │        442 │ almost all user-facing output               │
+    ├──────────────────┼────────────┼─────────────────────────────────────────────┤
+    │ test/*.sh        │     ~1,500 │ test descriptions = `make check` output     │
+    ├──────────────────┼────────────┼─────────────────────────────────────────────┤
+    │ total            │     ~4,000 │ README is already English                   │
+    └──────────────────┴────────────┴─────────────────────────────────────────────┘
+
+  Two things to decide.
+
+  ← □ UI language  □ How to run  ✓ Submit →
+
+  Should the runtime strings people actually see also go English?
+
+  ❯ 1. All English (recommended)
+       Comments, docs and runtime strings. Consistent for a public repo.
+    2. Code and docs only, keep runtime Korean
+       Comments and docs in English; installer output stays Korean.
+    3. Runtime English, keep comments Korean
+       Fastest, but a reader of the source hits a wall.
+    4. Type something.
+
+    5. Chat about this
+
+  Enter to select · Tab/Arrow keys to navigate · Esc to cancel

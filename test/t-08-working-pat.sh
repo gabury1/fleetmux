@@ -23,6 +23,7 @@ FIX="$TESTDIR/fixtures/screen"
 # ── 산출물에서 판정부만 떼어온다 ─────────────────────────────────────────────
 # bin/fmux 는 통째로 source 하면 진입점(fzf 팝업)까지 돈다. 필요한 두 조각만 뽑아 eval 한다.
 eval "$(sed -n '/^WORKING_PAT=/{p;q;}' "$TTBIN")"
+eval "$(sed -n '/^WAITING_PAT=/{p;q;}' "$TTBIN")"
 eval "$(awk '/^tt_working\(\) \{/ { f = 1 } f { print } f && /^\}/ { exit }' "$TTBIN")"
 
 assert_rc 0 test -n "${WORKING_PAT:-}"
@@ -161,7 +162,7 @@ for f in "$FIX"/*.screen; do
     assert_eq "$got" "$want" "$label — $base"
 done
 # 캡처 개수도 못박는다 — fixtures 가 통째로 비어도 위 루프는 조용히 0건으로 통과한다.
-assert_eq "$(ls "$FIX"/*.screen 2>/dev/null | grep -c .)" "7" "실캡처 7건이 다 있다(유휴 6 · 작업중 1)"
+assert_eq "$(ls "$FIX"/*.screen 2>/dev/null | grep -c .)" "8" "실캡처 8건이 다 있다(유휴 6 · 작업중 1 · 대기 1)"
 
 # ── ④ 줄 고르기 자체 ────────────────────────────────────────────────────────
 # 패턴이 무엇을 보고 판단했는지를 못박는다. awk 가 다른 줄을 집기 시작하면 위 ③은
@@ -179,5 +180,43 @@ assert_eq "$(pick_line "$FIX/device-refactor.screen")" '✻ Baked for 11m 42s' \
     'device-refactor 에서 판정에 쓰이는 줄은 과거형 완료줄이다'
 assert_eq "$(pick_line "$FIX/WORKING-sample-tui-worker.screen")" '✻ Choreographing… (43s · ↓ 1.9k tokens)' \
     'WORKING 캡처에서 판정에 쓰이는 줄은 스피너 줄이다(진행줄이 아니라 — EVIDENCE 는 여기를 틀리게 적었다)'
+
+# ── ⑤ WAITING_PAT — ⏸ 박제 해제의 증인 ──────────────────────────────────────
+# 2026-08-06 실측 버그: 상태바엔 "⏸ tui-worker" 가 뜨는데 목록엔 ⏸ 가 없었다.
+# 80-view.sh 의 60초 가드가 화면에서 프롬프트를 못 찾아 지운 것이고, 못 찾은 이유는
+# 증거 목록에 AskUserQuestion 과 플랜 승인이 빠져 있었기 때문이다.
+assert_rc 0 test -n "${WAITING_PAT:-}"
+
+assert_rc 0 grep -qaE "$WAITING_PAT" "$FIX/WAITING-sample-askuserquestion.screen"
+# 옛 패턴이 이 화면을 놓쳤다는 사실 자체를 못박는다 — 안 그러면 회귀가 조용히 돌아온다.
+if grep -qaE 'Would you like to run|Press enter to confirm|Yes, proceed|Do you want to' \
+        "$FIX/WAITING-sample-askuserquestion.screen"; then got=yes; else got=no; fi
+assert_eq "$got" no '★옛 증거 목록은 AskUserQuestion 화면을 못 잡았다(이 테스트의 존재 이유)'
+
+# 각 UI 를 어느 대안이 받는지 한 줄씩 — 하나를 지우면 어느 화면이 익명이 되는지 드러난다.
+for probe in \
+    'Do you want to proceed?|claude 도구 승인' \
+    'Would you like to proceed?|claude 플랜 승인' \
+    'Enter to select · Tab/Arrow keys to navigate · Esc to cancel|AskUserQuestion 꼬리' \
+    'Press enter to confirm|codex 승인' \
+    'Yes, proceed|codex 승인 선택지'
+do
+    line=${probe%%|*}; what=${probe#*|}
+    if printf '%s\n' "  $line" | grep -qaE "$WAITING_PAT"; then got=yes; else got=no; fi
+    assert_eq "$got" yes "WAITING_PAT 이 받는다 — $what"
+done
+
+# 반대 방향: 도는 화면을 대기로 박제하면 안 된다. 'esc to interrupt' 는 작업중의 표지다.
+if printf '%s\n' '  ✻ Choreographing… (43s · ↓ 1.9k tokens · esc to interrupt)' \
+        | grep -qaE "$WAITING_PAT"; then got=yes; else got=no; fi
+assert_eq "$got" no '★작업중 스피너 줄은 WAITING_PAT 에 안 걸린다(걸리면 도는 세션이 ⏸ 로 박제된다)'
+
+# 유휴 캡처들도 대기로 오인되면 안 된다.
+for f in "$FIX"/*.screen; do
+    base=${f##*/}
+    case "$base" in WAITING-*) continue ;; esac
+    if grep -qaE "$WAITING_PAT" "$f"; then got=yes; else got=no; fi
+    assert_eq "$got" no "대기 아닌 캡처가 WAITING_PAT 에 안 걸린다 — $base"
+done
 
 tt_test_done

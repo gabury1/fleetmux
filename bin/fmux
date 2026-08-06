@@ -406,6 +406,27 @@ tt_mf_backup() {
 # \d \s \b {n,m} (?:) 역참조는 GNU/PCRE 확장이라 BSD grep 에서 안 돈다.
 WORKING_PAT='(\([^()]*|· )[Ee]sc to interrupt|\([^()]*[0-9]+[hms] · (↑|↓) ?[0-9.,]+[kKmM]? ?tokens|(✻|✶|✳|✢|✽|·|\*) [^ ()]*(…|\.\.\.) ?\(?[0-9]|(✻|✶|✳|✢|✽|·|\*) [A-Za-z]*ing for [^ ]'
 
+# 대기 화면 판정 — **⏸ 박제 해제의 유일한 증인**(80-view.sh 의 waiting 분기).
+# 훅이 60초 넘게 조용한데 화면에도 프롬프트가 없으면 "취소된 승인"으로 보고 ⏸ 를 지운다.
+# 즉 여기서 못 잡는 프롬프트 UI 는 **목록에서 ⏸ 가 사라진다**(상태바엔 남아 둘이 어긋난다 — 실측 버그).
+#
+# 그래서 이 패턴의 기울기는 WORKING_PAT 과 반대다: **넓게 잡는 쪽이 안전하다.**
+#   못 잡으면 → 기다리는 세션이 목록에서 익명이 된다(사람이 영영 안 돌아온다)
+#   넓게 잡으면 → 취소된 승인이 조금 늦게 꺼진다(다음 훅 이벤트가 어차피 덮는다)
+#
+# 각 대안이 어느 화면을 받는지:
+#   Do you want to        claude 도구 승인 ("Do you want to proceed?" · "…make this edit to X?")
+#   Would you like to     claude 플랜 승인 ("Would you like to proceed?") — 옛 패턴은 'to run' 만
+#                         받아서 플랜 승인을 통째로 놓쳤다
+#   Enter to select       AskUserQuestion·선택 메뉴의 꼬리
+#                         ("Enter to select · Tab/Arrow keys to navigate · Esc to cancel")
+#   Esc to cancel         같은 꼬리의 뒷도막. 메뉴가 떠 있으면 둘 중 하나는 남는다
+#   Press enter to confirm / Yes, proceed    codex 승인
+#
+# ⚠️ 'esc to interrupt' 를 여기 넣지 마라 — 그건 **작업중**의 표지고(WORKING_PAT ①), 넣으면
+#    돌고 있는 세션이 대기로 박제된다.
+WAITING_PAT='Do you want to|Would you like to|Enter to select|Esc to cancel|Press enter to confirm|Yes, proceed'
+
 # 작업중 판정: 스피너는 항상 "입력창(❯) 위 구분선 바로 위 한 줄"에 뜬다 — 그 한 줄만 검사.
 # (하단 N줄 뭉텅이 검사는 화면에 남은 대화 텍스트에 오탐/미탐 — 두 번 데임)
 tt_working() {
@@ -2567,10 +2588,12 @@ if [ "${1:-}" = "--list" ]; then
                     tt_cpu_sample "$sid" "${hpid:-0}" "$now" ;;
                 waiting)
                     # 박제 방지: 승인을 거부하면 codex는 Stop을 안 쏜다 —
-                    # 60초 넘게 갱신 없는데 화면에 승인 프롬프트가 없으면 취소된 것으로 본다
+                    # 60초 넘게 갱신 없는데 화면에 승인 프롬프트가 없으면 취소된 것으로 본다.
+                    # 증인 목록은 WAITING_PAT(30-state.sh) 하나로 모았다 — 여기 인라인으로 두었더니
+                    # 목록만 ⏸ 를 지우고 상태바는 띄우는 어긋남을 아무도 못 잡았다(AskUserQuestion 실측).
                     if [ $(( now - ${_hts:-0} )) -gt 60 ] \
                         && ! tmux capture-pane -p -t "=$name:" 2>/dev/null \
-                             | grep -qaE 'Would you like to run|Press enter to confirm|Yes, proceed|Do you want to'; then
+                             | grep -qaE "$WAITING_PAT"; then
                         mark=""
                     else
                         mark=$'\033[38;5;215m⏸\033[0m'
