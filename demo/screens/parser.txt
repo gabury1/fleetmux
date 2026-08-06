@@ -13,3 +13,7 @@
     3. No, tell Claude what to do differently
 
   Enter to select · ↑/↓ to navigate · Esc to cancel
+
+──────────────────────────────────────────────────────────────────────────
+  «demo» parser ⎇ feat/heredoc | claude-opus-5 | ctx 61%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

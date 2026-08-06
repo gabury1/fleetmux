@@ -34,9 +34,15 @@ done
 # draws around them. Same reasoning as writing the hook state directly.
 #   The screens are representative, not captured from a real conversation.
 HERE=$(cd "$(dirname "$0")" && pwd)
+# The window list is on screen, and a window called "sleep" tells on the whole thing.
+T set -g automatic-rename off
+for _s in api parser docs; do T rename-window -t "$_s" claude; done
+T rename-window -t files yazi
 for _s in api parser docs; do
     [ -f "$HERE/screens/$_s.txt" ] || continue
-    T send-keys -t "$_s" "clear; cat '$HERE/screens/$_s.txt'" Enter
+    # sleep keeps the shell prompt from printing under the painted screen — a `$` at the bottom
+    # is what gives away that this is cat output and not an agent.
+    T send-keys -t "$_s" "clear; cat '$HERE/screens/$_s.txt'; sleep 3600" Enter
 done
 # The tool session is a file manager, not an agent — it should read as one.
 T send-keys -t files "clear; printf '  ~/src\n\n   drwxr-xr-x  limiter\n   drwxr-xr-x  parser\n   -rw-r--r--  README.md\n   -rw-r--r--  Cargo.toml\n'" Enter

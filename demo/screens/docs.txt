@@ -11,3 +11,9 @@
   installer twice. Never true — and nobody questions it.
 
 ✻ Churned for 3m 41s
+
+──────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────
+  «demo» docs ⎇ main | claude-opus-5 | ctx 47%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
