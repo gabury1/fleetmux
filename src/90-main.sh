@@ -246,11 +246,6 @@ PostToolUse working
 Stop idle
 PermissionRequest waiting-codex
 EOF
-    if [ "${2:-}" = "--pause" ]; then
-        printf '  press any key to return'
-        read -rsn1 _ < /dev/tty 2>/dev/null || read -r _ < /dev/tty 2>/dev/null || true
-        printf '\n'
-    fi
     exit 0
 fi
 
@@ -351,6 +346,11 @@ if [ "${1:-}" = "--help" ]; then
     if keys after tmux prefix get eaten, keep holding Ctrl (^B ^D = detach)
 
 EOF
+    if [ "${2:-}" = "--pause" ]; then
+        printf '  press any key to return'
+        read -rsn1 _ < /dev/tty 2>/dev/null || read -r _ < /dev/tty 2>/dev/null || true
+        printf '\n'
+    fi
     exit 0
 fi
 

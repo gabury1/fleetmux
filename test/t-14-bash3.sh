@@ -100,8 +100,17 @@ done
 # And the help screen must actually be able to wait, or ? is useless: the pause lives in the
 # entry point now, so the binding has to ask for it.
 assert_contains "$BINDS" '--help --pause' "the ? binding delegates the wait to fmux itself"
-assert_contains "$(grep -a -A3 'if \[ "\${2:-}" = "--pause" \]' "$TTBIN" || true)" 'read -' \
-    "and fmux is where the waiting actually happens"
+# ⚠️ "the pause exists somewhere in the file" is not the claim worth measuring. It was inserted
+# into the wrong block once (it landed at the end of the codex-hooks branch, which also ends in
+# EOF/exit 0/fi), the suite stayed green, and ? kept flashing on a real machine. So measure that
+# the pause sits **inside the --help branch**: take the file from the --help dispatch onward, cut
+# it at that branch's `exit 0`, and require the pause to be in what is left.
+HELPBLK=$(awk '/^if \[ "\$\{1:-\}" = "--help" \]; then/ { f = 1 } f { print } f && /^    exit 0$/ { exit }' "$TTBIN")
+assert_rc 0 test -n "$HELPBLK"
+assert_contains "$HELPBLK" '"${2:-}" = "--pause"' \
+    "★the pause lives inside the --help branch, not merely somewhere in the file"
+assert_contains "$HELPBLK" 'press any key to return' "and it says so on screen"
+assert_contains "$HELPBLK" 'read -rsn1' "and it actually waits for a key"
 
 # ── a sanitizer that does not sanitize ──────────────────────────────────────
 # Measured 2026-08-06 on a Mac, from the hook log:
