@@ -4012,24 +4012,14 @@ if [ "${1:-}" = "--help" ]; then
   ${T}settings${R}
     ${hkset}  open settings — the only door; the popup footer shows this key too
     Enter flips a switch on the spot; number/text keys ask for a value and validate it
-    ${D}rows marked "not wired" are not wired to any behaviour yet — the toggle would be a lie${R}
     fmux config list   ${D}the same table from the shell; fmux config path shows the file${R}
 
   ${T}tmux binding${R}  ${D}fmux owns one file and borrows one line of your ~/.tmux.conf${R}
-    fmux --tmux-conf          print the snippet — summon key, and the on-exit snapshot hooks
     fmux --tmux-conf --write  write it, then add ${D}source-file <printed path>${R} to ~/.tmux.conf
-    ${D}key_summon is pressed after the prefix; key_summon_fast is a space-separated list of${R}
-    ${D}prefix-less keys — one physical key arrives under different names per terminal${R}
-    ${D}changing either key, or snapshot_on_exit, rewrites the snippet on the spot${R}
-    ${D}S-Left is what ./install.sh offers: the one prefix-less single keystroke that reaches${R}
-    ${D}tmux on macOS, Linux and Windows Terminal alike. It takes that key from everything in${R}
-    ${D}the pane (vim, shell line-editing, fzf) — that is why it is offered, never a default.${R}
-    ${D}Some dotfiles bind S-Left/S-Right to window switching; pick another key if yours does.${R}
-    ${D}fmux config unset key_summon_fast gives the key back — key_summon still summons.${R}
+    ${D}a prefix-less key takes that key from everything in the pane — vim, line editing, fzf${R}
 
   ${T}broadcast${R}
     Tab-mark multiple sessions, then Enter — send one prompt to all
-    ${D}tool sessions are skipped — a prompt typed into a shell or TUI runs as a command${R}
     ${D}^B does the same but keeps the popup open — for repeated sends${R}
 
   ${T}fleet${R}  ${D}survive a reboot — the manifest remembers what was up${R}
@@ -4037,13 +4027,6 @@ if [ "${1:-}" = "--help" ]; then
     fmux --restore [--dry]    bring them all back — live ones are skipped, --dry just plans
     fmux --boot-restore       ${D}[--dry]${R} same, but safe to hang off @reboot cron
     fmux --forget ${D}<name>${R}     drop one session from the manifest
-    ${D}--boot-restore waits up to 120s for DNS before restoring, and aborts if it never comes —${R}
-    ${D}claudes started without a network die into a shell, then look "already running" forever${R}
-    ${D}touch ~/.cache/fmux/no-autorestore to skip it on the next boot; log is ~/.cache/fmux/boot.log${R}
-    ${D}agents come back with claude --resume <id>, never --continue —${R}
-    ${D}--continue picks "latest chat in this folder", so same-cwd sessions clone each other${R}
-    ${D}resume runs in the conversation's own home dir, which is often not the session cwd${R}
-    ${D}manifest keeps 3 backup generations: manifest.bak .bak2 .bak3${R}
 
   ${T}reading the list${R}
     ${B}bold name${R}   talked within ${hrecent}h          ${D}dim name${R}   quiet session
@@ -4051,19 +4034,20 @@ if [ "${1:-}" = "--help" ]; then
     ● attached    ✻ working    ⏸ awaiting approval    ✓ unseen result
     ⊘ remote control dropped — retried every minute; ${B}red ⊘${R} = gave up after 3 tries
 
-  ${T}status bar${R}  ${D}the snippet appends the tally to status-right — yours survives${R}
+  ${T}status bar${R}  ${D}the snippet puts the tally at the front of status-right — yours survives${R}
+    ⏸n ✻n — sessions awaiting you / working right now    ✓name — done while away, clears on visit or ${hunseen} min
     ${D}fmux config set status_badges off  takes it back out, live server included${R}
-    fmux --status prints it; nothing shows up until you put it in your own tmux config:
-      ${D}set -g status-interval 5${R}
-      ${D}set -ag status-right '#($SELF --status)'${R}
-    ⏸n ✻n — fleet tally: sessions awaiting you / working right now
-    ✓name — finished while you were away. clears on visit or ${hunseen} min
 
   ${T}korean IME tip${R}
     if keys after tmux prefix get eaten, keep holding Ctrl (^B ^D = detach)
 
 EOF
     if [ "${2:-}" = "--pause" ]; then
+        # The summon key again, on the last line. This screen is longer than some popups, and a
+        # terminal that scrolls leaves the reader looking at the bottom — which is exactly where
+        # they were when they said they could not find it. Repeating one line is cheaper than
+        # assuming everyone sees the top.
+        printf '%s\n' "  $hsummon"
         printf '  press any key to return'
         read -rsn1 _ < /dev/tty 2>/dev/null || read -r _ < /dev/tty 2>/dev/null || true
         printf '\n'
