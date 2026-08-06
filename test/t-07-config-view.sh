@@ -79,7 +79,9 @@ assert_contains "$plain" "remote-control" "a description is attached"
 
 # Field 1 is the value fzf hides and that we cut out ourselves — it must be exactly the key
 first=$(printf '%s\n' "$out" | head -1); first=${first%%$'\t'*}
-assert_eq "$first" "rc" "the tab-prefixed part of the first line is the bare key"
+# The first row is the summon key — the screen is ordered by why someone opened it, and that is
+# the row they came for. It used to be last.
+assert_eq "$first" "key_summon_fast" "the tab-prefixed part of the first line is the bare key"
 
 # The current value shows up — including a file value winning over the default
 printf 'accent=99\n' > "$CONF"
