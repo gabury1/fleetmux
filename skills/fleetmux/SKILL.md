@@ -33,9 +33,10 @@ tmux style markup (`#[fg=colour215,bold]…#[default]`) because a tmux status ba
 what it is written for; read the glyphs and the numbers, ignore the markup. Empty
 output means nothing is working and nothing is waiting.
 
-Do not assume the human can see this line. Wiring it into `status-right` is manual and
-many installs never do it (README → Troubleshooting Q4), so **say the tally out loud**
-rather than pointing at the status bar.
+Do not assume the human can see this line. The snippet does append it to `status-right`
+by default, but it can be switched off (`status_badges`), the snippet may not be linked
+at all, and the pane the human is looking at may not even be showing a status bar. So
+**say the tally out loud** rather than pointing at the status bar.
 
 `⏸` **is the one that matters.** It means a session is blocked on a human — a
 permission prompt, a plan approval, a question. Surface those first, before anything
