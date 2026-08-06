@@ -3637,15 +3637,16 @@ tt_tmux_conf_write() {
 # %H:%M, #{pane_title} — is written back exactly as it was and stays live.
 if [ "${1:-}" = "--status-bind" ]; then
     # Strip any fragment of ours from **both** halves first, then put one back at the very front
-    # of status-left. In that order this is idempotent (re-sourcing cannot stack copies) and a
-    # migration at once — an install that had the badges on the right gets them moved over.
+    # of status-right — the leftmost slot of the right-hand group, ahead of the clock and the
+    # date, without pushing the window list around. In that order this is idempotent (re-sourcing
+    # cannot stack copies) and a migration at once: an install that had them elsewhere gets moved.
     for _o in status-left status-right; do
         _cur=$(tmux show -gv "$_o" 2>/dev/null) || continue
         _new=$(printf '%s' "$_cur" | sed 's| *#([^)]*--status)||g')
         [ "$_cur" = "$_new" ] || tmux set -g "$_o" "$_new" 2>/dev/null || true
     done
-    cur=$(tmux show -gv status-left 2>/dev/null) || exit 0
-    tmux set -g status-left "#($SELF --status)$cur" 2>/dev/null || true
+    cur=$(tmux show -gv status-right 2>/dev/null) || exit 0
+    tmux set -g status-right "#($SELF --status)$cur" 2>/dev/null || true
     exit 0
 fi
 
