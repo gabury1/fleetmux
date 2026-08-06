@@ -69,7 +69,7 @@ key_summon=a/b
 EOF
 out=$("$TTBIN" config list 2>/dev/null)
 assert_contains "$out" "invalid value" "invalid values get a marker attached"
-assert_contains "$(printf '%s\n' "$out" | grep '^recent_hours ')" "falls back to default 6" \
+assert_contains "$(printf '%s\n' "$out" | grep '^recent_hours ')" "falls back to default 1" \
     "numeric keys say they fold back to the default"
 assert_contains "$(printf '%s\n' "$out" | grep '^rc ')" "falls back to off" \
     "boolean keys say they fold to off — not back to the default (on)"

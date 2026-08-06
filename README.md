@@ -262,7 +262,7 @@ the env var for `recent_hours` is `TT_RECENT_HOURS`, and so on.
 | `snapshot_on_exit` | `on` | the tmux snippet's `client-detached` / `session-closed` hooks |
 | `status_badges` | `on` | the tmux snippet's `status-right` line — the `⏸ ✓ ✻` tally |
 | `boot_restore` | `on` | `--boot-restore` |
-| `recent_hours` | `6` | `--list`: bold (recent) vs dim (quiet) session names |
+| `recent_hours` | `1` | `--list`: bold (recent) vs dim (quiet) session names |
 | `unseen_minutes` | `10` | `--status`: how long a `✓name` badge stays in the status bar |
 | `accent` | `73` | 256-color number for tool-session names and `--help` headings |
 | `log_max` | `1048576` | rotation threshold for `~/.cache/tt/hook.log` and `boot.log` |

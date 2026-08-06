@@ -87,12 +87,12 @@ printf 'idle %s 0\n' "$(( now - 7200 ))" > "$STATE/hook-0"
 : > "$CONF"
 row=$(list_row alpha)
 case "$row" in *"$ESC[1m"*) got=bold ;; *"$ESC[2m"*) got=dim ;; *) got=none ;; esac
-assert_eq "$got" "bold" "with the default recent_hours=6, a session from 2 hours ago is bold"
+assert_eq "$got" "dim" "with the default recent_hours=1, a session from 2 hours ago is already dim"
 
-printf 'recent_hours=1\n' > "$CONF"
+printf 'recent_hours=6\n' > "$CONF"
 row=$(list_row alpha)
 case "$row" in *"$ESC[1m"*) got=bold ;; *"$ESC[2m"*) got=dim ;; *) got=none ;; esac
-assert_eq "$got" "dim" "with recent_hours=1, the same session dims"
+assert_eq "$got" "bold" "raising it to 6 brings the same session back to bold"
 
 printf 'recent_hours=3\n' > "$CONF"
 row=$(list_row alpha)
@@ -103,7 +103,7 @@ assert_eq "$got" "bold" "with recent_hours=3 it goes bold again — the boundary
 printf 'recent_hours=6h\n' > "$CONF"
 row=$(list_row alpha)
 case "$row" in *"$ESC[1m"*) got=bold ;; *"$ESC[2m"*) got=dim ;; *) got=none ;; esac
-assert_eq "$got" "bold" "a non-integer recent_hours folds to the default 6"
+assert_eq "$got" "dim" "a non-integer recent_hours folds to the default 1 — the 2-hour-old session dims"
 assert_rc 0 "$TTBIN" --list
 # The octal trap: `08` passes the character-set check but dies instantly in bash arithmetic.
 printf 'recent_hours=08\n' > "$CONF"
@@ -230,7 +230,7 @@ assert_eq "$(printf '%s' "$h" | grep -c 'Option+←' || true)" "0" "it doesn't t
 assert_contains "$h" "prefix + F"          "reads the default summon key from config and shows it"
 assert_contains "$h" "no prefix-less key"  "says so when there is no prefix-less key"
 assert_contains "$h" "key_summon_fast"     "writes how to turn it on right there"
-assert_contains "$h" "talked within 6h"    "reads and prints the default recent_hours"
+assert_contains "$h" "talked within 1h"    "reads and prints the default recent_hours"
 assert_contains "$h" "or 10 min"           "reads and prints the default unseen_minutes"
 
 printf 'key_summon=T\nkey_summon_fast=C-Left M-Left\nrecent_hours=3\nunseen_minutes=45\n' > "$CONF"

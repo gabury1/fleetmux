@@ -8,7 +8,7 @@ mkdir -p "$(dirname "$CONF")"
 
 # ① No file → everything falls back to defaults
 assert_eq "$("$TTBIN" config get rc)"             "on"      "rc defaults to on"
-assert_eq "$("$TTBIN" config get recent_hours)"   "6"       "recent_hours defaults to 6"
+assert_eq "$("$TTBIN" config get recent_hours)"   "1"       "recent_hours defaults to 1"
 assert_eq "$("$TTBIN" config get key_summon)"     "F"       "key_summon defaults to F"
 assert_eq "$("$TTBIN" config get key_summon_fast)" ""       "key_summon_fast defaults to empty"
 assert_eq "$("$TTBIN" config source rc)"          "default" "source is default"

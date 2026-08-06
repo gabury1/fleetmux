@@ -61,7 +61,7 @@ TT_ACT_AWK='
     END { if (f != "") print f "\t" (best == "" ? 0 : iso2epoch(best)) }'
 
 # List generation: sorted by content-change time (sessions with recent real conversation/work on top)
-#   bold session name = a conversation within recent_hours (default 6h), dim = quieter than that  ●=attached  ✻=Claude working
+#   bold session name = a conversation within recent_hours (default 1h), dim = quieter than that  ●=attached  ✻=Claude working
 # Output one line = "<name>\t<colored display string>\t<session id>". Why the name is split off by
 #   tab and placed first: the value the picker extracts with {1} must stay intact even for names
 #   with spaces. It used to be cut to just the first space-separated word, which hit tmux -t prefix

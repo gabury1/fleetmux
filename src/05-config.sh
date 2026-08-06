@@ -15,7 +15,7 @@ TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore status_badges recent_hou
 tt_conf_default() {
     case "${1:-}" in
         rc|snapshot|snapshot_on_exit|boot_restore|status_badges) printf 'on' ;;
-        recent_hours)    printf '6' ;;
+        recent_hours)    printf '1' ;;
         unseen_minutes)  printf '10' ;;
         accent)          printf '73' ;;
         log_max)         printf '1048576' ;;
