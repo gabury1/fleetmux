@@ -20,6 +20,12 @@
 #   observation scope, not a rule mismatch.)
 #   t-10 pins this inequality against the 12-cell grid of expected values for
 #   hook fresh/stale x CPU rc0/rc1/rc2 x screen match/mismatch.
+# Colours are drawn as **chips** (our own background), not foreground-only.
+#   Foreground-only means legibility depends on whichever status-bar theme the user has. Measured
+#   2026-08-06: on the stock tmux status bar, which is lime green, the orange (215) and yellow
+#   foregrounds were nearly invisible. Choosing the background ourselves guarantees contrast on any
+#   theme — a badge is an alarm, not decoration.
+#   ⏸ black on amber (the most urgent) · ✻ white on violet · ✓ black on teal.
 tt_fleet_agg() {
     local f st ts pid w=0 k=0 out="" now sid wids="" wnames="" wshown=0 nm line
     now=$(date +%s)
@@ -74,16 +80,20 @@ tt_fleet_agg() {
                 [ -n "$nm" ] || continue
                 # Write up to three, then +n for the rest — the status bar is narrow, and tmux truncates the whole thing if it overflows.
                 if [ "$wshown" -lt 3 ]; then
-                    out="$out#[fg=colour215,bold]⏸ $nm #[default]"
+                    out="$out#[fg=colour232,bg=colour214,bold] ⏸ $nm #[default] "
                     wshown=$((wshown + 1))
                 fi
             done
-            [ "$w" -gt "$wshown" ] && out="$out#[fg=colour215,bold]+$((w - wshown)) #[default]"
+            # Only meaningful once at least one name is on screen. Without this guard, a run where
+            # no name resolved printed "+1" **and** the count fallback below — the same session
+            # counted twice on one line (measured).
+            [ "$wshown" -gt 0 ] && [ "$w" -gt "$wshown" ] \
+                && out="$out#[fg=colour232,bg=colour214,bold] +$((w - wshown)) #[default] "
         fi
         # If we couldn't get a single name (no server, or the query failed), fall back to showing just the count as before.
-        [ "$wshown" = 0 ] && out="$out#[fg=colour215,bold]⏸ $w #[default]"
+        [ "$wshown" = 0 ] && out="$out#[fg=colour232,bg=colour214,bold] ⏸ $w #[default] "
     fi
-    [ "$k" -gt 0 ] && out="$out#[fg=yellow,bold]✻$k #[default]"
+    [ "$k" -gt 0 ] && out="$out#[fg=colour231,bg=colour97,bold] ✻$k #[default] "
     printf '%s' "$out"
     return 0
 }
@@ -329,7 +339,7 @@ if [ "${1:-}" = "--status" ]; then
         tt_finished_unlock
     fi
     badge=""
-    [ -n "$out" ] && badge="#[fg=#7fae6e,bold]$out #[default] "
+    [ -n "$out" ] && badge="#[fg=colour232,bg=colour73,bold]$out #[default] "
     printf '%s%s' "$agg" "$badge"
     exit 0
 fi
