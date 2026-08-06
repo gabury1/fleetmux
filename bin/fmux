@@ -7,6 +7,14 @@
 set -euo pipefail
 export LC_ALL=en_US.UTF-8   # cron has no locale — prevents unicode glyph regexes from misbehaving
 
+# Everything this tool writes is private to the person running it. The state directory holds the
+# prompts you typed (last-*), where every session lives (manifest), and a log that catches the
+# stderr of the hook path — which is how a whole prompt ended up in hook.log once, verbatim.
+#   last-* was already created 0600 by hand, but hook.log came out 0644 and was readable by
+#   anyone with an account on the machine (measured 2026-08-06 on both Linux and macOS). Setting
+#   the policy once, here, is what keeps that from drifting per file.
+umask 077
+
 STATE=~/.cache/tt
 
 # ── Own absolute path (SELF) ─────────────────────────────────────────────────
@@ -260,8 +268,12 @@ TT_LOG_KEEP=${TT_LOG_KEEP:-2000}
 tt_log_rotate() {
     local f="${TT_LOG_FILE:-$STATE/hook.log}" sz max
     [ -f "$f" ] || return 0
+    # Repair a log written before the umask policy existed. Only reached from --cron and the boot
+    # path, so this is not on the hook hot path. A log that has caught a prompt in its stderr must
+    # not be readable by other accounts on the machine.
+    chmod 600 "$f" 2>/dev/null || true
     sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ') || return 0
-    case "$sz" in \'\'|*[!0-9]*) return 0 ;; esac
+    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     max=$(tt_conf_num log_max)
     [ "$sz" -gt "$max" ] || return 0
     if tail -n "$TT_LOG_KEEP" "$f" > "$f.tmp" 2>/dev/null; then
@@ -845,9 +857,9 @@ tt_hook_valid() {
     hts=0; hpid=0
     # The hook file format is "<state> <recorded-ts> <pid>" — state isn't used here (discarded into _)
     read -r _ hts hpid < "$hf" 2>/dev/null || true
-    case "$hpid" in \'\'|*[!0-9]*) hpid=0 ;; esac
-    case "$hts" in \'\'|*[!0-9]*) hts=0 ;; esac
-    case "$created" in \'\'|*[!0-9]*) created=0 ;; esac
+    case "$hpid" in ''|*[!0-9]*) hpid=0 ;; esac
+    case "$hts" in ''|*[!0-9]*) hts=0 ;; esac
+    case "$created" in ''|*[!0-9]*) created=0 ;; esac
     # ① If a pid was recorded, its liveness is the final verdict — alive means genuine, dead
     #    means a ghost.
     #    Must not fall through to comparing timestamps here: if a reboot reuses the id, a dead
@@ -1610,9 +1622,9 @@ tt_fleet_agg() {
         read -r st ts pid < "$f" 2>/dev/null || true
         case "$st" in waiting|working) ;; *) continue ;; esac
         # If the hook process is dead, it's a "stuck" state — don't count it (same criterion as --list's liveness check)
-        case "$pid" in \'\'|*[!0-9]*) pid=0 ;; esac
+        case "$pid" in ''|*[!0-9]*) pid=0 ;; esac
         [ "$pid" -gt 0 ] && ! kill -0 "$pid" 2>/dev/null && continue
-        case "$ts" in \'\'|*[!0-9]*) ts=0 ;; esac
+        case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
         case "$st" in
             waiting)
                 w=$((w + 1))
@@ -1810,7 +1822,7 @@ if [ "${1:-}" = "--hook" ]; then
                 # same-named session and injected /rename (codex doesn't even have that slash
                 # command).
                 read -r pts _ < "$pr" 2>/dev/null || pts=0
-                case "$pts" in \'\'|*[!0-9]*) pts=0 ;; esac
+                case "$pts" in ''|*[!0-9]*) pts=0 ;; esac
                 rm -f "$pr"
                 if [ $(( $(date +%s) - pts )) -le 300 ]; then
                     ( sleep 1
@@ -2057,7 +2069,7 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
         n=0; fpid=""; lastok=0
         [ -f "$ff" ] && read -r n fpid lastok < "$ff" || true
         [ "${fpid:-}" = "$cpid" ] || { n=0; lastok=0; }        # if claude has restarted, start a new count
-        case "$lastok" in \'\'|*[!0-9]*) lastok=0 ;; esac
+        case "$lastok" in ''|*[!0-9]*) lastok=0 ;; esac
         # Recurrence brake: it just recovered successfully but disconnected again within 5
         # minutes = a session that won't stay connected no matter how many times we attach it.
         # It used to clear the counter on success, so fails stayed at 0 forever, and the
@@ -2847,7 +2859,7 @@ if [ "${1:-}" = "--list" ]; then
             case "$actraw" in
                 *$'\n'"${actp[$i]}"$'\t'*) v=${actraw#*$'\n'"${actp[$i]}"$'\t'}; v=${v%%$'\n'*} ;;
             esac
-            case "$v" in \'\'|*[!0-9]*) v=0 ;; esac
+            case "$v" in ''|*[!0-9]*) v=0 ;; esac
             [ "$v" -gt 0 ] && acttab="$acttab"$'\n'"${actn[$i]}"$'\t'"$v"
             i=$((i + 1))
         done
@@ -2878,12 +2890,12 @@ if [ "${1:-}" = "--list" ]; then
                 # Read the hook file with read (used to be cut — 1 fork per session). We need the state too.
                 hst=""; hts=0
                 read -r hst hts _ 2>/dev/null < "$STATE/hook-${sid#\$}" || true
-                case "$hts" in \'\'|*[!0-9]*) hts=0 ;; esac
+                case "$hts" in ''|*[!0-9]*) hts=0 ;; esac
                 ats=0
                 case "$acttab" in
                     *$'\n'"$name"$'\t'*) ats=${acttab#*$'\n'"$name"$'\t'}; ats=${ats%%$'\n'*} ;;
                 esac
-                case "$ats" in \'\'|*[!0-9]*) ats=0 ;; esac
+                case "$ats" in ''|*[!0-9]*) ats=0 ;; esac
                 if [ "$ats" -gt 0 ]; then
                     ts="$ats"
                     # We accept exactly one case where the hook is newer than the transcript —
@@ -3500,6 +3512,14 @@ tt_tmux_conf_render() {
         printf "if -F '#{==:#{s|--status||:status-right},#{status-right}}' \"set -ag status-right ' #(%s --status)'\"\n" "$SELF"
         # Badges are only as fresh as the redraw interval. 5s is the cadence the hooks assume.
         printf 'set -g status-interval 5\n'
+        # tmux truncates status-right at status-right-length, and the default is 40 — enough for a
+        # clock and little else. Measured 2026-08-06: on a stock macOS setup the badges were being
+        # appended correctly and then cut off unseen, which reads exactly like "it does not work".
+        # A single ⏸ with a session name is 20 characters on its own.
+        # The raise happens in fmux, not here: `#{status-right-length}` is not available as a
+        # format, so `if -F` cannot compare it (measured — the guard silently never fired). And it
+        # must be a raise, never a set: someone who already widened it keeps their value.
+        printf "run-shell \"'%s' --status-fit\"\n" "$SELF"
     else
         # Off means off, including on a server where it is already drawn. `tmux show -gv` hands
         # back the **unexpanded** format string, so cutting our fragment out of it and writing it
@@ -3592,6 +3612,16 @@ tt_tmux_conf_write() {
 #
 # `tmux show -gv` hands back the **unexpanded** format string, so whatever else is on that line —
 # %H:%M, #{session_name} — is written back exactly as it was, still live.
+# Make room for the badges. tmux cuts status-right at status-right-length, default 40 — a clock
+# and a date already fill that, so appended badges are drawn and then truncated away unseen.
+# Raise only: a config that already allows more keeps its own value.
+if [ "${1:-}" = "--status-fit" ]; then
+    cur=$(tmux show -gv status-right-length 2>/dev/null) || exit 0
+    case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+    [ "$cur" -ge 120 ] || tmux set -g status-right-length 120 2>/dev/null || true
+    exit 0
+fi
+
 if [ "${1:-}" = "--status-unbind" ]; then
     cur=$(tmux show -gv status-right 2>/dev/null) || exit 0
     new=$(printf '%s' "$cur" | sed 's| *#([^)]*--status)||g')

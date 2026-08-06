@@ -105,6 +105,14 @@ tt_tmux_conf_render() {
         printf "if -F '#{==:#{s|--status||:status-right},#{status-right}}' \"set -ag status-right ' #(%s --status)'\"\n" "$SELF"
         # Badges are only as fresh as the redraw interval. 5s is the cadence the hooks assume.
         printf 'set -g status-interval 5\n'
+        # tmux truncates status-right at status-right-length, and the default is 40 — enough for a
+        # clock and little else. Measured 2026-08-06: on a stock macOS setup the badges were being
+        # appended correctly and then cut off unseen, which reads exactly like "it does not work".
+        # A single ⏸ with a session name is 20 characters on its own.
+        # The raise happens in fmux, not here: `#{status-right-length}` is not available as a
+        # format, so `if -F` cannot compare it (measured — the guard silently never fired). And it
+        # must be a raise, never a set: someone who already widened it keeps their value.
+        printf "run-shell \"'%s' --status-fit\"\n" "$SELF"
     else
         # Off means off, including on a server where it is already drawn. `tmux show -gv` hands
         # back the **unexpanded** format string, so cutting our fragment out of it and writing it
@@ -197,6 +205,16 @@ tt_tmux_conf_write() {
 #
 # `tmux show -gv` hands back the **unexpanded** format string, so whatever else is on that line —
 # %H:%M, #{session_name} — is written back exactly as it was, still live.
+# Make room for the badges. tmux cuts status-right at status-right-length, default 40 — a clock
+# and a date already fill that, so appended badges are drawn and then truncated away unseen.
+# Raise only: a config that already allows more keeps its own value.
+if [ "${1:-}" = "--status-fit" ]; then
+    cur=$(tmux show -gv status-right-length 2>/dev/null) || exit 0
+    case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+    [ "$cur" -ge 120 ] || tmux set -g status-right-length 120 2>/dev/null || true
+    exit 0
+fi
+
 if [ "${1:-}" = "--status-unbind" ]; then
     cur=$(tmux show -gv status-right 2>/dev/null) || exit 0
     new=$(printf '%s' "$cur" | sed 's| *#([^)]*--status)||g')

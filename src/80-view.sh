@@ -119,7 +119,7 @@ if [ "${1:-}" = "--list" ]; then
             case "$actraw" in
                 *$'\n'"${actp[$i]}"$'\t'*) v=${actraw#*$'\n'"${actp[$i]}"$'\t'}; v=${v%%$'\n'*} ;;
             esac
-            case "$v" in \'\'|*[!0-9]*) v=0 ;; esac
+            case "$v" in ''|*[!0-9]*) v=0 ;; esac
             [ "$v" -gt 0 ] && acttab="$acttab"$'\n'"${actn[$i]}"$'\t'"$v"
             i=$((i + 1))
         done
@@ -150,12 +150,12 @@ if [ "${1:-}" = "--list" ]; then
                 # Read the hook file with read (used to be cut — 1 fork per session). We need the state too.
                 hst=""; hts=0
                 read -r hst hts _ 2>/dev/null < "$STATE/hook-${sid#\$}" || true
-                case "$hts" in \'\'|*[!0-9]*) hts=0 ;; esac
+                case "$hts" in ''|*[!0-9]*) hts=0 ;; esac
                 ats=0
                 case "$acttab" in
                     *$'\n'"$name"$'\t'*) ats=${acttab#*$'\n'"$name"$'\t'}; ats=${ats%%$'\n'*} ;;
                 esac
-                case "$ats" in \'\'|*[!0-9]*) ats=0 ;; esac
+                case "$ats" in ''|*[!0-9]*) ats=0 ;; esac
                 if [ "$ats" -gt 0 ]; then
                     ts="$ats"
                     # We accept exactly one case where the hook is newer than the transcript —

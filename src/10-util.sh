@@ -42,8 +42,12 @@ TT_LOG_KEEP=${TT_LOG_KEEP:-2000}
 tt_log_rotate() {
     local f="${TT_LOG_FILE:-$STATE/hook.log}" sz max
     [ -f "$f" ] || return 0
+    # Repair a log written before the umask policy existed. Only reached from --cron and the boot
+    # path, so this is not on the hook hot path. A log that has caught a prompt in its stderr must
+    # not be readable by other accounts on the machine.
+    chmod 600 "$f" 2>/dev/null || true
     sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ') || return 0
-    case "$sz" in \'\'|*[!0-9]*) return 0 ;; esac
+    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     max=$(tt_conf_num log_max)
     [ "$sz" -gt "$max" ] || return 0
     if tail -n "$TT_LOG_KEEP" "$f" > "$f.tmp" 2>/dev/null; then

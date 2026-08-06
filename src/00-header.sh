@@ -7,6 +7,14 @@
 set -euo pipefail
 export LC_ALL=en_US.UTF-8   # cron has no locale — prevents unicode glyph regexes from misbehaving
 
+# Everything this tool writes is private to the person running it. The state directory holds the
+# prompts you typed (last-*), where every session lives (manifest), and a log that catches the
+# stderr of the hook path — which is how a whole prompt ended up in hook.log once, verbatim.
+#   last-* was already created 0600 by hand, but hook.log came out 0644 and was readable by
+#   anyone with an account on the machine (measured 2026-08-06 on both Linux and macOS). Setting
+#   the policy once, here, is what keeps that from drifting per file.
+umask 077
+
 STATE=~/.cache/tt
 
 # ── Own absolute path (SELF) ─────────────────────────────────────────────────

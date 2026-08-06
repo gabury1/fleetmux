@@ -444,9 +444,9 @@ tt_hook_valid() {
     hts=0; hpid=0
     # The hook file format is "<state> <recorded-ts> <pid>" — state isn't used here (discarded into _)
     read -r _ hts hpid < "$hf" 2>/dev/null || true
-    case "$hpid" in \'\'|*[!0-9]*) hpid=0 ;; esac
-    case "$hts" in \'\'|*[!0-9]*) hts=0 ;; esac
-    case "$created" in \'\'|*[!0-9]*) created=0 ;; esac
+    case "$hpid" in ''|*[!0-9]*) hpid=0 ;; esac
+    case "$hts" in ''|*[!0-9]*) hts=0 ;; esac
+    case "$created" in ''|*[!0-9]*) created=0 ;; esac
     # ① If a pid was recorded, its liveness is the final verdict — alive means genuine, dead
     #    means a ghost.
     #    Must not fall through to comparing timestamps here: if a reboot reuses the id, a dead

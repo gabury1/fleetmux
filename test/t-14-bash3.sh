@@ -123,6 +123,11 @@ assert_contains "$HELPBLK" 'read -rsn1' "and it actually waits for a key"
 # as if it worked and never did. There were eleven of them.
 #
 # The value has to be tested as it is: case "$v" in ''|*[!0-9]*) v=0 ;; esac
+# The second way to write this guard wrong, met while fixing the first: a replacement that put
+# backslashes in, `case "$v" in \'\'|…`, which is the pattern "two apostrophes", not the empty
+# string. bash -n passes, the suite passed, and the guard still did nothing.
+assert_eq "$(grep -c "in ..'..'|" "$TTBIN" || true)" "0" \
+    "★no numeric guard writes the empty case as escaped quotes (that matches two apostrophes, not empty)"
 assert_eq "$(grep -c ':-0}" in .*\[!0-9\]' "$TTBIN" || true)" "0" \
     "★no numeric guard tests \${x:-0} — that substitutes the default before testing, so an empty value slips through"
 
