@@ -1,46 +1,55 @@
-# 배포 경로 — `curl | sh` 하나로 간다
+# Distribution channel — go with one `curl | sh`
 
-결정 2026-08-06 · 결정자: maintainer
+Decided 2026-08-06 · Decided by: the maintainer
 
-## 결정
+## Decision
 
-공개 배포는 **`curl -fsSL … | bash` 한 줄**로 한다. Homebrew tap, `.deb`/`.rpm`, AUR 은
-지금 만들지 않는다.
+Public distribution goes through **one line: `curl -fsSL … | bash`.** Homebrew tap,
+`.deb`/`.rpm`, and AUR are not built right now.
 
-## 왜
+## Why
 
-**macOS 에 `curl` 이 기본 탑재다.** 처음엔 맥=brew / 리눅스=curl 두 갈래를 깔려 했는데,
-그러면 두 경로가 같은 사람들을 두 번 덮는다. 커버리지가 겹치는 경로는 이득이 아니라 유지비다.
+**macOS ships with `curl` built in.** The original plan was two branches — brew for
+Mac, curl for Linux — but that just covers the same people twice through two paths. A
+channel whose coverage overlaps is not a gain, it is maintenance cost.
 
-각 대안을 접은 이유:
+Why each alternative was rejected:
 
-| 경로 | 접은 이유 |
+| Channel | Why rejected |
 |---|---|
-| Homebrew tap | 커버리지가 curl 과 겹친다. 남는 실익은 `brew upgrade` 뿐인데, 설치기가 멱등하면 같은 한 줄을 다시 돌리는 것으로 대체된다(starship·rustup 이 그렇게 한다) |
-| `.deb` / `.rpm` | 저장소를 안 세우면 사용자가 릴리스에서 받아 `dpkg -i` 하는 것이라 curl 보다 나은 게 없다. 세우면 GPG 키·호스팅·갱신을 계속 떠안는다 — **컴파일이 없는 단일 bash 파일**에 그 인프라는 과하다 |
-| AUR | Arch 사용자만. 커뮤니티 PR 로 받으면 되고, 우리가 먼저 유지보수를 떠안을 이유가 없다 |
-| nix / mise | 요청이 오면 |
+| Homebrew tap | Its coverage overlaps with curl. The only remaining benefit is `brew upgrade`, but if the installer is idempotent, that's replaced by just running the same one-liner again (starship and rustup do exactly this) |
+| `.deb` / `.rpm` | Without standing up a repository, the user just downloads it from the release and runs `dpkg -i` — no better than curl. Standing one up means permanently owning GPG keys, hosting, and renewal — that infrastructure is overkill for **a single bash file with no compile step** |
+| AUR | Only reaches Arch users. Community PRs can cover it; there's no reason for us to take on that maintenance burden first |
+| nix / mise | Revisit if requested |
 
-brew 는 "사람들이 패키지 매니저로 깔고 싶다"고 말할 때 다시 꺼낸다. 그때는 공개 tarball 과
-SHA 가 이미 있으니 formula 는 30줄이다 — **지금 안 만든다고 나중이 비싸지지 않는다.**
+Brew gets pulled back out when people start saying "I want to install this through a
+package manager." By then a public tarball and SHA already exist, so the formula is
+30 lines — **not building it now doesn't make it more expensive later.**
 
-## 그래서 만들어야 하는 것 넷
+## The four things that must get built as a result
 
-1. **`install.sh` 원격 모드** — `curl | sh` 로 오면 클론이 없다. 지금은 클론 안에서
-   `make install` 을 부르므로, 릴리스 tarball 을 받아 설치하는 경로가 필요하다.
-2. **기본은 최신 태그** — `main` 을 받게 두면 `main` 이 깨진 순간 **신규 설치가 전부 같이 깨진다.**
-   태그를 기본으로 하고, `main` 은 명시적으로 요청할 때만.
-3. **`SHA256SUMS` 대조** — 릴리스에 올리고 설치기가 검증한다. 파이프 설치의 유일한 방어선이다.
-4. **`tt setup` 분리** — 설정(훅 shim·tmux 스니펫·소환키·스킬)을 설치된 바이너리 안으로 옮긴다.
-   그러면 클론 없이도 재설정할 수 있고, 나중에 어떤 패키지 매니저가 붙어도 그쪽은 바이너리만
-   놓고 설정은 `tt setup` 이 맡는 표준 모양이 된다(`gh auth setup-git`·`starship init` 갈래).
+1. **`install.sh` remote mode** — coming in via `curl | sh` means there's no clone.
+   Right now it calls `make install` from inside a clone, so a path that fetches and
+   installs a release tarball is needed.
+2. **Default to the latest tag** — if we let people pull `main`, then the moment
+   `main` breaks, **every new install breaks along with it.** Default to a tag; `main`
+   only when explicitly requested.
+3. **Verify against `SHA256SUMS`** — publish it with the release and have the
+   installer check it. It's the only line of defense for a piped install.
+4. **Split out `tt setup`** — move configuration (hook shim, tmux snippet, summon
+   key, skill) into the installed binary itself. That makes it possible to
+   reconfigure without a clone, and gives a standard shape for whatever package
+   manager eventually shows up: the package just drops the binary, and `tt setup`
+   handles configuration (the `gh auth setup-git` / `starship init` pattern).
 
-## 문서에 적을 것
+## What goes in the docs
 
-README 에는 **두 단계 경로를 나란히** 적는다 — 파이프 한 줄과, 받아서 눈으로 보고 실행하는 법.
-요즘 개발자들이 `curl | sh` 를 경계하는 것은 합당하고, 그 경계를 무시하지 않는다.
+The README lays out **two paths side by side** — the piped one-liner, and download it,
+read it, then run it yourself. Developers being wary of `curl | sh` these days is
+reasonable, and that wariness isn't dismissed.
 
-## 시점
+## Timing
 
-팀 셋(maintainer·teammate·teammate)이 `git clone` 으로 먼저 써본 뒤에 만든다. 실사용 전에 굳히면
-피드백이 왔을 때 다시 고치게 된다.
+We'll build this after the three of us have used it from a `git clone` first.
+Hardening it before real usage just means having to fix it again once feedback comes
+in.

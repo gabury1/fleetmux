@@ -1,16 +1,17 @@
-# ── 설정 ────────────────────────────────────────────────────────────────────
-# 우선순위: 환경변수 > 설정 파일 > 코드 기본값.
+# ── Config ──────────────────────────────────────────────────────────────────
+# Priority: env var > config file > code default.
 #
-# 이 파일을 절대 `source` 하지 않는 이유: 훅이 이벤트마다, cron 이 1분마다 읽는 경로다.
-# source 라면 사용자가 오타 한 줄만 넣어도 그 순간부터 함대 관제 전체가 조용히 죽는다.
-# 그래서 화이트리스트 파서로만 읽는다 — 아는 키의, 아는 모양의 줄만 통과시킨다.
+# Why this file is never `source`d: it's a path hooks read on every event, and cron reads every
+# minute. If it were sourced, a single typo the user adds would silently kill fleet control
+# entirely from that moment on. So it's read only through a whitelist parser — only lines with
+# a known key and a known shape are let through.
 TT_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
 TT_CONF="${TT_CONF_FILE:-$TT_CONF_DIR/config}"
 
-# 알려진 키. 이 순서가 곧 `tt config` 목록 출력 순서다.
+# Known keys. This order is exactly the order `tt config` lists them in.
 TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
 
-# 기본값. 모르는 키면 rc 1 — "알려진 키인가" 판정도 이 함수가 겸한다.
+# Defaults. Unknown key → rc 1 — this function also doubles as the "is this a known key" check.
 tt_conf_default() {
     case "${1:-}" in
         rc|snapshot|snapshot_on_exit|boot_restore) printf 'on' ;;
@@ -27,84 +28,92 @@ tt_conf_default() {
         key_help)        printf '?' ;;
         key_settings)    printf 'ctrl-o' ;;
         key_summon)      printf 'F' ;;
-        # 무prefix 소환키의 기본값은 **빈 값으로 남는다**. 설정 파일만 깔린 상태에서 말없이
-        # 남의 키를 뺏으면 안 된다 — 무prefix 바인딩은 그 pane 안 모든 앱(vim·셸·fzf)에서
-        # 그 키를 가져간다. 그건 사람이 한 번 "예"라고 말한 뒤에만 일어나야 한다.
-        #   그래서 정책이 둘로 갈린다: **설정 기본값은 빈 값, 설치기의 제안은 S-Left**.
-        #   (install.sh 의 프리셋 절이 왜 S-Left 인지를 길게 적어 뒀다. 요약: Shift+방향키가
-        #    macOS·리눅스·Windows Terminal 세 곳을 다 통과하는 유일한 무prefix 한 타건이다.)
+        # The default for the no-prefix summon key **stays empty**. With only the config file
+        # installed, it must not silently steal someone else's key — a no-prefix binding grabs
+        # that key from every app in that pane (vim, shell, fzf). That must only happen after a
+        # human has said "yes" once.
+        #   So policy splits in two: **the config default is empty, the installer's suggestion is
+        #   S-Left**. (The install.sh preset section writes at length on why S-Left. Summary:
+        #   Shift+arrow is the only no-prefix single keystroke that passes through all three of
+        #   macOS, Linux, and Windows Terminal.)
         key_summon_fast) printf '' ;;
         *) return 1 ;;
     esac
     return 0
 }
 
-# 키 → 환경변수 이름. bash 3.2 에는 ${var^^} 가 없다 → tr 로 올린다.
+# Key → env var name. bash 3.2 has no ${var^^} → uppercase with tr instead.
 tt_conf_envname() {
     printf 'TT_%s' "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
 }
 
-# 설정 파일을 프로세스당 한 번만 읽는다 — 매 조회마다 통째로 다시 훑으면, 훅이 이벤트마다
-# cron 이 1분마다 도는 이 경로에서 깨진 줄 하나가 조회한 키 수만큼 같은 경고를 반복해
-# hook.log 를 계속 채운다(고침 라운드 1 지적: 4개 키 조회 = 같은 경고 4번). 그래서
-# 두 번째 호출부터는 즉시 반환한다 — 디자인 문서의 "읽기는 매 진입점 시작 시 1회
-# (tt_conf_load)" 를 그대로 구현한 것. ("파일은 열 줄 미만이라 캐시하지 않는다"는 디스크에
-# 캐시 파일을 만들지 않는다는 뜻이지, 프로세스 안에서 값을 기억하지 말라는 뜻이 아니다.)
+# Read the config file only once per process — if the whole thing were rescanned on every lookup,
+# on this path where hooks fire on every event and cron runs every minute, a single broken line
+# would repeat the same warning once per key looked up and keep filling up hook.log (fix round 1
+# finding: 4 key lookups = the same warning 4 times). So from the second call onward it returns
+# immediately — this is a direct implementation of the design doc's "read once at the start of
+# each entry point (tt_conf_load)". ("The file is under ten lines so it isn't cached" means it
+# doesn't get written to a cache file on disk — it does NOT mean values shouldn't be remembered
+# within the process.)
 #
-#   알려진 키마다 TT_CONF_V_<key>(값)·TT_CONF_S_<key>(파일에 있었다는 표식, 빈 값과 구분
-#   하기 위해 값과 별도로 둔다)에 담는다. bash 3.2 엔 연관 배열이 없어 변수명을 동적으로
-#   조립한다(eval) — 그래서 이 변수명 자리에 들어가는 키는 반드시 tt_conf_default 화이트
-#   리스트를 통과한 것만 써야 한다(그 앞단인 tt_conf_file_get 이 검사한다).
+#   Each known key is stored into TT_CONF_V_<key> (the value) and TT_CONF_S_<key> (a marker that
+#   it was present in the file, kept separate from the value to distinguish it from an empty
+#   value). bash 3.2 has no associative arrays, so variable names are assembled dynamically
+#   (eval) — which means any key that lands in that variable-name slot must have already passed
+#   the tt_conf_default whitelist (the caller in front of it, tt_conf_file_get, checks this).
 #
-#   주의(중요 — 호출부 계약): 이 함수는 명령치환(subshell) 안에서 부르면 캐시가 그
-#   subshell 안에서만 세워지고 밖으로 못 나온다 — bash 는 subshell 의 변수 변경을 부모
-#   프로세스로 절대 되돌리지 않는다. 그래서 "한 프로세스 안 여러 조회에 경고가 한 번만"을
-#   보장하려면, 그 프로세스의 진입점이 `v=$(...)` 로 감싸지 않은 맨 statement 로
-#   tt_conf_load 를 한 번 불러둬야 한다 — 아래 `config get/source` 진입점이 그렇게 한다.
-#   (단일 조회만 하는 호출부는 이 걱정을 할 필요 없다 — tt_conf_get/tt_conf_source 가
-#   내부에서 알아서 한 번 부른다.)
+#   Caution (important — contract for callers): if this function is called inside a command
+#   substitution (subshell), the cache is only established inside that subshell and never makes
+#   it back out — bash never propagates a subshell's variable changes back to the parent process.
+#   So to guarantee "only one warning per multiple lookups within one process", that process's
+#   entry point must call tt_conf_load once as a bare statement, not wrapped in `v=$(...)` — the
+#   `config get/source` entry points below do exactly that.
+#   (Callers that only do a single lookup don't need to worry about this — tt_conf_get/
+#   tt_conf_source already call it once internally.)
 TT_CONF_LOADED=0
 tt_conf_load() {
     [ "$TT_CONF_LOADED" = 1 ] && return 0
     TT_CONF_LOADED=1
-    # -r 이지 -f 가 아니다. 파일이 있는데 못 읽으면(퍼미션·ACL) 아래 `done < "$TT_CONF"` 의
-    # 리다이렉트가 실패하고, set -e 가 그걸 물어 프로세스가 통째로 죽는다 — 크론(매분)과
-    # @reboot 부팅복원이 이유도 안 남기고 즉사한다. 못 읽으면 그냥 기본값으로 간다.
+    # -r, not -f. If the file exists but can't be read (permissions, ACL), the redirect on
+    # `done < "$TT_CONF"` below fails, and set -e catches that and kills the whole process — cron
+    # (every minute) and @reboot boot-restore die instantly with no reason left behind. If it
+    # can't be read, just fall through to defaults.
     [ -r "$TT_CONF" ] || return 0
     local line k v
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|'#'*|' '*'#'*) continue ;; esac
-        # key=value 모양인가 — '=' 이 아예 없는 줄도 무시하되, 예전엔 여기서 경고 없이
-        # 조용히 넘어갔다(고침 라운드 1 지적 2). 다른 무시 사유처럼 한 줄 경고를 낸다.
+        # Is it key=value shaped — also ignore a line with no '=' at all, though this used to
+        # pass through silently with no warning (fix round 1 finding 2). Emit a one-line warning
+        # like every other ignore reason.
         case "$line" in
             *=*) ;;
-            *) printf 'fleetmux: %s 의 줄 무시 — key=value 모양이 아니다: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            *) printf 'fleetmux: ignoring line in %s — not key=value shape: %s\n' "$TT_CONF" "$line" >&2; continue ;;
         esac
         k=${line%%=*}
         v=${line#*=}
-        # 키 모양 검사
+        # check key shape
         case "$k" in
-            ''|*[!a-z0-9_]*) printf 'fleetmux: %s 의 줄 무시 — 키 모양이 아니다: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            ''|*[!a-z0-9_]*) printf 'fleetmux: ignoring line in %s — not a valid key shape: %s\n' "$TT_CONF" "$line" >&2; continue ;;
         esac
-        # 알려진 키인가
+        # is it a known key
         if ! tt_conf_default "$k" >/dev/null 2>&1; then
-            printf 'fleetmux: %s 의 줄 무시 — 모르는 키: %s\n' "$TT_CONF" "$k" >&2
+            printf 'fleetmux: ignoring line in %s — unknown key: %s\n' "$TT_CONF" "$k" >&2
             continue
         fi
-        # 값 문자셋 검사
+        # check value charset
         case "$v" in
-            *[!0-9A-Za-z_./:+\ -]*) printf 'fleetmux: %s 의 줄 무시 — 값에 허용 안 된 글자: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            *[!0-9A-Za-z_./:+\ -]*) printf 'fleetmux: ignoring line in %s — disallowed character in value: %s\n' "$TT_CONF" "$line" >&2; continue ;;
         esac
-        eval "TT_CONF_V_$k=\$v"   # 마지막에 쓴 줄이 이긴다 — 그냥 덮어쓴다
+        eval "TT_CONF_V_$k=\$v"   # last line written wins — just overwrite
         eval "TT_CONF_S_$k=1"
     done < "$TT_CONF"
     return 0
 }
 
-# 캐시(tt_conf_load)에서 한 키를 읽는다. 없으면 rc 1.
+# Read one key from the cache (tt_conf_load). rc 1 if absent.
 tt_conf_file_get() {
     local want="${1:-}" have
-    tt_conf_default "$want" >/dev/null 2>&1 || return 1   # eval에 꽂기 전 화이트리스트 재확인(주입 방지)
+    tt_conf_default "$want" >/dev/null 2>&1 || return 1   # re-check the whitelist before feeding into eval (injection prevention)
     tt_conf_load
     eval "have=\${TT_CONF_S_$want+set}"
     [ "${have:-}" = set ] || return 1
@@ -112,7 +121,7 @@ tt_conf_file_get() {
     return 0
 }
 
-# 유효값. 모르는 키면 rc 1.
+# Effective value. Unknown key → rc 1.
 tt_conf_get() {
     local k="${1:-}" envn v
     tt_conf_default "$k" >/dev/null 2>&1 || return 1
@@ -123,28 +132,32 @@ tt_conf_get() {
     tt_conf_default "$k"
 }
 
-# 수를 쓰는 키를 산술에 넣어도 안전한 형태로 읽는다. 모르는 키면 rc 1.
-#   왜 따로 두나: 위 화이트리스트 파서는 값의 **문자셋**만 본다. `recent_hours=6h` 는 통과한다.
-#   그 값이 그대로 $(( … )) 로 들어가면 산술 구문 오류가 나고, set -e 가 그걸 물어 --list 나
-#   --status 를 통째로 죽인다 — 손으로 고친 설정 한 줄이 관제탑을 못 뜨게 하면 안 된다.
-#   또 하나: `08` 은 문자셋 검사를 통과하지만 bash 산술에선 8진수라 "value too great for base"
-#   로 즉사한다. 그래서 통과한 값도 10#… 으로 한 번 정규화해서 내보낸다.
-#   두 번째 인자는 상한(선택) — accent 처럼 값이 이스케이프 시퀀스 안으로 들어가는 키에 쓴다.
-#   기본값으로 돌아갈 땐 조용히 넘어가지 않고 한 줄 말한다(파서의 무시 경고와 같은 규율).
+# Reads a numeric key in a form that's safe to feed into arithmetic. Unknown key → rc 1.
+#   Why this is separate: the whitelist parser above only checks the value's **charset**.
+#   `recent_hours=6h` passes it. If that value went straight into $(( … )), it would be an
+#   arithmetic syntax error, and set -e would catch that and kill --list or --status entirely —
+#   one hand-edited config line must never be able to keep the control tower from coming up.
+#   One more thing: `08` passes the charset check, but in bash arithmetic it's octal and dies
+#   instantly with "value too great for base". So even a value that passed is normalized once
+#   more through 10#… before being emitted.
+#   The second argument is an (optional) upper bound — used for keys like accent whose value goes
+#   into an escape sequence.
+#   Falling back to the default is not silent — it says one line (the same discipline as the
+#   parser's ignore warnings).
 tt_conf_num() {
     local k="${1:-}" max="${2:-}" v ok=1
     v=$(tt_conf_get "$k") || return 1
     case "$v" in ''|*[!0-9]*) ok=0 ;; esac
     if [ "$ok" = 1 ] && [ -n "$max" ] && [ "$(( 10#$v ))" -gt "$max" ]; then ok=0; fi
     if [ "$ok" = 0 ]; then
-        printf 'fleetmux: %s 의 값을 쓸 수 없다 — 기본값으로 간다: %s\n' "$k" "$v" >&2
+        printf 'fleetmux: cannot use value of %s — falling back to default: %s\n' "$k" "$v" >&2
         v=$(tt_conf_default "$k")
     fi
     printf '%s' "$(( 10#$v ))"
     return 0
 }
 
-# 값이 어디서 왔나 — env | file | default
+# Where did the value come from — env | file | default
 tt_conf_source() {
     local k="${1:-}" envn v
     tt_conf_default "$k" >/dev/null 2>&1 || return 1
@@ -155,7 +168,7 @@ tt_conf_source() {
     printf 'default'
 }
 
-# 불린 키가 켜져 있나. on/1/true/yes 를 켜짐으로 본다(대소문자 무시).
+# Is a boolean key on. on/1/true/yes count as on (case-insensitive).
 tt_conf_on() {
     local v
     v=$(tt_conf_get "${1:-}") || return 1

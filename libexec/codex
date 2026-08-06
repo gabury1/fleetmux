@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# tt codex wrapper — tmux 안에서 뜨는 codex에만 tt 훅을 -c 로 주입 (전역 ~/.codex/config.toml 무침습)
-# claude wrapper와 동형인 PATH shim. 이 파일을 지우면 개입이 완전히 사라진다.
-# 자기 자신 제외 = 무한재귀 방지. 'libexec/tt' substring 제외는 진짜 바이너리 경로에 그 문자열이
-# 있으면 오배제해 exit 127을 내므로, 심볼릭링크를 푼 절대경로 동일성으로만 뺀다.
+# tt codex wrapper — injects the tt hook via -c only into codex launched inside tmux (leaves the global ~/.codex/config.toml untouched)
+# A PATH shim isomorphic to the claude wrapper. Delete this file and the intervention disappears entirely.
+# Excluding itself = avoids infinite recursion. Excluding by the 'libexec/tt' substring would
+# wrongly exclude the real binary if its path contained that string, dying with exit 127 — so
+# it excludes only by identity, comparing symlink-resolved absolute paths.
 SELF=$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "$0")
 REAL=""
 while IFS= read -r cand; do
@@ -12,18 +13,19 @@ while IFS= read -r cand; do
 done < <(type -ap codex 2>/dev/null)
 [ -n "$REAL" ] || { echo "tt-wrapper: real codex not found in PATH" >&2; exit 127; }
 
-# tmux 밖이거나 tt가 없으면 → 투명 통과
+# Outside tmux, or tt is missing → pass through transparently
 if [ -z "${TMUX:-}" ] || ! command -v tt >/dev/null 2>&1; then
     exec "$REAL" "$@"
 fi
 
-# 사용자가 이미 훅/trust를 직접 지정했으면 → 손대지 않고 투명 통과
-# 훅이 안 뜨는 비대화형 서브커맨드(codex exec 등)도 통과 — 세션을 에이전트로 오분류하지 않게
+# If the user already specified hooks/trust directly → pass through untouched
+# Also pass through non-interactive subcommands where hooks don't fire (codex exec, etc.) —
+# so we don't misclassify the session as an agent
 prev=""
 for a in "$@"; do
     case "$a" in
         --dangerously-bypass-hook-trust|-chooks*|--config=hooks*) exec "$REAL" "$@" ;;
-        --version|-V|--help|-h) exec "$REAL" "$@" ;;   # 찍고 끝나는 플래그 — 세션 오분류 방지
+        --version|-V|--help|-h) exec "$REAL" "$@" ;;   # flags that just print and exit — avoid session misclassification
         exec|e|review|login|logout|mcp|plugin|mcp-server|app-server|remote-control|completion|update|doctor|sandbox|debug|apply|a|archive|unarchive|cloud|exec-server|features|help)
             case "$prev" in -*) ;; *) exec "$REAL" "$@" ;; esac ;;
     esac
@@ -33,14 +35,15 @@ for a in "$@"; do
     prev="$a"
 done
 
-# 훅 인자는 한 줄에 하나씩 온다 — 배열로 읽어 그대로 전달 (eval 없음 = 셸 injection 여지 0)
+# Hook args arrive one per line — read into an array and pass through as-is (no eval = zero shell injection surface)
 TT_HOOK_ARGS=()
 while IFS= read -r line; do TT_HOOK_ARGS+=("$line"); done < <(tt --codex-hooks 2>/dev/null)
 [ ${#TT_HOOK_ARGS[@]} -gt 0 ] || exec "$REAL" "$@"
 
-# 기동 자백: codex SessionStart는 첫 프롬프트 제출 때에야 오므로 wrapper가 기동 시점을 메운다
-# (tt --hook은 여기서 wrapper의 $TMUX_PANE을 그대로 상속받아 자기 세션을 안다)
+# Boot self-report: codex's SessionStart only fires once the first prompt is submitted, so the
+# wrapper fills in the gap at launch time
+# (tt --hook inherits the wrapper's $TMUX_PANE here, so it knows its own session)
 tt --hook boot </dev/null >/dev/null 2>&1 || true
 
-# 비관리(-c 주입) 훅은 trust 승인을 요구한다 → 우회 플래그 동봉 필수
+# Unmanaged (-c injected) hooks require trust approval → the bypass flag must be included
 exec "$REAL" --dangerously-bypass-hook-trust "${TT_HOOK_ARGS[@]}" "$@"

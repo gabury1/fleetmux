@@ -273,8 +273,8 @@ the env var for `recent_hours` is `TT_RECENT_HOURS`, and so on.
 `key_help` `key_settings`
 
 These validate and save, but **nothing reads them** — the in-popup keys are still
-hardcoded. `tt config list` and the settings screen mark such rows `← 미배선`
-("not wired"), and `tt config set` says so again on the spot. A toggle that lies is
+hardcoded. `tt config list` and the settings screen mark such rows `← not wired`,
+and `tt config set` says so again on the spot. A toggle that lies is
 worse than a missing toggle, so the marker is derived from the code itself rather
 than from a hand-kept list.
 

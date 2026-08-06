@@ -1,109 +1,129 @@
-# 마지막 명령 프리뷰 — 설계
+# Last prompt preview — design
 
-작성 2026-08-05 · 상태: 승인됨(maintainer)
+Written 2026-08-05 · Status: approved
 
-## 배경
+## Background
 
-팝업 프리뷰는 지금 세션 화면의 꼬리(`tmux capture-pane` 마지막 N줄)를 보여준다.
-그런데 **내가 뭘 시켰는지**는 대개 화면 위로 밀려나 사라진다. 에이전트가 길게 사고하거나
-도구를 여러 번 쓰면 프롬프트는 스크롤 밖이고, 남는 것은 진행 표시뿐이다.
+The popup preview currently shows the tail of the session's screen (the last N lines
+of `tmux capture-pane`). But **what I told it to do** usually scrolls off the top and
+disappears. When an agent thinks for a long time or uses several tools, the prompt is
+off-screen and all that's left is the progress indicator.
 
-세션을 열 개 굴리는 사람에게 "이 세션한테 내가 뭘 시켰더라"는 매번 드는 질문이다.
-답이 화면에는 없고 기억에만 있다.
+For someone running ten sessions, "what did I even ask this session to do" is a
+question that comes up every single time. The answer isn't on screen — it's only in
+memory.
 
-## 목표
+## Goal
 
-프리뷰 상단에 **그 세션에 마지막으로 보낸 프롬프트**를 고정으로 띄운다.
+Pin **the last prompt sent to that session** at the top of the preview.
 
-## 비목표
+## Non-goals
 
-- 프롬프트 이력(마지막 하나만 둔다)
-- 목록 행에 표시(프리뷰만 — 목록은 세션 이름과 마크로 유지한다)
-- 응답 요약·제목 생성(모델을 부르지 않는다)
+- Prompt history (keep only the last one)
+- Showing it in the list row (preview only — the list keeps session name and marks)
+- Response summaries / title generation (never calls a model)
 
-## 왜 화면을 안 긁는가
+## Why we don't scrape the screen
 
-이 도구의 규율이다 — **훅 상태가 사실이고 화면은 렌더링이다.** 화면에서 프롬프트를 긁으면
-줄바꿈·박스 문자·스크롤에 매번 깨진다. 그리고 그럴 필요가 없다:
+This is the tool's core discipline — **hook state is the fact, the screen is a
+rendering.** Scraping the prompt from the screen breaks every time on line wraps, box
+characters, scrolling. And there's no need to:
 
-`src/50-hook.sh` 의 `--hook` 수신부는 이미 stdin 으로 payload 를 받아 파싱한다
-(`tt_jv "$payload" session_id`, `tt_jv "$payload" cwd`). Claude Code 의 `UserPromptSubmit`
-payload 에는 프롬프트 본문이 함께 온다. **재료가 이미 손에 있고, 한 번 더 꺼내기만 하면 된다.**
+The `--hook` receiver in `src/50-hook.sh` already reads and parses a payload from
+stdin (`tt_jv "$payload" session_id`, `tt_jv "$payload" cwd`). Claude Code's
+`UserPromptSubmit` payload includes the prompt body itself. **The material is already
+in hand — it just needs to be pulled out one more time.**
 
-## 설계
+## Design
 
-### 1. 저장
-
-```
-~/.cache/tt/last-<tmux세션id>
-  1행     기록 시각 (unix epoch)
-  2행~    프롬프트 원문
-```
-
-- `UserPromptSubmit`(claude) / 그에 대응하는 codex 이벤트에서만 쓴다. 다른 훅은 건드리지 않는다.
-- **상한 4096바이트.** 붙여넣기한 거대한 지시가 디스크와 프리뷰를 먹지 않게 자른다.
-  자른 경우 그 사실이 렌더에 드러나야 한다(아래 3절).
-- 제어문자는 개행만 남기고 제거한다. 터미널 이스케이프가 그대로 프리뷰에 흘러들면
-  프리뷰가 깨진다 — 훅이 받는 것은 사용자 입력이라 무엇이든 들어올 수 있다.
-- 쓰기는 원자적(tmp+mv). 훅은 이벤트마다 도는 짧은 프로세스이고, 프리뷰가 같은 파일을
-  동시에 읽는다.
-
-### 2. 정리
-
-- `SessionEnd`(clear) 훅에서 그 세션 파일을 지운다 — `hook-<sid>` 를 지우는 자리와 같다.
-- 고아 sweep(`tt_sweep_hooks`)이 `hook-*` 을 훑을 때 `last-*` 도 같이 훑는다.
-  재부팅하면 tmux 가 세션 id 를 `$0` 부터 재발급하므로, 죽은 세션의 파일이 새 세션에
-  붙는 것을 막아야 한다. **판정 기준은 `hook-*` 과 같은 것을 쓴다**(따로 만들지 않는다).
-
-### 3. 렌더
-
-`--preview` 가 파일이 있으면 헤더를 먼저 그리고, 그 줄 수만큼 화면 꼬리를 줄인다.
-
-v0.1.2 로 나간 뒤 사용자가 실사용하며 모양을 세 번 다듬었고, **아래가 확정된 최종형**이다.
-중간 판(세로선·박스)은 전부 폐기됐다 — 박스는 "못생겼다"는 이유로 명시적으로 버려졌다.
+### 1. Storage
 
 ```
-last prompt ❯                          ← 라벨 줄. 셸 프롬프트처럼 읽힌다(dim)
-module refactor 계속해줘.          ← 본문 1행. 접두 없이 창 폭 전체
-Widget.change 로 접은 거 기준으로       ← 2행
-… +4줄                                 ← 남은 줄 수 (없으면 이 줄 자체가 없다)
-──────────────────────────────         ← 구분선(dim, 폭 = 프리뷰 폭)
-(기존 화면 꼬리)
+~/.cache/tt/last-<tmux-session-id>
+  line 1     recorded time (unix epoch)
+  line 2+    raw prompt text
 ```
 
-- 라벨은 제 줄을 갖는다. 본문은 **다음 줄부터, 들여쓰기 없이** 시작한다 —
-  접두 두 칸은 두 칸만큼 더 잘린다는 뜻이고, 라벨이 위로 올라가면 접두가 할 일이 없다.
-- 본문 최대 3줄. 넘치면 마지막 자리에 `… +N줄`(그 줄도 본문 3줄 예산에 든다).
-- 4096바이트 상한에 걸려 잘린 경우도 같은 자리에 드러낸다(예: `… +N줄 (잘림)`).
-- 색은 설정의 `accent` 를 따르고, 라벨·구분선 **둘 다 dim** 이다 — 읽어야 하는 건 본문이다.
-- 폭이 좁으면 각 줄을 프리뷰 폭에 맞춰 자른다(`FZF_PREVIEW_COLUMNS`).
-  라벨 한 줄도 못 적을 폭(13칸 미만)이면 헤더를 통째로 포기한다 — 부가물 원칙.
-- 줄 수 예산 = 라벨 1 + 본문 최대 3 + 구분선 1 = 5. 헤더가 먹은 줄 수를
-  `FZF_PREVIEW_LINES` 에서 빼고 화면 꼬리를 자른다 — 안 그러면 프리뷰가 넘쳐 위가 잘린다.
+- Written only from `UserPromptSubmit` (claude) / the corresponding codex event. No
+  other hook touches it.
+- **4096-byte cap.** Trims a giant pasted instruction before it eats disk and preview
+  space. If trimmed, that fact must show up in the render (see section 3 below).
+- Control characters are stripped except newlines. If a terminal escape sequence
+  leaked straight into the preview it would break — the hook receives user input, so
+  anything can arrive.
+- Writes are atomic (tmp+mv). The hook is a short-lived process that runs per event,
+  and the preview reads the same file concurrently.
 
-### 4. 실패 모드
+### 2. Cleanup
 
-| 상황 | 동작 |
+- The `SessionEnd` (clear) hook deletes that session's file — same spot where
+  `hook-<sid>` gets deleted.
+- The orphan sweep (`tt_sweep_hooks`), when it sweeps `hook-*`, sweeps `last-*` too.
+  After a reboot, tmux reissues session IDs starting from `$0`, so a dead session's
+  file must be kept from attaching to a new session. **It uses the exact same
+  criterion as `hook-*`** (no separate one is built).
+
+### 3. Render
+
+If `--preview` finds a file, it draws the header first and shrinks the screen tail by
+that many lines.
+
+Shipped in v0.1.2, the shape was tuned three times through real usage, and **below is
+the confirmed final form.** Intermediate versions (vertical rule, box) were all
+discarded — the box was explicitly thrown out for being "ugly."
+
+```
+last prompt ❯                          ← label line. reads like a shell prompt (dim)
+keep going on the device domain        ← body line 1. no prefix, full window width
+refactor, based on where we folded     ← line 2
+… +4 lines                             ← remaining line count (absent if there is none)
+──────────────────────────────         ← divider (dim, width = preview width)
+(existing screen tail)
+```
+
+- The label gets its own line. The body starts **on the next line, with no
+  indentation** — a two-space prefix would just mean losing two more columns, and once
+  the label moves up there's nothing left for a prefix to do.
+- Body is capped at 3 lines. If it overflows, the last slot shows `… +N lines` (that
+  line itself counts against the 3-line body budget).
+- If it was also cut off by the 4096-byte cap, that's shown in the same spot too
+  (e.g. `… +N lines (truncated)`).
+- Color follows the config's `accent`; both label and divider are **dim** — what needs
+  reading is the body.
+- On a narrow width, each line is trimmed to the preview width
+  (`FZF_PREVIEW_COLUMNS`). If the width can't even fit the label line (under 13
+  columns), the whole header is dropped — the additive-extra principle.
+- Line budget = 1 label + up to 3 body + 1 divider = 5. That many lines are subtracted
+  from `FZF_PREVIEW_LINES` before trimming the screen tail — otherwise the preview
+  overflows and the top gets cut off.
+
+### 4. Failure modes
+
+| Situation | Behavior |
 |---|---|
-| `last-<sid>` 없음 (첫 실행·정리된 뒤·도구 세션) | 헤더 없이 지금과 똑같이 화면 꼬리만 |
-| 프리뷰 폭이 라벨(13칸)보다 좁다 | 헤더 없이 화면 꼬리만 — 라벨을 자르며 시작하느니 없는 게 낫다 |
-| 파일이 깨졌거나 읽기 실패 | 헤더 없이 진행. 프리뷰는 절대 안 깨진다 |
-| codex payload 에서 프롬프트를 못 꺼냄 | 조용히 건너뛴다. 상태 판정에는 영향 없음 |
-| 훅이 payload 를 못 읽음(빈 stdin) | 기존 동작 그대로 — 이 기능만 없다 |
+| No `last-<sid>` (first run, already cleaned up, tool session) | No header, screen tail only, exactly as today |
+| Preview width narrower than the label (13 cols) | No header, screen tail only — better to have none than start by truncating the label |
+| File is corrupt or unreadable | Proceeds without a header. The preview never breaks |
+| Prompt can't be pulled from the codex payload | Skipped silently. No effect on state determination |
+| Hook can't read the payload (empty stdin) | Behaves exactly as before — just without this feature |
 
-**원칙**: 이 기능은 부가물이다. 실패해도 프리뷰·상태 판정·매니페스트에 영향이 없어야 한다.
+**Principle**: this feature is an additive extra. If it fails, it must have zero
+effect on the preview, state determination, or the manifest.
 
-## 테스트
+## Tests
 
-- 훅이 payload 에서 프롬프트를 꺼내 파일에 쓴다(1행 epoch, 2행~ 본문)
-- 4096바이트 상한에서 잘리고, 잘렸다는 사실이 렌더에 드러난다
-- 제어문자·이스케이프가 걸러진다
-- 3줄 초과 시 `… +N줄`, 3줄 이하면 그 줄이 없다
-- 파일이 없을 때 프리뷰가 기존과 바이트 동일하게 나온다
-- `clear` 훅이 파일을 지운다 / sweep 이 고아를 지운다
-- 헤더 줄 수만큼 화면 꼬리가 줄어든다(프리뷰 총 줄 수가 `FZF_PREVIEW_LINES` 를 안 넘는다)
+- The hook pulls the prompt from the payload and writes it to the file (line 1 epoch,
+  line 2+ body)
+- Truncated at the 4096-byte cap, and the fact of truncation shows up in the render
+- Control characters / escapes are filtered out
+- `… +N lines` when over 3 lines; that line is absent when 3 or fewer
+- The preview comes out byte-identical to today when the file doesn't exist
+- The `clear` hook deletes the file / sweep deletes orphans
+- The screen tail shrinks by exactly the header's line count (total preview lines
+  never exceed `FZF_PREVIEW_LINES`)
 
-## 미결
+## Open
 
-- codex 의 프롬프트 제출 이벤트 payload 구조는 확인되지 않았다. 구현 중 실측하고,
-  못 꺼내면 claude 전용으로 두고 그 사실을 문서에 적는다.
+- The payload shape of codex's prompt-submit event hasn't been confirmed. Measure it
+  during implementation; if it can't be pulled out, keep this claude-only and document
+  that fact.

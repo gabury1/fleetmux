@@ -1,37 +1,48 @@
-# ── rc(Remote Control) 판정부 ───────────────────────────────────────────────
-# 폰에서 세션을 보려면 claude가 rc 브리지에 붙어 있어야 한다. 브리지는 25분 타임아웃·
-# 컴팩션·유휴로 조용히 끊기고(공식 미해결 버그) 복구는 수동 /remote-control 재실행뿐 — 그걸 자동화한다.
-# 판정 소스는 claude가 직접 쓰는 ~/.claude/sessions/<pid>.json 의 bridgeSessionId
-#   null = 끊김 / 값 있음 = 연결(claude.ai/code/<값>).  세션이 죽으면 파일도 사라진다.
-#   파일의 name 필드는 신뢰 금지(서로 다른 세션이 같은 이름으로 찍힌다) — 매핑은 반드시 PID로.
+# ── rc (Remote Control) verdict logic ──────────────────────────────────────
+# To view a session from the phone, claude needs to be attached to the rc bridge. The bridge
+# silently disconnects on a 25-minute timeout, compaction, or idle (an official unresolved
+# bug), and recovery is manual /remote-control re-run only — this automates that.
+# The source of truth is bridgeSessionId in ~/.claude/sessions/<pid>.json, which claude writes
+# directly.
+#   null = disconnected / has a value = connected (claude.ai/code/<value>). The file disappears
+#   when the session dies.
+#   Do not trust the file's name field (different sessions can be stamped with the same name)
+#   — mapping must always go through PID.
 SESSD=~/.claude/sessions
 
-# 얕은 JSON 값 뽑기 (문자열은 따옴표 벗김, 키 없으면 빈값) — jq도 포크도 없이. 1분마다 전 세션을 도는 경로다
+# Shallow JSON value extraction (strips quotes off strings, empty if key missing) — no jq, no
+# fork. This is on the path that walks every session once a minute.
 rc_val() {
     local re="\"$2\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|[^,}]*)"
     [[ "$1" =~ $re ]] || return 0
     printf '%s' "${BASH_REMATCH[1]//\"/}"
 }
 
-# 세션 파일 통째 읽기. claude가 쓰는 도중(잘린 파일)을 반쪽 읽고 "rc 끊김"으로 오판하면
-# 멀쩡한 세션에 키를 치게 된다 → 완결성(마지막 })부터 확인하고, 아니면 이번 라운드는 판정 포기
+# Read the entire session file at once. If we read half of a file claude is mid-write on
+# (a truncated file) and misjudge it as "rc disconnected", we'd send keys to a perfectly fine
+# session -> check completeness (the trailing }) first, and if it's incomplete, give up the
+# verdict for this round.
 rc_read() {
     local j
     j=$(cat "$1" 2>/dev/null) || return 1
     case "$j" in *'"sessionId":"'*'}') printf '%s' "$j" ;; *) return 1 ;; esac
 }
 
-# /proc/<pid>/stat 22번 필드(starttime) — json의 procStart와 대조해 PID 재사용을 막는다
+# /proc/<pid>/stat field 22 (starttime) — cross-checked against the json's procStart to guard
+# against PID reuse.
 rc_procstart() {
     local s
     s=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
-    s=${s##*) }                       # comm 뒤(3번 필드 state)부터 → 22번 필드는 여기서 20번째
+    s=${s##*) }                       # start right after comm (field 3, state) -> field 22 is field 20 from here
     printf '%s' "$s" | awk '{print $20}'
 }
 
-# pane pid 아래로 내려가며 claude 본체 PID를 찾는다 (--hook의 부모 체인 등반과 반대 방향)
-#   자격: 세션 파일 보유 + comm이 claude + procStart 일치.  wrapper·중간 셸이 껴도 몇 단계 내려가 잡는다.
-#   같은 층에 후보가 둘이면 포기 — 엉뚱한 PID를 잡으면 남의 상태를 보게 된다(오탐 금지)
+# Descend below the pane pid to find claude's real PID (the opposite direction of --hook's
+#   parent-chain walk).
+#   Qualification: has a session file + comm is claude + procStart matches. Even with wrapper
+#   or intermediate shells in between, it descends a few levels and catches it.
+#   If there are two candidates at the same level, give up — grabbing the wrong PID would show
+#   someone else's state (no false positives allowed).
 rc_claude_pid() {
     local level="$1" next hits p c n d=0 pst j
     while [ -n "${level// /}" ] && [ "$d" -lt 4 ]; do
@@ -54,98 +65,112 @@ rc_claude_pid() {
     return 1
 }
 
-# tmux 세션 → "pane_id claude_pid" (판정 불가·모호하면 rc 1). 어느 창의 pane이든 훑는다
+# tmux session -> "pane_id claude_pid" (rc 1 if undecidable/ambiguous). Scans panes across any window.
 rc_target() {
     local pane ppid pid found=""
     while read -r pane ppid; do
         pid=$(rc_claude_pid "$ppid") || continue
-        [ -n "$found" ] && return 1     # 한 세션에 claude 둘 = 어디에 칠지 모름 → 포기
+        [ -n "$found" ] && return 1     # two claudes in one session = don't know where to type -> give up
         found="$pane $pid"
     done < <(tmux list-panes -s -t "$1" -F '#{pane_id} #{pane_pid}' 2>/dev/null || true)
     [ -n "$found" ] || return 1
     printf '%s' "$found"
 }
 
-# rc 자동 복구 (cron 1분): 끊긴 claude 세션에만 /remote-control을 재주입한다
-#   send-keys는 "bridgeSessionId가 실제로 null + 작업중이 아님"일 때만 — 작업중 주입은 입력 오염
-#   이미 연결된 세션에서 /remote-control을 치면 끊기진 않고 모달만 열린다 → 주입 후 Escape 필수
-#   tt --cron <세션명> 으로 한 세션만 검사 (디버깅용)
-# 라운드 끝에 --list용 표시 캐시($STATE/rc-off)를 갈아끼운다 — 목록은 손이 자주 타는 경로라
-# 거기서 pgrep 팬아웃을 돌리면 팝업이 눈에 띄게 굼떠진다(0.05s → 0.4s 실측). 판정은 여기서만 한다.
-if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # 옛 이름은 하위호환
-    # 설정은 진입점 맨 위에서 "서브셸이 아닌 맨 statement"로 한 번만 읽는다(05-config.sh:53 계약).
-    # $(...) 안에서 부르면 캐시가 그 서브셸과 함께 죽어, 아래 루프가 세션마다 파일을 다시 파싱하고
-    # 깨진 줄 경고를 1분마다 그 횟수만큼 중복 발사한다.
+# rc auto-recovery (cron, every 1 minute): re-injects /remote-control only into disconnected
+#   claude sessions.
+#   send-keys only fires when "bridgeSessionId is actually null + not currently working" —
+#   injecting while working would pollute the input.
+#   Typing /remote-control into an already-connected session doesn't disconnect it, it just
+#   opens the modal -> Escape is mandatory after injection.
+#   tt --cron <session name> checks only one session (for debugging).
+# The display cache for --list ($STATE/rc-off) is swapped at the end of each round — the list
+# is a path the user's hand touches often, and running a pgrep fan-out there would make the
+# popup noticeably sluggish (measured 0.05s -> 0.4s). The verdict is computed only here.
+if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kept for backward compatibility
+    # Load config once at the top of the entry point, as a bare statement, not a subshell
+    # (the contract in 05-config.sh:53). Calling it inside $(...) would let the cache die with
+    # that subshell, and the loop below would re-parse the file per session and fire the
+    # broken-line warning that many times, every minute, duplicated.
     tt_conf_load
-    # rc 스위치. 여기서 exit 하면 이 블록 끝(142행)의 --snapshot 까지 같이 죽는다 —
-    # rc 와 snapshot 은 서로 다른 스위치이므로 "나가지 않고 건너뛰기만" 한다.
+    # rc switch. Exiting here would also kill the --snapshot at the end of this block (line
+    # 142) — since rc and snapshot are separate switches, we only "skip without exiting."
     tt_rc_enabled=1
     tt_conf_on rc || tt_rc_enabled=0
-    # 크론은 1분마다 돈다 → 리다이렉트로 삼켜지는 자리에선 입을 다물고(안 그러면 cron 메일이
-    # 1분마다 쌓인다), 사람이 직접 친 터미널에서만 이유를 한 줄 알린다.
+    # cron runs every minute -> stay silent where output is swallowed by a redirect (otherwise
+    # cron mail piles up every minute), and only tell the reason on a terminal a human typed
+    # into directly.
     if [ "$tt_rc_enabled" = 0 ] && [ -t 1 ]; then
-        printf 'rc=off — 자동복구를 건너뛴다 (tt config set rc on)\n'
+        printf 'rc=off — skipping auto-recovery (tt config set rc on)\n'
     fi
     only="${2:-}"; off=""
     mkdir -p "$STATE"
-    tt_log_rotate                              # 감사 로그가 SD카드를 갉아먹지 않게 (1분 1회)
-    # 라운드가 길어져도(복구 세션당 ~11초) cron 다음 틱과 겹쳐 두 번 치지 않게
+    tt_log_rotate                              # so the audit log doesn't eat away at the SD card (once per minute)
+    # In case a round runs long (~11s per recovered session), don't overlap with the next cron
+    # tick and fire twice.
     if command -v flock >/dev/null 2>&1; then
         exec 9>"$STATE/rc.lock"
         flock -n 9 || exit 0
     fi
-    # rc 라운드 전체(아래 while 한 문장)를 감싼다. `while … done < <(tmux ls …)` 는 쪼갤 수 없는
-    # 한 문장이라 스위치는 반드시 while 앞에 있어야 한다 — 진입하는 순간 프로세스치환이
-    # 이미 tmux 를 포크하기 때문이다. 안쪽 들여쓰기는 일부러 그대로 뒀다(53줄을 통째로 밀면
-    # 진짜 바뀐 곳이 diff 에 묻힌다).
+    # Wraps the entire rc round (the single `while` statement below). `while … done < <(tmux ls
+    # …)` is a single statement that can't be split, so the switch must come before the while —
+    # the moment we enter it, process substitution has already forked tmux. The inner
+    # indentation is left as-is on purpose (re-indenting all 53 lines would bury the real
+    # change in the diff).
     if [ "$tt_rc_enabled" = 1 ]; then
     while read -r sid name; do
         [ -z "$only" ] || [ "$name" = "$only" ] || continue
-        t=$(rc_target "$sid") || continue          # claude 없음·모호·PID 재사용 의심 → 조용히 스킵
+        t=$(rc_target "$sid") || continue          # no claude / ambiguous / suspected PID reuse -> silently skip
         pane=${t%% *}; cpid=${t##* }
         f="$SESSD/$cpid.json"
         ff="$STATE/rc-fail-${sid#\$}"
-        # 끊김 = bridgeSessionId가 null 이거나 아예 없음(rc를 한 번도 안 켠 세션)
-        j=$(rc_read "$f") || continue              # 쓰는 중이라 반쪽인 파일 → 다음 라운드에
+        # disconnected = bridgeSessionId is null or entirely absent (a session that never turned rc on)
+        j=$(rc_read "$f") || continue              # file is half-written -> try again next round
         b=$(rc_val "$j" bridgeSessionId)
         case "$b" in
-            ""|null) ;;                            # 끊김 → 복구 대상
-            *) rm -f "$ff"; continue ;;            # 연결됨 → 무개입 + 실패 카운트 리셋
+            ""|null) ;;                            # disconnected -> a recovery candidate
+            *) rm -f "$ff"; continue ;;            # connected -> no action + reset the failure count
         esac
-        off="$off ${sid#\$}=off"                               # 여기부터는 확정 끊김 — 목록에 ⊘
-        [ "$(rc_val "$j" status)" = busy ] && continue         # 작업중 → 이번 라운드 유예
+        off="$off ${sid#\$}=off"                               # from here it's confirmed disconnected -- ⊘ in the list
+        [ "$(rc_val "$j" status)" = busy ] && continue         # working -> defer this round
         hs=$(cut -d' ' -f1 "$STATE/hook-${sid#\$}" 2>/dev/null || true)
-        case "$hs" in working|waiting) continue ;; esac        # tt 훅 상태로 이중 안전
-        # 백오프: 같은 claude(PID 동일)에 3회 연속 실패하면 포기 — 죽은 세션에 계속 치지 않게
+        case "$hs" in working|waiting) continue ;; esac        # double safety check via the tt hook state
+        # Backoff: give up after 3 consecutive failures for the same claude (same PID) — so we
+        # don't keep typing into a dead session.
         n=0; fpid=""; lastok=0
         [ -f "$ff" ] && read -r n fpid lastok < "$ff" || true
-        [ "${fpid:-}" = "$cpid" ] || { n=0; lastok=0; }        # claude가 새로 떴으면 새 판
+        [ "${fpid:-}" = "$cpid" ] || { n=0; lastok=0; }        # if claude has restarted, start a new count
         case "${lastok:-0}" in ''|*[!0-9]*) lastok=0 ;; esac
-        # 재발 브레이크: 방금 복구에 성공했는데 5분도 안 돼 또 끊겼다 = 붙여도 유지가 안 되는 세션.
-        # 예전엔 성공하면 카운터를 지워서 fails가 영원히 0이었고, 매분 주입이 무한 반복됐다
-        # (2026-07-25 실측: $7·$8이 1분 간격으로 번갈아 ok 로그를 남기며 화면에 계속 /remote-control).
-        # 이런 세션은 우리가 못 고치는 브리지 버그(CC #34868 계열)이므로 손을 뗀다.
+        # Recurrence brake: it just recovered successfully but disconnected again within 5
+        # minutes = a session that won't stay connected no matter how many times we attach it.
+        # It used to clear the counter on success, so fails stayed at 0 forever, and the
+        # injection repeated every minute indefinitely (measured 2026-07-25: $7 and $8 kept
+        # leaving "ok" log entries alternately, 1 minute apart, while /remote-control kept
+        # appearing on screen).
+        # Sessions like this hit a bridge bug we can't fix ourselves (the CC #34868 family), so
+        # we back off.
         if [ "$lastok" -gt 0 ] && [ $(( $(date +%s) - lastok )) -lt 300 ]; then
             n=$((n + 1))
             echo "$n $cpid $lastok" > "$ff"
             echo "$(date '+%F %T') $sid rc-relapse $n" >> "$STATE/hook.log"
             [ "$n" -ge 3 ] && off="${off% *} ${sid#\$}=gave"
-            continue                                           # 이번 라운드는 주입하지 않는다
+            continue                                           # don't inject this round
         fi
         if [ "${n:-0}" -ge 3 ]; then off="${off% *} ${sid#\$}=gave"; continue; fi
-        # 복구 — 세션 하나씩 순차 (동시 다발 send-keys 금지)
+        # Recovery -- one session at a time, sequentially (no concurrent send-keys)
         tmux send-keys -t "$pane" -l "/remote-control"
         sleep 0.7
         tmux send-keys -t "$pane" Enter
         sleep 8
-        tmux send-keys -t "$pane" Escape                       # 상태 패널(모달) 닫기 — 안 닫으면 입력이 막힌다
+        tmux send-keys -t "$pane" Escape                       # close the status panel (modal) -- if not closed, input stays blocked
         sleep 2
         b=$(rc_val "$(rc_read "$f" || true)" bridgeSessionId)
         if [ -n "$b" ] && [ "$b" != null ]; then
-            # 성공해도 파일을 지우지 않는다 — 성공 시각을 남겨야 "붙였다 또 끊기는" 재발을 볼 수 있다.
-            # 실패 카운트는 0으로 리셋(연속 실패와 재발은 다른 축).
+            # Don't delete the file even on success -- we need to keep the success time to see
+            # a "connected, then disconnected again" recurrence.
+            # Reset the failure count to 0 (consecutive failures and recurrence are different axes).
             echo "0 $cpid $(date +%s)" > "$ff"
-            off="${off% *}"                                    # 되살아났다 → 목록 표시 취소
+            off="${off% *}"                                    # came back to life -> cancel the list display
             echo "$(date '+%F %T') $sid rc-recover ok" >> "$STATE/hook.log"
         else
             echo "$((n+1)) $cpid ${lastok:-0}" > "$ff"
@@ -153,28 +178,35 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # 옛 이름�
             echo "$(date '+%F %T') $sid rc-recover fail" >> "$STATE/hook.log"
         fi
     done < <(tmux ls -F '#{session_id} #{session_name}' 2>/dev/null || true)
-    fi                                         # ← rc 스위치 끝. 아래는 rc=off 여도 그대로 돈다.
-    # 표시 캐시 통째 교체 — 죽은 세션 찌꺼기가 남지 않는다. 세션 하나만 검사한 라운드는 건드리지 않음
-    #   rc=off 라면 $off 가 비어 있어 타임스탬프만 남는다 = ⊘ 배지 전멸. 안 쓰고 두면 꺼기 직전의
-    #   낡은 배지가 최대 5분(80-view.sh 의 staleness 창) 더 화면에 남는다.
+    fi                                         # <- end of the rc switch. Below runs even if rc=off.
+    # Swap the display cache wholesale -- no dead-session leftovers linger. A round that only
+    # checked a single session doesn't touch this.
+    #   If rc=off, $off is empty, leaving only the timestamp = every ⊘ badge disappears. If we
+    #   didn't write it, the stale badges from right before it was turned off would linger on
+    #   screen for up to 5 more minutes (the staleness window in 80-view.sh).
     [ -n "$only" ] || printf '%s%s\n' "$(date +%s)" "$off" > "$STATE/rc-off"
-    # 함대 스냅샷도 여기서 굳힌다(maintainer 제안) — 어차피 1분마다 전 세션을 훑는 김에.
-    # 팝업을 안 열어도 매니페스트가 최신이라, 갑작스런 재부팅에도 최대 1분 전 상태가 남는다.
-    #   snapshot=off 면 자식도 스스로 조기 return 하지만, 여기서 막아 1분마다의 포크 자체를 아낀다.
+    # Also solidify the fleet snapshot here (Eunsu's idea) — since we're already walking every
+    # session once a minute anyway.
+    # The manifest stays current even without opening the popup, so up to 1 minute of state
+    # survives even a sudden reboot.
+    #   If snapshot=off, the child would also return early on its own, but we block it here
+    #   too, to save the once-a-minute fork itself.
     tt_conf_on snapshot && { [ -n "$only" ] || "$SELF" --snapshot >/dev/null 2>&1 || true; }
     exit 0
 fi
 
-# rc 현황표 (읽기 전용, 디버깅용): 세션 / rc / URL
+# rc status table (read-only, for debugging): session / rc / URL
 if [ "${1:-}" = "--rc" ]; then
-    tt_conf_load                               # 서브셸 아닌 맨 statement (05-config.sh:53 계약)
-    # 표를 그리는 첫 tmux 호출(아래 while)보다 앞에서 나간다 — 자동복구를 끈 사람에게
-    # rc 현황표는 "왜 전부 OFF 인가"만 되묻게 만드는 표다.
-    tt_conf_on rc || { printf 'rc=off — 자동복구가 꺼져 있다 (tt config set rc on)\n'; exit 0; }
-    # rc 판정 전체가 /proc/<pid>/stat 에 매달려 있다(rc_procstart). /proc 이 없는 기계(macOS)
-    # 에서는 rc_target 이 항상 실패해 아래 표가 **전 행 '?'** 가 된다 — 고장이 아니라 미지원인데,
-    # 표만 보면 구분이 안 된다. 그 한 줄을 여기서 말한다(README 의 macOS 절과 같은 사실).
-    [ -d /proc ] || printf 'note: rc 자동복구는 /proc/<pid>/stat 이 필요하다 — 이 기계엔 /proc 이 없다(macOS 미지원). 아래는 전 행 ? 가 된다\n'
+    tt_conf_load                               # bare statement, not a subshell (the contract in 05-config.sh:53)
+    # Bail out before the first tmux call that draws the table (the while below) — for someone
+    # who has turned off auto-recovery, the rc status table would just be a table asking "why
+    # is everything OFF" right back at them.
+    tt_conf_on rc || { printf 'rc=off — auto-recovery is disabled (tt config set rc on)\n'; exit 0; }
+    # The entire rc verdict hangs on /proc/<pid>/stat (rc_procstart). On a machine without
+    # /proc (macOS), rc_target always fails and the table below becomes **'?' in every row** —
+    # that's unsupported, not broken, but looking at the table alone you can't tell the
+    # difference. We say that one line here (the same fact as the macOS section in the README).
+    [ -d /proc ] || printf 'note: rc auto-recovery needs /proc/<pid>/stat -- this machine has no /proc (macOS unsupported). Every row below will show ?\n'
     printf '%-18s %-5s %s\n' SESSION RC URL
     while read -r sid name; do
         if ! t=$(rc_target "$sid"); then

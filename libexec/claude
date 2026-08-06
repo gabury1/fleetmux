@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# tt claude wrapper — tmux 안에서 뜨는 claude에만 tt 훅을 --settings로 주입 (전역 설정 무침습)
-# cmux의 PATH shim 패턴. 이 파일을 지우면 개입이 완전히 사라진다.
-# 진짜 바이너리 찾기: 자기 자신만 정확히 제외한다.
-#   예전엔 경로에 'libexec/tt' 문자열이 있으면 무조건 뺐는데(substring), 진짜 claude가
-#   그런 경로에 설치돼 있으면 통째로 못 찾고 exit 127로 죽는다 — 심볼릭링크까지 풀어 동일성 비교.
+# tt claude wrapper — injects the tt hook via --settings only into claude launched inside tmux (leaves the global config untouched)
+# cmux's PATH shim pattern. Delete this file and the intervention disappears entirely.
+# Finding the real binary: exclude only itself, exactly.
+#   It used to exclude any path containing the substring 'libexec/tt' — but if the real claude
+#   happened to be installed under such a path, it would go entirely unfound and die with
+#   exit 127. Now it resolves symlinks and compares for identity instead.
 SELF=$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "$0")
 REAL=""
 while IFS= read -r cand; do
@@ -13,7 +14,7 @@ while IFS= read -r cand; do
 done < <(type -ap claude 2>/dev/null)
 [ -n "$REAL" ] || { echo "tt-wrapper: real claude not found in PATH" >&2; exit 127; }
 
-# tmux 밖이거나, 사용자가 직접 --settings를 넘겼거나, tt가 없으면 → 투명 통과
+# Outside tmux, or the user already passed --settings, or tt is missing → pass through transparently
 if [ -z "${TMUX:-}" ] || ! command -v tt >/dev/null 2>&1 || printf '%s\n' "$@" | grep -qx -- '--settings'; then
     exec "$REAL" "$@"
 fi

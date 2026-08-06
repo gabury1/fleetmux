@@ -1,25 +1,32 @@
-# ── 함대 매니페스트(스냅샷/복원 대장) ────────────────────────────────────────
-# 파이가 죽었다 살아나면 tmux 세션이 통째로 증발한다(실제로 10개를 손으로 재건했다).
-# 그래서 "무엇이 어디서 무엇으로 떠 있었는지"를 파일로 남겨두고 --restore로 되살린다.
+# ── Fleet manifest (snapshot/restore ledger) ────────────────────────────────
+# When the Pi dies and comes back, the whole tmux session set evaporates (10 of them really were
+# rebuilt by hand once). So "what was floating where, as what" gets written to a file, and
+# --restore brings it back to life.
 #
-# 형식(탭 6필드. 5필드였던 옛 줄도 그대로 읽힌다 — 마이그레이션 없이 쓸 때 자연히 6필드가 된다):
-#   <이름>\t<세션cwd>\t<kind: agent|tool>\t<시작 명령 또는 ->\t<대화id 또는 ->\t<대화 홈 cwd 또는 ->
-#   탭인 이유는 --list와 같다: 이름·경로에 공백이 들어가도 필드가 밀리지 않는다.
-#   빈 필드 금지 — '-'가 "없음" 센티넬이다(read가 연속 탭을 하나로 합쳐 필드를 밀어낸다).
+# Format (tab-separated, 6 fields. Old 5-field lines still read fine as-is — writing without
+# migration naturally produces 6 fields):
+#   <name>\t<session cwd>\t<kind: agent|tool>\t<start command or ->\t<conversation id or ->\t<conversation home cwd or ->
+#   The reason it's tabs is the same as --list: fields don't shift even when names/paths contain
+#   spaces.
+#   No empty fields allowed — '-' is the "none" sentinel (read collapses consecutive tabs into
+#   one, which would shove fields out of place).
 #
-# 6번째 "대화 홈"이 따로 있는 이유(실측):
-#   `claude --resume <id>`는 아무 데서나 되지 않는다 — '지금 cwd에 대응하는 프로젝트 폴더'에서만
-#   그 대화를 찾는다. 그런데 tmux 세션의 cwd와 대화가 태어난 cwd는 자주 다르다
-#   (refact-worker: 세션 cwd=…/_myproject, transcript는 ~/.claude/projects/-home-euns/).
-#   세션 cwd만 들고 복원하면 "No conversation found"로 셸에 떨어진다. 그래서 둘을 따로 적고
-#   복원은 세션 cwd로 만들되 resume만 대화 홈에서 실행한다.
-# TT_MANIFEST로 경로를 갈아끼울 수 있다: 테스트가 진짜 함대 기록을 덮어쓰지 않게 하는 탈출구.
+# Why the 6th field, "conversation home", exists separately (measured in practice):
+#   `claude --resume <id>` doesn't work from just anywhere — it only finds that conversation from
+#   'the project folder that corresponds to the current cwd'. But a tmux session's cwd and the
+#   cwd the conversation was born in often differ (refact-worker: session cwd=…/_myproject,
+#   transcript is under ~/.claude/projects/-home-euns/). Restoring with only the session cwd drops
+#   you into the shell with "No conversation found". So the two are recorded separately — restore
+#   creates the session at the session cwd, but runs the resume itself from the conversation home.
+# TT_MANIFEST lets the path be swapped: an escape hatch so tests don't overwrite the real fleet
+# record.
 MANIFEST="${TT_MANIFEST:-$STATE/manifest}"
 
-# 대화 id는 uuid다. "uuid 비슷한 것"이 아니라 정확히 uuid만 통과시킨다 —
-#   필드가 한 칸 밀려 "claude"·"agent" 같은 문자열이 대화 id 자리에 눌러앉은 채로 스냅샷마다
-#   전파된 사고가 실제로 있었다(2026-07-25). 그 줄로 --resume 하면 대화가 통째로 사라진 것처럼 보인다.
-#   [[ =~ ]] 대신 case 글롭인 이유: 포크도 정규식 엔진도 없고 셸 구현차가 없다.
+# A conversation id is a uuid. Not "something uuid-like" — only an exact uuid is let through.
+#   There was a real incident (2026-07-25) where a field shifted by one slot and a string like
+#   "claude" or "agent" sat in the conversation-id slot, propagating through every snapshot after
+#   that. --resume on that line makes the conversation look like it vanished entirely.
+#   Why case glob instead of [[ =~ ]]: no forks, no regex engine, no shell-implementation gap.
 tt_is_uuid() {
     case "${1:-}" in
         [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) return 0 ;;
@@ -27,20 +34,22 @@ tt_is_uuid() {
     return 1
 }
 
-# 복원이 pane 에 띄울 로그인 셸. tmux 의 서버 전역 default-shell 에 절대 기대지 않는다.
-#   default-shell 은 서버가 태어날 때 부모의 $SHELL 로 한 번 굳고 서버가 죽을 때까지 안 바뀐다.
-#   @reboot cron 이 서버를 낳으면 $SHELL=/bin/sh → 그 서버가 만드는 모든 pane 이 dash 가 되고,
-#   dash 는 .bashrc 를 안 읽어 claude 가 PATH 에서 사라진다(2026-07-26: agent 5개 전멸).
-#   set -g default-shell 로 고치면 남의 세션까지 영향이 가므로, 세션마다 명시하는 쪽을 택한다 —
-#   서버 전역 상태는 무접촉이고 효과는 우리 세션에만 든다.
-#   판정 소스가 둘인 이유(팀 배포 게이트 I4): `getent` 는 glibc 것이라 **맥에 없다**.
-#   맥에서 첫 줄만 있으면 이 함수는 폴백이 아니라 **상수**가 된다 — zsh 가 기본인 기계에서
-#   PATH 가 ~/.zshrc 에만 있으면 복원된 pane 이 다시 claude 를 못 찾는다(위 사고의 재발).
-#   그래서 맥의 사용자 DB(Directory Service)를 `dscl` 로 한 번 더 묻는다. 리눅스엔 dscl 이
-#   없고 맥엔 getent 이 없으니, 두 줄 중 그 기계에 있는 쪽만 답한다.
-#   `|| s=''` 을 붙이는 이유: 이 파일은 `set -euo pipefail` 아래다. 없는 명령의 파이프라인은
-#   rc 127 이고 pipefail 이 그걸 대입문 밖으로 내보낸다 — 붙이지 않으면 호출 맥락에 따라
-#   함수가 조용히 죽는다.
+# The login shell restore will put in the pane. Never rely on tmux's server-global default-shell.
+#   default-shell freezes once, from the parent's $SHELL, when the server is born, and doesn't
+#   change until the server dies. If @reboot cron spawns the server, $SHELL=/bin/sh → every pane
+#   that server creates becomes dash, and dash doesn't read .bashrc, so claude vanishes from PATH
+#   (2026-07-26: 5 agents wiped out). Fixing it with set -g default-shell would affect other
+#   people's sessions too, so this is done explicitly per session instead — server-global state
+#   stays untouched and the effect is confined to our own session.
+#   Why there are two lookup sources (team deployment gate I4): `getent` belongs to glibc, so it
+#   **doesn't exist on Mac**. If only the first line existed, this function would be a **constant**
+#   on Mac, not a fallback — on a machine where zsh is the default and PATH only lives in
+#   ~/.zshrc, the restored pane can't find claude again (a repeat of the incident above). So Mac's
+#   user database (Directory Service) is asked a second time via `dscl`. Linux has no dscl and Mac
+#   has no getent, so of the two lines, only the one that exists on that machine answers.
+#   Why `|| s=''` is attached: this file is under `set -euo pipefail`. A pipeline with a
+#   nonexistent command is rc 127, and pipefail propagates that out of the assignment — without
+#   this, the function would die silently depending on the calling context.
 tt_login_shell() {
     local s u
     u=$(id -un 2>/dev/null) || u=''
@@ -52,17 +61,21 @@ tt_login_shell() {
     printf '/bin/bash'
 }
 
-# pane 에 에이전트가 실제로 떠 있나 — 복원 검증용. 판정 기준은 tt_is_agent 의 둘째 절과 같다.
+# Is an agent actually running in the pane — for restore verification. Same criteria as the
+# second clause of tt_is_agent.
 tt_pane_has_agent() {
     tmux list-panes -s -t "=${1:-}:" -F '#{pane_current_command}' 2>/dev/null \
         | grep -qxE 'claude|codex'
 }
 
-# 쓰기 전 무결성 검사 — 인자로 받은 '파일 전체 내용'의 모든 줄을 본다. 한 줄이라도 어긋나면 rc 1.
-#   깨진 매니페스트는 조용히 번진다: 한 번 밀린 필드가 다음 스냅샷의 "옛 값"으로 읽혀 누진 손상이 된다.
-#   그래서 규칙은 "의심스러우면 안 쓴다" — 기존 파일이 남아 있는 쪽이 언제나 낫다.
-#   검사 항목: 필드 수 5 또는 6 / 빈 필드 없음 / kind는 agent|tool / conv는 '-' 또는 uuid.
-#   uuid 판정을 정규식 {n} 반복으로 안 쓰는 이유: interval 지원이 awk 구현마다 다르다(BSD awk).
+# Integrity check before writing — looks at every line of the 'entire file content' passed as an
+# argument. Even one bad line → rc 1.
+#   A broken manifest spreads silently: a field that's shifted once gets read as the "old value"
+#   for the next snapshot, compounding the damage. So the rule is "if in doubt, don't write" —
+#   the existing file left in place is always better.
+#   Checks: field count is 5 or 6 / no empty fields / kind is agent|tool / conv is '-' or a uuid.
+#   Why uuid detection doesn't use regex {n} repetition: interval support differs across awk
+#   implementations (BSD awk).
 TT_MF_CHECK_AWK='
     function isuuid(s,   i, c) {
         if (length(s) != 36) return 0
@@ -81,8 +94,10 @@ TT_MF_CHECK_AWK='
     END { exit (bad ? 1 : 0) }'
 tt_mf_check() { printf '%s' "${1:-}" | awk -F'\t' "$TT_MF_CHECK_AWK"; }
 
-# 매니페스트 원자적 교체 — 검증을 통과한 내용만 착지시킨다. 실패하면 기존 파일은 무접촉.
-#   경고는 stderr로: 훅 경로는 2>/dev/null이라 조용하고, 사람이 친 --snapshot에서는 눈에 띈다.
+# Atomic manifest replace — only content that passed validation lands. On failure the existing
+# file is left untouched.
+#   Warnings go to stderr: the hook path is 2>/dev/null so it stays quiet, while a human-run
+#   --snapshot will notice it.
 tt_mf_write() {
     if ! tt_mf_check "${1:-}"; then
         printf 'fmux: manifest write refused — malformed rows; %s left untouched\n' "$MANIFEST" >&2
@@ -96,9 +111,11 @@ tt_mf_write() {
     return 1
 }
 
-# 백업 3세대 순환 (.bak → .bak2 → .bak3). 전체 교체(--snapshot) 직전에만 돈다.
-#   1세대뿐이던 시절엔 --snapshot이 1분 cron으로 돌기 때문에 "아차" 하고 복구할 창이 60초였다 —
-#   나쁜 스냅샷이 한 번 더 돌면 유일한 백업까지 나쁜 내용으로 덮인다. 3세대면 최소 3분이 생긴다.
+# Rotate 3 generations of backups (.bak → .bak2 → .bak3). Only runs right before a full replace
+# (--snapshot).
+#   Back when there was only 1 generation, since --snapshot runs on a 1-minute cron, the window to
+#   catch an "oops" and recover was 60 seconds — one more bad snapshot and even the one backup
+#   gets overwritten with bad content. With 3 generations, there's at least 3 minutes.
 tt_mf_backup() {
     [ -f "$MANIFEST" ] || return 0
     [ -f "$MANIFEST.bak2" ] && cp -f "$MANIFEST.bak2" "$MANIFEST.bak3" 2>/dev/null

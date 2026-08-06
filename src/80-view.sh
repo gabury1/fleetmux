@@ -1,37 +1,46 @@
-# ── 마지막 대화 시각의 진짜 출처: transcript ────────────────────────────────
-# 원래는 hook-<sid>의 기록 시각을 "마지막 대화 시각"으로 썼다. 그게 틀렸다는 걸 실측했다:
-#   2026-07-25 12:41 부팅 → 13:10 --restore → hook-3/5/8이 전부 13:10으로 갱신 → 함대가 통째로 굵어짐.
-#   재부팅하면 tmux가 session id를 0번부터 재발급해서 tt_sweep_hooks가 옛 훅 파일을 유령으로
-#   지우고 boot 훅이 새로 만든다 — "이 세션의 것"으로는 맞지만 "마지막 대화"로는 완전히 틀린 값이다.
+# ── The real source of truth for "last conversation time": transcript ──────────
+# We used to use the hook-<sid> record timestamp as "last conversation time". We measured that
+#   this was wrong:
+#   2026-07-25 12:41 boot → 13:10 --restore → hook-3/5/8 all updated to 13:10 → the whole fleet went bold.
+#   On reboot, tmux reissues session ids starting from 0, so tt_sweep_hooks treats old hook files
+#   as ghosts and deletes them, then the boot hook creates new ones — correct as "belongs to this
+#   session" but completely wrong as "last conversation".
 #
-# 대화 기록 파일이 진짜 출처다. 경로는 $HOME/.claude/projects/*/<대화id>.jsonl
-#   (대화 id는 전역 유일하니 프로젝트 폴더를 알아맞힐 필요가 없다 — --restore와 같은 글롭).
+# The transcript file is the real source of truth. Path: $HOME/.claude/projects/*/<conversation-id>.jsonl
+#   (the conversation id is globally unique, so there's no need to guess the project folder —
+#   the same glob --restore uses).
 #
-# 단, **파일 mtime은 쓰면 안 된다**(실측으로 함정을 밟았다):
-#   claude --resume과 원격제어 브리지가 `{"type":"bridge-session",…}` 줄을 덧붙인다. 이 줄엔
-#   timestamp 필드가 없다. 그래서 복원 직후 ULTRACODE의 mtime은 13:10:45인데 마지막 진짜 턴은
-#   2026-07-24T16:03:12Z였다 — mtime을 썼으면 버그가 그대로 남는다(직접 확인함).
-#   그래서 꼬리 64KB 안의 마지막 "timestamp" 값을 읽는다. 브리지 줄은 timestamp가 없어 저절로 걸러진다.
+# However, **the file mtime must not be used** (we hit this trap and measured it):
+#   claude --resume and the remote-control bridge append a `{"type":"bridge-session",…}` line. This
+#   line has no timestamp field. So right after a restore, ULTRACODE's mtime was 13:10:45 while the
+#   last real turn was 2026-07-24T16:03:12Z — using mtime would have left the bug in place (confirmed
+#   directly).
+#   So instead we read the last "timestamp" value within the trailing 64KB. Bridge lines have no
+#   timestamp and are filtered out automatically.
 #
-# 비용: 세션 수와 무관하게 tail 1 + awk 1 = 포크 2개.
-#   tail은 정규 파일이면 끝으로 seek한다 — 58MB짜리 대화도 실측 1.3ms(4개 묶어서).
-#   `stat` 포크 하나가 1.2ms인 걸 감안하면 세션마다 stat을 부르는 것보다 오히려 싸다.
+# Cost: regardless of session count, tail 1 + awk 1 = 2 forks.
+#   tail seeks straight to the end for a regular file — even a 58MB transcript measured 1.3ms
+#   (batched across 4).
+#   Given that a single `stat` fork costs 1.2ms, this is actually cheaper than calling stat per session.
 #
-# 시각 변환을 date에 안 맡기는 이유: 세션마다 포크가 하나씩 는다. awk에서 직접 계산한다
-#   (타임스탬프는 항상 UTC 'Z'). mktime을 안 쓰는 건 mawk에 없어서다(파이 기본이 mawk 1.3.4).
-#   정규식 {n} 반복도 피한다 — 구현마다 interval 지원이 다르다(TT_MF_CHECK_AWK과 같은 이유).
-# 출력 = "<경로>\t<epoch>" 한 줄씩. timestamp를 못 찾으면 0 — 호출부가 훅 시각으로 폴백한다.
+# Why we don't hand timestamp conversion to date: it adds one fork per session. We compute it
+#   directly in awk (timestamps are always UTC 'Z'). We avoid mktime because mawk doesn't have it
+#   (the Pi's default is mawk 1.3.4).
+#   We also avoid regex {n} repetition — interval support differs by implementation (same reason as
+#   TT_MF_CHECK_AWK).
+# Output = one "<path>\t<epoch>" line per file. 0 if no timestamp is found — the caller falls back
+#   to the hook timestamp.
 TT_ACT_AWK='
     function iso2epoch(s,   y, mo, d, h, mi, se, yy, era, yoe, doy, doe, days) {
         y  = substr(s, 1, 4) + 0;  mo = substr(s, 6, 2) + 0;  d  = substr(s, 9, 2) + 0
         h  = substr(s, 12, 2) + 0; mi = substr(s, 15, 2) + 0; se = substr(s, 18, 2) + 0
         if (y < 1970 || mo < 1 || mo > 12 || d < 1 || d > 31) return 0
-        yy  = y - (mo <= 2 ? 1 : 0)          # 3월을 한 해의 시작으로 옮기면 윤일이 항상 맨 끝
+        yy  = y - (mo <= 2 ? 1 : 0)          # shifting the year start to March keeps the leap day always at the end
         era = int(yy / 400)
         yoe = yy - era * 400
         doy = int((153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5) + d - 1
         doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
-        days = era * 146097 + doe - 719468   # 146097 = 400년의 일수, 719468 = 0000-03-01→1970-01-01
+        days = era * 146097 + doe - 719468   # 146097 = days in 400 years, 719468 = 0000-03-01→1970-01-01
         return days * 86400 + h * 3600 + mi * 60 + se
     }
     /^==> .* <==$/ {
@@ -39,8 +48,9 @@ TT_ACT_AWK='
         f = substr($0, 5, length($0) - 8); best = ""; next
     }
     {
-        # 한 줄에 여러 개가 들어있을 수 있고(긴 줄이 잘려 순서가 뒤집힐 수도 있다) ISO 문자열은
-        # 사전순 = 시간순이라 그냥 최대값을 잡는다. "timestamp":" 는 13글자, 값 앞 19글자가 초 단위까지다.
+        # A single line can hold multiple entries (a long line can be truncated and reorder them),
+        # and ISO strings sort lexicographically = chronologically, so we just take the max.
+        # "timestamp":" is 13 chars; the first 19 chars of the value go down to the second.
         s = $0
         while (match(s, /"timestamp":"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) {
             v = substr(s, RSTART + 13, 19)
@@ -50,53 +60,61 @@ TT_ACT_AWK='
     }
     END { if (f != "") print f "\t" (best == "" ? 0 : iso2epoch(best)) }'
 
-# 목록 생성: 내용 변경 시각 순(진짜 대화·작업이 최근인 세션이 위)
-#   세션명 굵게=recent_hours(기본 6시간) 내 대화 있음, 흐리게=그 이상 조용  ●=attached  ✻=Claude 작업중
-# 출력 한 줄 = "<이름>\t<표시용 색칠 문자열>\t<세션id>". 이름을 탭으로 떼어 앞에 두는 이유:
-#   picker가 {1}로 뽑는 값이 공백 든 이름에서도 온전해야 한다. 예전엔 공백 기준 첫 단어만 잘려
-#   tmux -t 접두 매칭에 걸려 엉뚱한 세션이 죽었다(실기기 재현). fzf는 --with-nth로 2번 필드만 보여준다.
-#   3번 필드(세션 id, $ 없는 숫자)는 프리뷰가 last-<id>·hook-<id> 를 찾는 열쇠다. {1}은 이름이라
-#   그것만으로는 못 찾고, 프리뷰 안에서 display-message로 되묻는 길은 커서가 움직일 때마다
-#   포크가 하나씩 는다 — 여기 루프는 이미 sid를 손에 들고 있으니 그냥 얹어 보낸다(포크 0).
-# 주의: 목록에 괄호 금지 — fzf --bind의 reload(...) 구분자와 충돌한다
+# List generation: sorted by content-change time (sessions with recent real conversation/work on top)
+#   bold session name = a conversation within recent_hours (default 6h), dim = quieter than that  ●=attached  ✻=Claude working
+# Output one line = "<name>\t<colored display string>\t<session id>". Why the name is split off by
+#   tab and placed first: the value the picker extracts with {1} must stay intact even for names
+#   with spaces. It used to be cut to just the first space-separated word, which hit tmux -t prefix
+#   matching and killed the wrong session (reproduced on real hardware). fzf shows only field 2 via --with-nth.
+#   Field 3 (session id, a number without $) is the key the preview uses to find last-<id>/hook-<id>.
+#   {1} is the name, which alone can't find it, and asking again via display-message inside the
+#   preview would add one fork every time the cursor moves — this loop already has sid in hand, so
+#   we just tack it on (0 forks).
+# Note: no parentheses allowed in the list — they collide with fzf --bind's reload(...) delimiter
 if [ "${1:-}" = "--list" ]; then
     now=$(date +%s)
-    # 설정은 진입점 맨 위에서 서브셸 아닌 맨 statement 로 한 번만 (05-config.sh 의 계약).
-    #   아래 두 값은 루프 밖에서 미리 뽑는다 — 세션마다 다시 물으면 포크가 세션 수만큼 는다.
-    #   게다가 표시 루프는 파이프라인(서브셸) 안이라 거기서 읽어봐야 밖으로 못 나온다.
+    # Config is loaded once at the top of the entry point as a bare statement, not in a subshell
+    #   (contract of 05-config.sh).
+    #   The two values below are pulled out before the loop — asking again per session would add
+    #   a fork per session. Also the display loop runs inside a pipeline (subshell), so reading it
+    #   there can't escape outward.
     tt_conf_load
-    acc=$(tt_conf_num accent 255)              # 강조색 256색 번호 (이스케이프 안으로 들어간다)
-    recent_s=$(( $(tt_conf_num recent_hours) * 3600 ))   # 이 안에 대화가 있으면 이름을 굵게
-    # rc 표시 캐시 — 판정은 --cron(1분)가 해두고 여기선 한 줄 읽어 쓴다(포크 0)
-    # 캐시가 5분 넘게 낡았으면 = cron이 안 도는 것 → 낡은 ⊘로 겁주지 말고 조용히 끈다
+    acc=$(tt_conf_num accent 255)              # accent colour, 256-colour number (goes inside the escape sequence)
+    recent_s=$(( $(tt_conf_num recent_hours) * 3600 ))   # bold the name if there was a conversation within this window
+    # rc display cache — the judgment is done by --cron (every minute), here we just read one line (0 forks)
+    # If the cache is stale by more than 5 minutes = cron isn't running → quietly turn it off instead of scaring with a stale ⊘
     rcoff=""; rcts=0
     [ -f "$STATE/rc-off" ] && read -r rcts rcoff < "$STATE/rc-off" || true
     [ $(( now - ${rcts:-0} )) -lt 300 ] || rcoff=""
-    # ── 활동 시각 사전조사(루프 밖에서 딱 한 번) ─────────────────────────────
-    # 대장을 세션마다 다시 읽으면 O(세션수 × 대장줄수)가 된다 — 한 번 읽어 표로 들고 간다.
-    # 연관배열은 안 쓴다(bash 4 전용, 맥 기본 3.2에서 깨진다 — tt_sweep_hooks와 같은 판단).
-    # 대신 "\n<이름>\t<값>" 줄 표 + case 글롭 조회: 이름에 공백이 있어도 안전하고 포크가 0이다.
-    # (매니페스트는 이름에 탭을 금지하므로 탭이 필드 구분자로 안전하다)
+    # ── Activity-time pre-survey (exactly once, outside the loop) ─────────────────────
+    # Re-reading the manifest per session would be O(session count × manifest lines) — read it once
+    # and carry it as a table.
+    # We don't use associative arrays (bash 4 only, breaks on the Mac's default 3.2 — same call as
+    # tt_sweep_hooks).
+    # Instead: a "\n<name>\t<value>" line table + case-glob lookup: safe even when names have
+    # spaces, and 0 forks.
+    # (the manifest forbids tabs in names, so tab is safe as a field separator)
     acttab=""; actn=(); actp=()
     if [ -s "$MANIFEST" ]; then
         while IFS=$'\t' read -r mname _ mkind _ mconv _ || [ -n "$mname" ]; do
             [ -n "$mname" ] || continue
-            [ "$mkind" = agent ] || continue         # 도구 세션은 어차피 ts=0
-            tt_is_uuid "${mconv:-}" || continue      # 대화 id를 모르면 폴백에 맡긴다
+            [ "$mkind" = agent ] || continue         # tool sessions get ts=0 anyway
+            tt_is_uuid "${mconv:-}" || continue      # if we don't know the conversation id, leave it to the fallback
             for tf in "$HOME"/.claude/projects/*/"$mconv".jsonl; do
-                [ -f "$tf" ] || continue             # 글롭 미스는 패턴 자신이 그대로 남는다
+                [ -f "$tf" ] || continue             # a glob miss leaves the pattern itself unchanged
                 actn+=("$mname"); actp+=("$tf")
-                break                                # 대화 id는 전역 유일 — 첫 놈이 정답
+                break                                # conversation id is globally unique — the first hit is the answer
             done
         done < "$MANIFEST"
     fi
     if [ "${#actp[@]}" -gt 0 ]; then
-        # /dev/null을 덧붙이는 이유: tail은 파일이 하나뿐이면 "==> …<==" 헤더를 안 찍는다.
-        # 항상 다중 파일 모드로 만들어 파싱 분기를 없앤다(빈 파일이라 비용 0).
+        # Why we append /dev/null: tail doesn't print the "==> …<==" header when there's only one file.
+        # We always force multi-file mode to remove the parsing branch (an empty file, so 0 cost).
         actraw=$'\n'$(tail -c 65536 -- "${actp[@]}" /dev/null 2>/dev/null | awk "$TT_ACT_AWK") || actraw=""
         i=0
         while [ "$i" -lt "${#actp[@]}" ]; do
-            # 경로로 되찾는다(출력 순서에 기대지 않는다 — 파일이 그 사이에 사라지면 헤더가 빠져 밀린다)
+            # Look it back up by path (don't rely on output order — if a file disappears in
+            # between, its header is dropped and everything shifts)
             v=""
             case "$actraw" in
                 *$'\n'"${actp[$i]}"$'\t'*) v=${actraw#*$'\n'"${actp[$i]}"$'\t'}; v=${v%%$'\n'*} ;;
@@ -106,23 +124,30 @@ if [ "${1:-}" = "--list" ]; then
             i=$((i + 1))
         done
     fi
-    # 내부 파이프는 탭 구분 + 이름을 마지막 필드로 — 공백 든 이름이 필드를 밀어내지 않게.
-    #   attached는 빈 값 대신 '-' 센티넬을 쓴다: 탭은 IFS 화이트스페이스라 read가 연속 탭을 하나로
-    #   합쳐버려, 미접속 세션에서 필드가 통째로 밀리고 이름이 사라진다(빈 필드 금지).
-    #   구분자로 0x1f 같은 제어문자를 쓰는 길은 막혀 있다 — tmux -F가 \037 문자열로 이스케이프해 뱉는다.
+    # The internal pipe is tab-delimited with the name as the last field — so a name with spaces
+    #   doesn't push other fields out of place.
+    #   attached uses a '-' sentinel instead of an empty value: tab is IFS whitespace, so read
+    #   collapses consecutive tabs into one, which shifts every field for unattached sessions and
+    #   drops the name (empty fields are forbidden).
+    #   Using a control character like 0x1f as the delimiter is blocked — tmux -F escapes it out
+    #   as the literal string \037.
     tmux ls -F $'#{session_id}\t#{session_created}\t#{?session_last_attached,#{session_last_attached},0}\t#{?session_attached,●,-}\t#{session_name}' 2>/dev/null \
         | while IFS=$'\t' read -r sid created la attached name; do
-            # 에이전트 세션(claude·codex, 그룹 1)이 위, 도구 세션(yazi·htop 등, 그룹 0)은 맨 아래
+            # Agent sessions (claude/codex, group 1) go on top, tool sessions (yazi/htop etc, group 0) go at the bottom
             grp=0
-            # created를 같이 넘긴다: 물려받은 stale 훅 파일을 걸러내는 근거이자, 이미 손에
-            # 들고 있는 값이라 tmux 호출이 늘지 않는다. 판정 기준은 tt_is_agent 한 곳에만.
+            # We pass created along too: it's the basis for filtering out inherited stale hook
+            # files, and since we already have the value in hand, it doesn't add a tmux call.
+            # The judgment lives in exactly one place: tt_is_agent.
             tt_is_agent "$sid" "$created" && grp=1
-            # 활동 시각: 에이전트=대화 기록의 마지막 턴 시각(위 사전조사 표) — 훅 시각이 아니다.
-            #   폴백 사다리: transcript → 훅 기록 시각 → 신생 세션(1시간 미만)의 생성 시각 → 0.
-            #   codex는 대화 id를 훅으로 못 주므로 항상 훅 시각 폴백을 탄다 — 의도한 동작이다.
-            #   도구 세션=시각 무관 사전순 (ts 0 고정 → 이름 3차 정렬키가 결정)
+            # Activity time: for agents = the timestamp of the last turn in the transcript (the
+            #   pre-survey table above) — not the hook timestamp.
+            #   Fallback ladder: transcript → hook record timestamp → creation time of a fresh
+            #   session (under 1h) → 0.
+            #   codex can't hand a conversation id to the hook, so it always falls back to the hook
+            #   timestamp — this is intended behaviour.
+            #   Tool sessions = time-independent, alphabetical (ts fixed at 0 → name becomes the 3rd sort key)
             if [ "$grp" = 1 ]; then
-                # 훅 파일은 read로 읽는다(예전엔 cut — 세션마다 포크 1개였다). 상태도 같이 필요하다.
+                # Read the hook file with read (used to be cut — 1 fork per session). We need the state too.
                 hst=""; hts=0
                 read -r hst hts _ < "$STATE/hook-${sid#\$}" 2>/dev/null || true
                 case "${hts:-0}" in ''|*[!0-9]*) hts=0 ;; esac
@@ -133,10 +158,12 @@ if [ "${1:-}" = "--list" ]; then
                 case "${ats:-0}" in ''|*[!0-9]*) ats=0 ;; esac
                 if [ "$ats" -gt 0 ]; then
                     ts="$ats"
-                    # 훅이 transcript보다 최신인 경우는 딱 하나만 인정한다 — '지금 턴이 도는 중'.
-                    #   프롬프트를 막 보냈는데 아직 파일이 안 써진 몇 초를 메운다.
-                    #   idle까지 인정하면 안 된다: boot 훅이 쓰는 게 바로 idle이라 복원 시각이
-                    #   그대로 "마지막 대화"로 둔갑한다 — 고치려던 버그가 통째로 되살아난다.
+                    # We accept exactly one case where the hook is newer than the transcript —
+                    #   "a turn is running right now". This covers the few seconds after a prompt
+                    #   is sent but before the file has been written yet.
+                    #   idle must not be accepted: idle is exactly what the boot hook writes, so
+                    #   the restore time would masquerade as "last conversation" — reviving the
+                    #   very bug we were fixing.
                     case "$hst" in
                         working|waiting) if [ "$hts" -gt "$ts" ]; then ts="$hts"; fi ;;
                     esac
@@ -150,9 +177,11 @@ if [ "${1:-}" = "--list" ]; then
             else
                 ts=0
             fi
-            # 안읽음(부재중 완료 후 미방문) 플래그 — 정렬 2순위로 승격: 볼 게 있는 세션이 맨 위
-            #   finished는 신·구 포맷이 섞일 수 있고(마이그레이션 중) 이름에 공백이 들어간다 →
-            #   ts 위치로 포맷을 가르고 나머지 전체를 이름으로 봐서 "정확히" 일치할 때만 인정
+            # Unread flag (finished while away, not yet visited) — promoted to the 2nd sort key:
+            #   sessions with something to see go on top.
+            #   finished can have old and new formats mixed (mid-migration), and names can contain
+            #   spaces → split the format by the ts position and treat the rest as the name, only
+            #   accepting an "exact" match
             unread=0
             if [ -s "$STATE/finished" ]; then
                 fts=$(TT_FIN_NAME="$name" awk '
@@ -170,12 +199,12 @@ if [ "${1:-}" = "--list" ]; then
         done | sort -t$'\t' -k1,1rn -k2,2rn -k3,3rn -k6,6 \
         | while IFS=$'\t' read -r grp unread ts sid attached name; do
             [ "$name" = "${TT_CUR:-}" ] && continue
-            [ "$attached" = - ] && attached=""    # 센티넬 해제 — 여기서부터는 표시용 빈 문자열
-            if [ "$grp" = 0 ]; then   # 도구 세션: 청록, 맨 아래 그룹, 상태 장식 없음
+            [ "$attached" = - ] && attached=""    # release the sentinel — from here on it's an empty display string
+            if [ "$grp" = 0 ]; then   # tool session: teal, bottom group, no state decoration
                 printf '%s\t\033[38;5;%sm%s\033[0m \033[36m%s\033[0m\t%s\n' "$name" "$acc" "$name" "$attached" "$sid"
                 continue
             fi
-            # 상태: 훅 기록 우선(정확), 없거나 훅 프로세스가 죽었으면 화면 판정 폴백
+            # State: hook record takes priority (accurate); fall back to screen judgment if missing or the hook process is dead
             mark=""; hstate=""
             if [ -f "$STATE/hook-$sid" ]; then
                 read -r hstate _hts hpid < "$STATE/hook-$sid" || true
@@ -183,16 +212,22 @@ if [ "${1:-}" = "--list" ]; then
             fi
             case "$hstate" in
                 working)
-                    # 박제 방지: 갱신이 끊겼는데 다른 근거도 없으면 Stop 유실로 보고 끈다.
-                    #   Esc로 턴을 취소하면 Claude Code가 Stop을 안 쏴서 working이 그대로 박제된다(실사용 제보).
-                    # 증거 셋을 **OR** 로 쌓는다 — 삭제 조건은 도입 전과 똑같이 "셋 다 아닐 때"뿐이다.
-                    #   ① 훅이 신선(≤20초) → 에이전트 본인의 자백이라 가장 정확하고 포크 0. 순서 1위 유지.
-                    #   ② CPU 델타(30-state.sh) → 커널 회계라 TUI 문구와 무관하고 포크 0.
-                    #      화면보다 앞에 두는 이유: 싸고(포크 0 vs 3) 단단하고, 틀릴 때 "모른다"로 틀려서
-                    #      ③이 받아준다. 긍정이면 tmux를 아예 안 불러 팝업이 그만큼 빨리 그려진다.
-                    #   ③ 화면 판정 → 렌더링이라 언제든 또 깨지지만(이번 버그) 마지막 보험으로 남긴다.
-                    #      CPU 신호가 미탐 쪽으로 틀리는 경우(부하로 굶은 세션·향후 TUI가 대기 중 렌더를
-                    #      멈추는 경우)를 여기서만 구할 수 있다.
+                    # Anti-"stuck" guard: if updates have stopped and there's no other evidence,
+                    #   treat it as a lost Stop event and turn it off. Cancelling a turn with Esc
+                    #   makes Claude Code not fire Stop, so working stays stuck as-is (reported
+                    #   from real usage).
+                    # The evidence set is stacked with **OR** — the removal condition is unchanged
+                    #   from before this was introduced: "none of the three".
+                    #   ① Hook is fresh (≤20s) → the agent's own confession, most accurate, 0 forks. Stays priority 1.
+                    #   ② CPU delta (30-state.sh) → kernel accounting, independent of TUI wording, 0 forks.
+                    #      Placed ahead of the screen check because it's cheap (0 forks vs 3) and
+                    #      solid, and when it's wrong it errs toward "unknown", so ③ catches it.
+                    #      If positive, tmux is never called, so the popup draws that much faster.
+                    #   ③ Screen judgment → it's rendering, so it can break again anytime (this
+                    #      very bug), but it's kept as the last line of defense. It's the only
+                    #      thing that can rescue the case where the CPU signal errs toward a false
+                    #      negative (a session starved under load, or a future TUI that stops
+                    #      rendering while waiting).
                     if [ $(( now - ${_hts:-0} )) -le 20 ]; then
                         mark=$'\033[33m✻\033[0m'
                     else
@@ -205,13 +240,15 @@ if [ "${1:-}" = "--list" ]; then
                             mark=""
                         fi
                     fi
-                    # 다음 호출을 위한 표본은 판정 결과와 무관하게 항상 남긴다(ROTATE 안이면 미접촉)
+                    # Leave a sample for the next call regardless of the judgment result (untouched if within ROTATE)
                     tt_cpu_sample "$sid" "${hpid:-0}" "$now" ;;
                 waiting)
-                    # 박제 방지: 승인을 거부하면 codex는 Stop을 안 쏜다 —
-                    # 60초 넘게 갱신 없는데 화면에 승인 프롬프트가 없으면 취소된 것으로 본다.
-                    # 증인 목록은 WAITING_PAT(30-state.sh) 하나로 모았다 — 여기 인라인으로 두었더니
-                    # 목록만 ⏸ 를 지우고 상태바는 띄우는 어긋남을 아무도 못 잡았다(AskUserQuestion 실측).
+                    # Anti-"stuck" guard: if approval is denied, codex doesn't fire Stop —
+                    # if there's been no update for over 60s and the screen shows no approval
+                    # prompt, treat it as cancelled.
+                    # The witness list is consolidated into a single WAITING_PAT (30-state.sh) —
+                    # when it used to live inline here, nobody caught the mismatch where only the
+                    # list cleared ⏸ while the status bar kept showing it (measured with AskUserQuestion).
                     if [ $(( now - ${_hts:-0} )) -gt 60 ] \
                         && ! tmux capture-pane -p -t "=$name:" 2>/dev/null \
                              | grep -qaE "$WAITING_PAT"; then
@@ -222,10 +259,10 @@ if [ "${1:-}" = "--list" ]; then
                 idle) ;;
                 *) if tmux capture-pane -p -t "=$name:" 2>/dev/null | tt_working; then mark=$'\033[33m✻\033[0m'; fi ;;
             esac
-            # 안읽음 ✓: 부재중 완료 후 아직 안 들어가본 세션 (들어가면 사라짐)
+            # Unread ✓: a session that finished while away and hasn't been visited yet (disappears once visited)
             umark=""
             [ "$unread" = 1 ] && umark=$'\033[38;5;108m✓\033[0m'
-            # rc ⊘: 폰에서 안 보이는 세션만 표시(연결이 기본값이라 조용해야 함). 빨강=백오프 포기
+            # rc ⊘: shown only for sessions not visible on the phone (connected is the default, so this should stay quiet). Red = gave up backing off
             rcmark=""
             case " $rcoff " in
                 *" $sid=gave "*) rcmark=$'\033[1;38;5;160m⊘\033[0m' ;;
@@ -237,14 +274,15 @@ if [ "${1:-}" = "--list" ]; then
                 printf '%s\t\033[2m%s\033[0m \033[36m%s\033[0m %s %s %s\t%s\n' "$name" "$name" "$attached" "$mark" "$umark" "$rcmark" "$sid"
             fi
         done || true
-    # 여기서 나가는 줄은 **전부 진짜 tmux 세션 한 줄**이다 — 세션이 아닌 행(예전의 ⚙ 설정 행)은
-    #   넣지 않는다. 목록을 먹는 곳이 여섯인데(프리뷰·^X·^E·^B·다중선택 수집·빈 목록 부트스트랩)
-    #   비-세션 행을 하나 흘리면 그 여섯 곳마다 "이건 세션이 아니다" 가드가 필요해지고,
-    #   한 곳만 빠뜨리면 tmux 가 없는 세션을 찾아 헤맨다(실제로 부트스트랩 판정이 그렇게 깨졌다).
-    #   설정으로 가는 문은 팝업의 ^O 하나다 — 화면 아래 footer 가 그 키를 늘 보여준다.
-    # `|| true` 와 exit 0: tmux 서버가 없으면 tmux ls 가 죽고 pipefail 이 그걸 물려받는다.
-    #   세션 0개는 실패가 아니라 "빈 목록" 이므로 여기서 삼키고 정상 종료한다 — 호출부
-    #   (빈 목록 부트스트랩)가 rc 가 아니라 출력이 비었는지로 판정하기 때문이다.
+    # Every line that comes out here is **one real tmux session line** — non-session rows (the old
+    #   ⚙ settings row) are never included. Six places consume this list (preview, ^X, ^E, ^B,
+    #   multi-select collection, empty-list bootstrap); leaking one non-session row would mean all
+    #   six need a "this isn't a session" guard, and missing just one sends it hunting for a tmux
+    #   session that doesn't exist (bootstrap judgment actually broke this way once).
+    #   The one door to settings is ^O in the popup — the footer at the bottom of the screen always shows that key.
+    # `|| true` and exit 0: if there's no tmux server, tmux ls dies and pipefail inherits that.
+    #   Zero sessions isn't a failure, it's an "empty list", so we swallow it here and exit cleanly
+    #   — the caller (empty-list bootstrap) judges by whether output is empty, not by rc.
     exit 0
 fi
 

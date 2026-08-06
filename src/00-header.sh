@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
-# fleetmux (tt) — AI 에이전트 함대를 위한 tmux 관제탑
-#   claude·codex 세션의 상태를 훅으로 추적하고, 골라 들어가고, 뿌리고, 되살린다
-#   →/Enter: 세션 진입   ←/Esc: 닫기   Ctrl-N: 새 세션   Ctrl-E: 이름변경   Ctrl-X: 삭제   Ctrl-R: 갱신   Ctrl-D: tmux 탈출
-#   소환키는 설정에서 온다 — 기본은 prefix + F 하나뿐이고, 무prefix 키는 기본값이 비어 있다
-#   (아무 키도 안 뺏는다). tt config set key_summon_fast 로 켠다 — 87-tmux-conf.sh 가 스니펫에 박는다.
+# fleetmux (tt) — a tmux control tower for AI agent fleets
+#   Tracks claude/codex session state via hooks, lets you pick and jump in, broadcast, and restore
+#   →/Enter: enter session   ←/Esc: close   Ctrl-N: new session   Ctrl-E: rename   Ctrl-X: delete   Ctrl-R: refresh   Ctrl-D: detach from tmux
+#   The summon key comes from config — the default is only prefix + F, and the no-prefix key
+#   defaults to empty (it steals no key). Turn it on with tt config set key_summon_fast — 87-tmux-conf.sh embeds it in the snippet.
 set -euo pipefail
-export LC_ALL=en_US.UTF-8   # cron엔 로케일이 없음 — 유니코드 글리프 정규식 오작동 방지
+export LC_ALL=en_US.UTF-8   # cron has no locale — prevents unicode glyph regexes from misbehaving
 
 STATE=~/.cache/tt
 
-# ── 자기 절대경로(SELF) ──────────────────────────────────────────────────────
-# 내부에서 자기를 다시 부르는 곳이 20군데가 넘는다(fzf --bind·프리뷰·스냅샷·훅 커맨드).
-# 예전엔 전부 PATH의 `tt`에 의존했는데, 짧은 별명을 안 깐 환경·PATH가 다른 cron/GUI에서는
-# 그 전부가 조용히 깨진다(팝업이 빈 목록, 훅이 무음 실패).
-# `readlink -f`는 GNU 확장이라 옛 macOS엔 없다 → 링크를 한 단계씩 따라가는 POSIX 루프로 직접 푼다.
-#   readlink(인자 없는 형태)와 `cd -P`/`pwd -P`는 POSIX라 리눅스·BSD 양쪽에 있다.
+# ── Own absolute path (SELF) ─────────────────────────────────────────────────
+# There are more than 20 places internally that call itself again (fzf --bind, preview, snapshot,
+# hook commands). It used to rely entirely on `tt` from PATH, but in environments without the
+# short alias installed, or cron/GUI contexts with a different PATH, all of that silently breaks
+# (popup shows an empty list, hooks fail silently).
+# `readlink -f` is a GNU extension and doesn't exist on old macOS → resolve it manually with a
+# POSIX loop that follows the link one step at a time.
+#   readlink (the no-flag form) and `cd -P`/`pwd -P` are POSIX, so they exist on both Linux and BSD.
 tt_self() {
     local p="${BASH_SOURCE[0]:-$0}" d l n=0
     case "$p" in */*) ;; *) p=$(command -v -- "$p" 2>/dev/null || printf '%s' "$p") ;; esac
@@ -22,7 +24,7 @@ tt_self() {
         l=$(readlink "$p" 2>/dev/null) || break
         case "$l" in
             /*) p="$l" ;;
-            *)  d=${p%/*}; p="$d/$l" ;;     # 상대 링크는 "링크가 있던 디렉토리" 기준
+            *)  d=${p%/*}; p="$d/$l" ;;     # a relative link is resolved against "the directory the link was in"
         esac
         n=$((n + 1))
     done
@@ -31,7 +33,7 @@ tt_self() {
     printf '%s/%s' "$d" "${p##*/}"
 }
 SELF=$(tt_self)
-[ -x "$SELF" ] || SELF="tt"      # 최후 폴백: 그래도 못 찾으면 예전처럼 PATH에 맡긴다
-# 셸 문자열(fzf --bind·훅 커맨드)에 끼워 넣을 안전한 인용형 — 경로에 공백·따옴표가 있어도 안 깨진다
+[ -x "$SELF" ] || SELF="tt"      # last-resort fallback: if it still can't be found, defer to PATH as before
+# A safely quoted form to embed in shell strings (fzf --bind, hook commands) — doesn't break even if the path has spaces or quotes
 SELFQ="'${SELF//\'/\'\\\'\'}'"
 

@@ -1,6 +1,7 @@
-# ── 이식성 헬퍼 (macOS/BSD ↔ 리눅스) ────────────────────────────────────────
-# 프로세스 이름 한 조각. macOS의 ps는 comm에 실행파일 '절대경로'를 준다(리눅스는 basename뿐) →
-# 마지막 경로 조각만 남겨야 양쪽에서 똑같이 "claude"로 비교된다. -p/-o comm= 자체는 POSIX.
+# ── Portability helpers (macOS/BSD ↔ Linux) ─────────────────────────────────
+# One process-name field. On macOS, ps gives comm the executable's 'absolute path' (Linux gives
+# just the basename) → only the last path segment must be kept so both sides compare equally as
+# "claude". -p/-o comm= itself is POSIX.
 tt_comm() {
     local c
     c=$(ps -p "${1:-0}" -o comm= 2>/dev/null) || return 1
@@ -8,27 +9,35 @@ tt_comm() {
     printf '%s' "$c"
 }
 
-# bash 3.2(맥 기본 /bin/bash)의 read는 소수점 timeout을 거부한다("invalid timeout specification").
-# 소수점 대기가 필요한 곳은 여기 한 곳에서 갈라 쓴다 — 4.x면 흡수, 3.2면 흡수 포기(1초 멈춤 방지).
+# bash 3.2's (macOS's default /bin/bash) read rejects a fractional timeout ("invalid timeout
+# specification"). Every place that needs a fractional wait branches in this one spot — absorb it
+# on 4.x, give up on 3.2 (to avoid a 1-second stall).
 if [ "${BASH_VERSINFO[0]:-3}" -ge 4 ]; then TT_TINY_READ=1; else TT_TINY_READ=0; fi
 
-# 로그 회전 — hook.log는 하루 ~1600줄이 SD카드에 상시 append된다. 임계 초과 시 꼬리만 남기고 자른다.
-#   크기 측정은 `wc -c <파일`(POSIX) — stat은 GNU가 -c, BSD가 -f로 옵션이 정반대다.
-#   호출 지점은 --cron(1분)·boot 훅·--boot-restore뿐 — 이벤트마다 부르면 훅 경로에 포크가 하나 더 붙는다.
-#   회전할 파일은 TT_LOG_FILE로 갈아끼운다(--boot-restore의 boot.log). 기본값은 예전 그대로
-#   hook.log라 기존 호출부는 한 글자도 안 바뀐다 — 회전 정책을 두 벌로 나눌 이유가 없다.
-#   인자가 아니라 환경변수 프리픽스로 넘기는 건 tt_fin_norm의 TT_FIN_SKIP과 같은 관례다.
+# Log rotation — hook.log gets ~1600 lines appended to the SD card per day, constantly. Once it
+# crosses the threshold, truncate it to keep only the tail.
+#   Size is measured with `wc -c <file` (POSIX) — stat has -c on GNU and -f on BSD, opposite flags.
+#   Called only from --cron (every minute), the boot hook, and --boot-restore — calling it on
+#   every event would add one more fork to the hook path.
+#   The file to rotate is swapped in via TT_LOG_FILE (--boot-restore's boot.log). The default
+#   stays hook.log as before, so existing call sites don't change a single character — there's no
+#   reason to split the rotation policy into two.
+#   Passed as an env var prefix rather than an argument, following the same convention as
+#   tt_fin_norm's TT_FIN_SKIP.
 #
-#   임계 바이트는 설정 키 log_max 다. 예전엔 여기서 `TT_LOG_MAX=${TT_LOG_MAX:-1048576}` 로
-#   전역을 세웠는데, 그 한 줄이 두 가지를 망가뜨렸다:
-#     ① 설정 파일에 log_max 를 써도 이 전역이 이미 서 있어 아무 효과가 없었다.
-#     ② 하필 그 전역 이름이 log_max 의 환경변수 이름(TT_LOG_MAX)이라, 이후 모든 조회가
-#        "env 가 이긴다"로 판정됐다 — 설정 화면이 log_max 토글을 아예 거절했다.
-#   그래서 전역을 없애고 회전이 실제로 필요한 순간에만 읽는다. 환경변수 우선순위는
-#   조회 함수가 이미 지킨다(TT_LOG_MAX=… 는 여전히 이긴다). 파일이 없으면 조회조차 안 해서
-#   훅 경로의 포크는 예전 그대로 0이다.
-#   ⚠ 회전을 부르는 진입점은 설정 캐시를 서브셸 아닌 맨 statement 로 먼저 세워둬야 한다
-#      (05-config.sh 의 계약) — 아래 조회는 $(...) 안이라 캐시가 이 함수 밖으로 안 나간다.
+#   The threshold in bytes is the config key log_max. This used to set a global here with
+#   `TT_LOG_MAX=${TT_LOG_MAX:-1048576}`, and that one line broke two things:
+#     ① Even if log_max was set in the config file, this global was already established, so it
+#        had no effect.
+#     ② That global's name happened to be log_max's env var name (TT_LOG_MAX), so every lookup
+#        afterward was judged as "env wins" — the config screen rejected the log_max toggle
+#        outright.
+#   So the global is gone, and it's only read at the moment rotation actually needs it. Env var
+#   priority is already honored by the lookup function (TT_LOG_MAX=… still wins). If the file
+#   doesn't exist, there isn't even a lookup, so the fork count on the hook path stays 0 as before.
+#   ⚠ The entry point that calls rotation must first establish the config cache as a bare
+#      statement, not inside a subshell (the contract in 05-config.sh) — the lookup below is
+#      inside $(...), so the cache doesn't escape this function.
 TT_LOG_KEEP=${TT_LOG_KEEP:-2000}
 tt_log_rotate() {
     local f="${TT_LOG_FILE:-$STATE/hook.log}" sz max

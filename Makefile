@@ -1,34 +1,37 @@
-# fleetmux — bin/fmux 는 src/*.sh 를 번호 순서대로 이어붙인 산출물이다.
+# fleetmux — bin/fmux is the artifact produced by concatenating src/*.sh in numeric order.
 #
-# 순서가 곧 의미다. bash 에는 진입점 함수가 없다 — 파일이 위에서 아래로 실행되면서
-# ① 함수 정의문이 실행돼야 그 이름이 등록되고
-# ② 서브커맨드는 `if [ "${1:-}" = "--x" ]; then …; exit 0; fi` 체인이라 먼저 나오는 분기가 이긴다.
-# 그래서 번호 접두사가 실행 순서를 고정하고, SRC 목록의 나열 순서가 최종 파일의 순서다.
-# 순서를 바꾸면 동작이 바뀐다.
+# Order is meaning. bash has no entry-point function — the file executes top to bottom, so
+# ① a function definition must run before its name is registered, and
+# ② subcommands form an `if [ "${1:-}" = "--x" ]; then …; exit 0; fi` chain, so whichever
+#   branch appears first wins.
+# So the numeric prefix pins the execution order, and the SRC list's listing order is the
+# final file's order. Changing the order changes behavior.
 #
-# 각 파일이 담은 것:
-#   00-header.sh   셔뱅·set -euo pipefail·LC_ALL·STATE·자기 절대경로 해석(tt_self/SELF/SELFQ)
-#   05-config.sh   설정 — 화이트리스트 파서·env>파일>기본 우선순위·tt_conf_get/on/source
-#   10-util.sh     이식성 헬퍼(tt_comm)·bash 3.2 분기(TT_TINY_READ)·hook.log 회전
-#   20-manifest.sh 매니페스트 경로/형식·uuid 판정·무결성 검사(awk)·원자적 쓰기·백업 3세대
-#   30-state.sh    상태 판정 계층 — 화면 작업중 판정(tt_working)·finished 락/정규화·
-#                  훅 파일 유효성(tt_hook_valid)·tt_is_agent·tt_broadcast·훅 sweep·tt_jv
-#   35-lastprompt.sh 마지막 프롬프트(last-<sid>) — payload 에서 뽑는 awk 스캐너·저장 함수·
-#                  프리뷰 헤더 렌더 awk. 50(훅)과 90(프리뷰)이 둘 다 쓰므로 그 앞이다.
-#   40-mfops.sh    매니페스트 변이 — 락·줄 조회·upsert·rename·forget
-#   50-hook.sh     함대 집계(tt_fleet_agg)·--hook 수신부(working/idle/waiting/clear/boot)·--status
-#   60-rc.sh       rc 판정 헬퍼(rc_*)·--cron(=--rc-check)·--rc
-#   70-fleet.sh    tt_conv_of·--snapshot·--forget·--restore
+# What each file holds:
+#   00-header.sh   shebang · set -euo pipefail · LC_ALL · STATE · resolving its own absolute path (tt_self/SELF/SELFQ)
+#   05-config.sh   config — whitelist parser · env > file > default precedence · tt_conf_get/on/source
+#   10-util.sh     portability helpers (tt_comm) · bash 3.2 branch (TT_TINY_READ) · hook.log rotation
+#   20-manifest.sh manifest path/format · uuid detection · integrity check (awk) · atomic write · 3-generation backup
+#   30-state.sh    state-determination layer — screen "working" detection (tt_working) · finished lock/normalize ·
+#                  hook file validity (tt_hook_valid) · tt_is_agent · tt_broadcast · hook sweep · tt_jv
+#   35-lastprompt.sh last prompt (last-<sid>) — awk scanner that extracts from the payload · save function ·
+#                  awk that renders the preview header. Both 50 (hook) and 90 (preview) use it, hence it comes before both.
+#   40-mfops.sh    manifest mutation — lock · line lookup · upsert · rename · forget
+#   50-hook.sh     fleet aggregation (tt_fleet_agg) · --hook receiver (working/idle/waiting/clear/boot) · --status
+#   60-rc.sh       rc detection helpers (rc_*) · --cron (=--rc-check) · --rc
+#   70-fleet.sh    tt_conv_of · --snapshot · --forget · --restore
 #   80-view.sh     --list
-#   85-config-cli.sh 설정 CLI — 검증·원자적 쓰기·tt config 하위명령
-#   86-config-view.sh 팝업 안 설정 화면 — --config-list/--config-toggle/--config-view
-#   87-tmux-conf.sh  tmux 스니펫 생성 — 소환키 바인딩·떠날 때 스냅샷 훅(--tmux-conf [--write])
-#                    85 보다 뒤다: `tt config set` 은 85 에서 exit 하므로 여기 함수를 못 본다.
-#                    그래서 85 는 함수를 직접 부르지 않고 `$SELF --tmux-conf --write` 로 재호출한다.
-#   90-main.sh     tt_prompt·--do-*·--preview·--hooks-json·--codex-hooks·--help·진입점(fzf 팝업)
+#   85-config-cli.sh config CLI — validation · atomic write · tt config subcommands
+#   86-config-view.sh in-popup config screen — --config-list/--config-toggle/--config-view
+#   87-tmux-conf.sh  generates the tmux snippet — summon-key binding · on-detach snapshot hook (--tmux-conf [--write])
+#                    Comes after 85: `tt config set` exits inside 85, so it can't see this file's functions.
+#                    So 85 doesn't call the function directly — it re-invokes via `$SELF --tmux-conf --write`.
+#   90-main.sh     tt_prompt · --do-* · --preview · --hooks-json · --codex-hooks · --help · entry point (fzf popup)
 #
-# 셔뱅은 00-header.sh 에만 있어야 한다 — 다른 파일에 넣으면 합친 결과 한가운데 셔뱅이 박힌다.
-# 파일을 추가하면 아래 SRC 목록에도 번호 순서대로 넣을 것(글롭이 아니라 이 목록이 정답이다).
+# The shebang must live only in 00-header.sh — putting it in another file would bury a shebang
+# in the middle of the concatenated result.
+# When adding a file, also add it to the SRC list below in numeric order (this list is the
+# source of truth, not a glob).
 
 SRC = src/00-header.sh \
       src/05-config.sh \
@@ -58,20 +61,20 @@ $(OUT): $(SRC)
 	bash -n $(OUT)
 	@echo "built $(OUT)"
 
-# 문법 검사. shellcheck 는 있으면 돌리고, 없으면 건너뛴 사실을 말한다.
+# Syntax check. Runs shellcheck if present, and says so out loud if it skipped it.
 check: $(OUT)
 	bash -n $(OUT)
 	bash -n install.sh
 	@if command -v shellcheck > /dev/null 2>&1; then \
 		shellcheck -x $(OUT) && echo "shellcheck: clean"; \
-		shellcheck install.sh || echo "shellcheck: install.sh 에 지적이 있다 — 아직 게이트가 아니다(아무도 클린을 확인한 적이 없다). 고치면 위 줄에 합쳐라"; \
+		shellcheck install.sh || echo "shellcheck: install.sh has findings — not a gate yet (no one has confirmed it clean). Fold it into the line above once fixed"; \
 	else \
 		echo "shellcheck not installed — skipped"; \
 	fi
 	@./test/run.sh
 
-# 분할 검증: src/*.sh 를 이어붙인 결과가 커밋된 bin/fmux 와 바이트 동일한지 본다.
-# 차이가 하나라도 있으면 이 분할은 move-only 가 아니다.
+# Split verification: checks that concatenating src/*.sh is byte-identical to the committed bin/fmux.
+# Any difference means the split is not move-only.
 verify:
 	@t=$${TMPDIR:-/tmp}/fmux-verify.$$$$; \
 	cat $(SRC) > $$t.joined; \
@@ -85,19 +88,20 @@ verify:
 		exit 1; \
 	fi
 
-# ── 릴리스 아카이브 ─────────────────────────────────────────────────────────
-# `make dist` 는 릴리스에 올릴 것 두 개를 만든다:
-#   dist/fleetmux-<VERSION>.tar.gz   설치기가 받아서 푸는 것
-#   dist/SHA256SUMS                  설치기가 대조하는 것 — 파이프 설치의 유일한 방어선
+# ── release archive ─────────────────────────────────────────────────────────
+# `make dist` builds the two things that go on a release:
+#   dist/fleetmux-<VERSION>.tar.gz   what the installer downloads and unpacks
+#   dist/SHA256SUMS                  what the installer checks against — the only defense a pipe install has
 #
-# **손으로 만들지 마라.** 릴리스 때 사람이 sha256sum 을 직접 치면 언젠가 빠뜨리고, 빠진 날
-# `curl | bash` 는 무검증으로 깔린다. 그래서 타깃이다.
+# **Do not build these by hand.** If a human types sha256sum at release time, they'll eventually
+# forget it, and the day they do, `curl | bash` installs unverified. Hence this target.
 #
-# 왜 GitHub 이 자동 생성하는 소스 tarball 을 안 쓰나: 그건 바이트가 고정이라는 보장이 없다
-# (git 판이 바뀌면 압축 결과가 달라질 수 있다). 우리가 만든 파일을 우리가 해시해서 같이 올려야
-# 대조가 뜻을 가진다. 설치기도 이 자산 이름(fleetmux-<태그>.tar.gz)을 먼저 찾는다.
+# Why not use the source tarball GitHub auto-generates: its bytes aren't guaranteed stable
+# (a git version bump can change the compression output). We have to hash the file we built
+# ourselves and ship it alongside for the check to mean anything. The installer also looks for
+# this exact asset name (fleetmux-<tag>.tar.gz) first.
 #
-# 해시 도구는 리눅스와 맥이 다르다 — sha256sum(GNU) 이 있으면 그것, 없으면 shasum -a 256(맥).
+# The hashing tool differs between Linux and Mac — sha256sum (GNU) if present, else shasum -a 256 (Mac).
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 DISTDIR ?= dist
 DISTNAME = fleetmux-$(VERSION)
@@ -112,21 +116,22 @@ dist: $(OUT)
 	cd "$(DISTDIR)" && $(SHA256) "$(DISTNAME).tar.gz" > SHA256SUMS
 	@echo "dist: $(DISTDIR)/$(DISTNAME).tar.gz"
 	@cat "$(DISTDIR)/SHA256SUMS"
-	@echo "릴리스에 이 둘을 자산으로 올려라 — 설치기가 그 이름 그대로 찾는다."
+	@echo "Upload both of these as release assets — the installer looks for that exact name."
 
 install: $(OUT)
 	mkdir -p $(BINDIR)
 	cp $(OUT) $(BINDIR)/fmux
 	chmod +x $(BINDIR)/fmux
 	@echo "installed $(BINDIR)/fmux"
-# tt 심링크. `make install` 만 쳐도 쓸 수 있는 상태여야 한다 — PATH shim(libexec/claude)은
-# `command -v tt` 로 우리 존재를 확인하므로, 이 이름이 없으면 훅 주입이 통째로 안 붙는다.
-# 남의 tt 는 절대 덮지 않는다 — 설치기가 남의 도구를 지우면 안 된다.
-#   ⚠️ 예전 가드는 `[ -e ] && [ ! -L ]` 이었다: 일반 파일만 지키고 **남의 심링크는 갈아쳤다**.
-#   ~/.local/bin 에 개인 도구를 거는 가장 흔한 방식이 심링크라, 이 주석이 코드를 거짓 진술한
-#   상태였다(팀 배포 게이트 I2). install.sh 는 make 가 있으면 이 규칙을 그대로 물려받으므로
-#   여기와 install.sh 의 tt_link_ours 는 **같은 판정**이어야 한다: 비었거나 fmux 를 가리키는
-#   심링크일 때만 건다.
+# The tt symlink. It must be usable right after a bare `make install` — the PATH shim
+# (libexec/claude) confirms we exist via `command -v tt`, so without this name the hook
+# injection doesn't attach at all.
+# Never overwrite someone else's tt — an installer must not delete another tool.
+#   ⚠️ The old guard was `[ -e ] && [ ! -L ]`: it protected regular files but **clobbered
+#   other people's symlinks**. Symlinking a personal tool into ~/.local/bin is the most common
+#   pattern, so this comment was misrepresenting the code (team deploy gate I2). install.sh
+#   inherits this same rule when make is present, so its tt_link_ours and this one must make
+#   **the same call**: only touch it when it's absent or already a symlink pointing at fmux.
 	@if [ ! -e "$(BINDIR)/tt" ] && [ ! -L "$(BINDIR)/tt" ]; then \
 		ln -sf fmux "$(BINDIR)/tt"; \
 		echo "linked $(BINDIR)/tt -> fmux"; \
@@ -134,8 +139,8 @@ install: $(OUT)
 		ln -sf fmux "$(BINDIR)/tt"; \
 		echo "relinked $(BINDIR)/tt -> fmux"; \
 	else \
-		echo "skip: $(BINDIR)/tt 는 우리 것이 아니다 — 건드리지 않는다"; \
-		echo "      지금 그 자리: $$(ls -ld "$(BINDIR)/tt")"; \
+		echo "skip: $(BINDIR)/tt is not ours — leaving it alone"; \
+		echo "      current: $$(ls -ld "$(BINDIR)/tt")"; \
 	fi
 
 .PHONY: all check verify install dist

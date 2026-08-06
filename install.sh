@@ -1,36 +1,44 @@
 #!/usr/bin/env bash
-# fleetmux 설치기 — 팀원이 자기 기계에 fmux 를 올릴 때 한 번 돌린다.
+# fleetmux installer — teammates run this once to put fmux on their machine.
 #
-#   ./install.sh              물어보면서 설치
-#   ./install.sh --dry-run    아무것도 안 바꾸고 할 일만 출력
-#   ./install.sh --yes        물음에 전부 yes (제안된 기본값을 그대로 받는다)
-#                             소환키만은 예외 — safe(아무 키도 안 뺏음)로 간다. 무prefix 키를
-#                             전역으로 뺏는 것은 --preset 으로 명시할 때만 일어난다.
-#                             (물어볼 수 있을 때의 제안은 shift = S-Left 다. 왜 그 키인지는
-#                              아래 "⑤ 소환키 프리셋" 절 머리말에 근거를 적어 뒀다.)
-#   curl -fsSL <URL> | bash   레포 없이 설치(원격 모드) — 릴리스 아카이브를 받아 깐다
+#   ./install.sh              install with prompts
+#   ./install.sh --dry-run    change nothing, just print what would be done
+#   ./install.sh --yes        yes to every prompt (accepts the suggested defaults as-is)
+#                             the summon key is the one exception — it goes to safe (steals no
+#                             key). Stealing a no-prefix key globally only happens when you
+#                             spell it out with --preset.
+#                             (The suggestion when we can ask is shift = S-Left. The reasoning
+#                              for that key is written at the top of the "5) summon key preset"
+#                              section below.)
+#   curl -fsSL <URL> | bash   install without a repo (remote mode) — fetches the release archive
 #
-# 모드가 둘이다. 어느 쪽인지는 **파일 존재로** 가르고, 화면 머리에 한 줄로 밝힌다:
-#   로컬 — 이 스크립트 옆에 레포가 있다(Makefile·src/·bin/fmux 가 보인다). 그것을 깐다.
-#   원격 — 없다(`curl | bash` 로 들어왔다). 릴리스 아카이브를 받아 임시 디렉토리에 풀고
-#          그것을 레포처럼 써서 아래 여덟 단계를 똑같이 밟는다. 끝나거나 실패하면 지운다.
+# There are two modes. Which one is decided by **whether the files exist**, and a line at the
+# top of the screen says which:
+#   local  — a repo sits next to this script (Makefile, src/, bin/fmux are visible). Install that.
+#   remote — none of that is there (you came in via `curl | bash`). Fetch the release archive,
+#            unpack it into a temp directory, and treat it as the repo through the same eight
+#            steps below. Deleted when it finishes or fails either way.
 #
-# 규율 넷 — 이 파일을 고칠 사람에게:
-#   ① 멱등하다. 두 번 돌려도 안전하고, 이미 있는 것은 덮기 전에 알린다.
-#   ② --dry-run 은 파일을 하나도 안 만든다. 새 단계를 넣을 때 이 갈림을 빠뜨리지 마라.
-#      (원격 모드의 --dry-run 은 아카이브를 받기는 받는다 — 받아 봐야 무엇을 깔지 말할 수
-#       있기 때문이다. 다만 **임시 디렉토리 밖으로는 한 바이트도 안 나가고**, 끝나면 지운다.)
-#   ③ 남의 파일은 동의 없이 안 고친다. ~/.tmux.conf 는 물어보고 한 줄만,
-#      crontab 은 아예 안 고친다 — 보여주기만 한다(이 프로젝트의 원칙).
-#   ④ 실패하면 어디까지 했는지 말하고 멈춘다. 조용한 반쪽 설치를 만들지 않는다.
+# Four disciplines — for whoever edits this file next:
+#   1) Idempotent. Safe to run twice; anything already present is announced before being
+#      overwritten.
+#   2) --dry-run creates zero files. Don't miss this fork when adding a new step.
+#      (--dry-run in remote mode does fetch the archive — there's no way to say what would be
+#       installed without fetching it. But **not one byte leaves the temp directory**, and it's
+#       deleted when done.)
+#   3) Other people's files are never changed without consent. ~/.tmux.conf gets one line, and
+#      only after asking; crontab is never touched at all — we only show what would go there
+#      (a project principle).
+#   4) On failure, say how far we got and stop. No silent half-installs.
 #
-# 이식성: bash 3.2 호환(연관배열·${v^^}·소수점 read -t 금지), GNU 전용 옵션 금지
-#   (stat -c·readlink -f·sed -i·sort -V 금지). macOS 와 리눅스 양쪽에서 돌아야 한다.
-# 색·이모지는 쓰지 않는다 — 팀원 터미널이 무엇일지 모른다.
+# Portability: bash 3.2 compatible (no associative arrays, no ${v^^}, no fractional read -t),
+#   no GNU-only flags (no stat -c, readlink -f, sed -i, sort -V). Must run on both macOS and
+#   Linux.
+# No color, no emoji — we don't know what a teammate's terminal supports.
 
 set -u
 
-REPO=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || { echo "install.sh 가 있는 디렉토리를 못 찾았다" >&2; exit 1; }
+REPO=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || { echo "could not find the directory install.sh is in" >&2; exit 1; }
 
 PREFIX="${PREFIX:-$HOME/.local}"
 DRY=0
@@ -40,25 +48,27 @@ REF=""
 
 usage() {
     cat << 'EOF'
-usage: ./install.sh [옵션]
-       curl -fsSL <URL> | bash              (원격 모드 — 레포 없이)
+usage: ./install.sh [options]
+       curl -fsSL <URL> | bash              (remote mode — no repo needed)
        curl -fsSL <URL> | bash -s -- --ref v1.2.3
 
-  -n, --dry-run       아무것도 바꾸지 않고 할 일만 출력한다
-  -y, --yes           물음에 전부 yes (제안된 기본값을 그대로 받는다)
-                      단, 소환키는 safe 로 간다 — 무prefix 키는 아무것도 안 뺏는다
-      --prefix DIR    설치 위치 (기본 ~/.local — bin/ 과 libexec/tt/ 가 그 밑에 생긴다)
-      --preset NAME   소환키 프리셋: shift | safe | mac | linux | wsl
-                      물어볼 수 있으면 shift(S-Left)를 제안한다 — 맥·리눅스·Windows Terminal
-                      세 곳 모두에 도착하는 유일한 무prefix 한 타건이다. 대신 그 pane 안
-                      모든 앱에서 그 키를 가져간다. --yes 로는 안 뺏는다 — 무prefix 키를
-                      뺏는 것은 여기서 명시할 때만 일어난다.
-      --ref TAG       원격 모드에서 받을 태그(또는 브랜치). 기본은 **최신 릴리스 태그**다.
-                      로컬 모드에서는 쓰이지 않는다.
-  -h, --help          이 도움말
+  -n, --dry-run       change nothing, just print what would be done
+  -y, --yes           yes to every prompt (accepts the suggested defaults as-is)
+                      except the summon key, which goes to safe — no no-prefix key is stolen
+      --prefix DIR    install location (default ~/.local — bin/ and libexec/tt/ go under it)
+      --preset NAME   summon key preset: shift | safe | mac | linux | wsl
+                      when we can ask, we suggest shift (S-Left) — the only no-prefix single
+                      keystroke that reaches all three of macOS, Linux, and Windows Terminal.
+                      In exchange it takes that key away from every app in that pane. --yes
+                      never steals it — stealing a no-prefix key only happens when you spell
+                      it out here.
+      --ref TAG       tag (or branch) to fetch in remote mode. Default is the **latest
+                      release tag**. Not used in local mode.
+  -h, --help          this help
 
-무엇을 하나: (원격이면 릴리스 아카이브 받기 →) 의존성 확인 → 바이너리 설치 →
-훅 shim 배치 → tmux 스니펫 → 소환키 프리셋 → 에이전트 스킬 → 크론 안내 → 요약.
+What it does: (in remote mode, fetch the release archive first →) check dependencies →
+install the binary → place the hook shim → tmux snippet → summon key preset → agent skill →
+cron guidance → summary.
 EOF
 }
 
@@ -66,68 +76,71 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -n|--dry-run) DRY=1 ;;
         -y|--yes)     ASSUME_YES=1 ;;
-        --prefix)     [ $# -ge 2 ] || { echo "--prefix 에 디렉토리가 없다" >&2; exit 2; }; PREFIX="$2"; shift ;;
+        --prefix)     [ $# -ge 2 ] || { echo "--prefix needs a directory" >&2; exit 2; }; PREFIX="$2"; shift ;;
         --prefix=*)   PREFIX="${1#--prefix=}" ;;
-        --preset)     [ $# -ge 2 ] || { echo "--preset 에 이름이 없다" >&2; exit 2; }; PRESET="$2"; shift ;;
+        --preset)     [ $# -ge 2 ] || { echo "--preset needs a name" >&2; exit 2; }; PRESET="$2"; shift ;;
         --preset=*)   PRESET="${1#--preset=}" ;;
-        --ref)        [ $# -ge 2 ] || { echo "--ref 에 태그가 없다" >&2; exit 2; }; REF="$2"; shift ;;
+        --ref)        [ $# -ge 2 ] || { echo "--ref needs a tag" >&2; exit 2; }; REF="$2"; shift ;;
         --ref=*)      REF="${1#--ref=}" ;;
         -h|--help)    usage; exit 0 ;;
-        *) echo "모르는 옵션: $1" >&2; echo >&2; usage >&2; exit 2 ;;
+        *) echo "unknown option: $1" >&2; echo >&2; usage >&2; exit 2 ;;
     esac
     shift
 done
 
-# 상대경로 PREFIX 는 절대경로로 편다. `make -C "$REPO" install PREFIX=./x` 는 레포 기준으로
-# 풀려서, 사람이 친 자리가 아닌 곳에 깔린다 — 그 놀람을 여기서 없앤다.
+# A relative PREFIX is resolved to an absolute path. `make -C "$REPO" install PREFIX=./x`
+# resolves relative to the repo, so it would install somewhere other than where the person
+# typed it — this removes that surprise.
 case "$PREFIX" in
     /*) ;;
     *)  PREFIX="$PWD/$PREFIX" ;;
 esac
 
 BINDIR="$PREFIX/bin"
-LIBEXEC="$PREFIX/libexec/tt"     # PATH shim 자리. README·70-fleet.sh 의 PATH 보정과 같은 경로여야 한다.
+LIBEXEC="$PREFIX/libexec/tt"     # PATH shim location. Must match the path used in README and
+                                  # 70-fleet.sh's PATH correction.
 
-# ── 출력 ────────────────────────────────────────────────────────────────────
-# 태그는 전부 4칸 ASCII 다. 한글 태그는 터미널마다 폭이 달라 표가 어긋난다.
+# ── output ──────────────────────────────────────────────────────────────────
+# Tags are all 4-column ASCII. Non-ASCII tags render at different widths in different
+# terminals, which throws the table's alignment off.
 step() { printf '\n[%s] %s\n' "$1" "$2"; }
 ok()   { printf '  ok   %s\n' "$*"; }
 note() { printf '  note %s\n' "$*"; }
 skip() { printf '  skip %s\n' "$*"; }
-plan() { printf '  dry  %s\n' "$*"; }        # --dry-run 에서 "이걸 했을 것이다"
+plan() { printf '  dry  %s\n' "$*"; }        # "would have done this" under --dry-run
 warn() { printf '  warn %s\n' "$*" >&2; }
 
-# 한 일 목록 — 실패해도 여기까지는 말한다(규율 ④).
+# List of what was done — told even on failure (discipline 4).
 DID=''
 did() { DID="$DID  - $1"$'\n'; }
 
 die() {
-    printf '\n설치를 멈춘다: %s\n' "$1" >&2
+    printf '\nstopping the install: %s\n' "$1" >&2
     if [ -n "$DID" ]; then
-        printf '\n여기까지 했다 — 나머지는 안 했다:\n%s' "$DID" >&2
-        printf '되돌리려면 위 목록을 지우면 된다.\n' >&2
+        printf '\nGot this far — the rest was not done:\n%s' "$DID" >&2
+        printf 'To undo it, remove the items in the list above.\n' >&2
     else
-        printf '\n아무것도 바꾸지 않았다.\n' >&2
+        printf '\nNothing was changed.\n' >&2
     fi
     exit 1
 }
 
 is_dry() { [ "$DRY" = 1 ]; }
 
-# ── 물어보기 ────────────────────────────────────────────────────────────────
-# stdin 이 터미널이 아니면(파이프·CI·테스트) 절대 묻지 않고 "아니오"로 간다.
-# 동의가 필요한 일은 동의가 없으면 안 한다 — 침묵은 동의가 아니다.
+# ── asking ──────────────────────────────────────────────────────────────────
+# If stdin is not a terminal (pipe, CI, test), never ask — go with "no".
+# Anything that needs consent doesn't happen without it — silence is not consent.
 ASK_TTY=0
 [ -t 0 ] && ASK_TTY=1
 
-ask_yn() {   # $1=질문  → rc 0 이면 yes
+ask_yn() {   # $1=question  → rc 0 means yes
     local q="$1" ans=''
     if [ "$ASSUME_YES" = 1 ]; then
         printf '  %s [y/n] y  (--yes)\n' "$q"
         return 0
     fi
     if [ "$ASK_TTY" = 0 ]; then
-        printf '  %s [y/n] n  (터미널이 아니라 묻지 않았다 — 동의 없이는 안 한다)\n' "$q"
+        printf '  %s [y/n] n  (not a terminal, so we did not ask — nothing without consent)\n' "$q"
         return 1
     fi
     printf '  %s [y/N] ' "$q"
@@ -135,7 +148,7 @@ ask_yn() {   # $1=질문  → rc 0 이면 yes
     case "$ans" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
-ask_word() {   # $1=질문  $2=기본값  → 답을 stdout 에
+ask_word() {   # $1=question  $2=default  → answer on stdout
     local q="$1" def="$2" ans=''
     if [ "$ASSUME_YES" = 1 ] || [ "$ASK_TTY" = 0 ]; then printf '%s' "$def"; return 0; fi
     printf '  %s [%s] ' "$q" "$def" >&2
@@ -144,10 +157,11 @@ ask_word() {   # $1=질문  $2=기본값  → 답을 stdout 에
     printf '%s' "$ans"
 }
 
-# ── 버전 비교 ───────────────────────────────────────────────────────────────
-# GNU `sort -V` 에 기대지 않는다 — macOS 의 BSD sort 에는 없다.
-# 앞쪽의 숫자.점 부분만 떼어 성분끼리 센다: "3.5a"→3.5, "0.65.2 (brew)"→0.65.2,
-# "5.2.37(1)-release"→5.2.37. 앞이 숫자가 아니면("next-3.6", "master") 빈 값 = 판독 실패.
+# ── version comparison ─────────────────────────────────────────────────────
+# Doesn't rely on GNU `sort -V` — macOS's BSD sort doesn't have it.
+# Strips off just the leading digits-and-dots and compares component by component:
+# "3.5a"→3.5, "0.65.2 (brew)"→0.65.2, "5.2.37(1)-release"→5.2.37. If it doesn't start with a
+# digit ("next-3.6", "master"), empty value = unreadable.
 ver_num() {
     local v="${1:-}"
     v=${v%%[!0-9.]*}
@@ -155,7 +169,7 @@ ver_num() {
     printf '%s' "$v"
 }
 
-# rc 0 = $1 >= $2, rc 1 = 낮다, rc 2 = 판독 실패(모르면 막지 않는다)
+# rc 0 = $1 >= $2, rc 1 = lower, rc 2 = unreadable (doesn't block when it can't tell)
 ver_ge() {
     local a b ai bi
     a=$(ver_num "${1:-}"); b=$(ver_num "${2:-}")
@@ -165,7 +179,8 @@ ver_ge() {
         ai=${a%%.*}; bi=${b%%.*}
         case "$a" in *.*) a=${a#*.} ;; *) a='' ;; esac
         case "$b" in *.*) b=${b#*.} ;; *) b='' ;; esac
-        # 앞자리 0 은 bash 산술에서 8진수다 → 10# 으로 정규화(05-config.sh 의 tt_conf_num 과 같은 이유)
+        # A leading 0 is octal in bash arithmetic → normalize with 10# (same reason as
+        # tt_conf_num in 05-config.sh)
         case "$ai" in ''|*[!0-9]*) ai=0 ;; *) ai=$((10#$ai)) ;; esac
         case "$bi" in ''|*[!0-9]*) bi=0 ;; *) bi=$((10#$bi)) ;; esac
         [ "$ai" -gt "$bi" ] && return 0
@@ -174,10 +189,10 @@ ver_ge() {
     return 0
 }
 
-# ── PATH 훑기 ───────────────────────────────────────────────────────────────
-# `for d in $PATH` 는 IFS 를 갈아야 해서 함수 밖으로 새기 쉽다. 파라미터 확장으로 자른다.
-# 빈 성분은 POSIX 상 현재 디렉토리(.)를 뜻한다.
-path_index() {   # $1=디렉토리 → PATH 에서 몇 번째인가(1부터). 없으면 0.
+# ── PATH scan ───────────────────────────────────────────────────────────────
+# `for d in $PATH` needs IFS changed, which easily leaks out of the function. Sliced with
+# parameter expansion instead. An empty component means the current directory (.) under POSIX.
+path_index() {   # $1=directory → its position in PATH (1-based). 0 if absent.
     local want="${1:-}" rest="$PATH:" d i=0
     want=${want%/}
     while [ -n "$rest" ]; do
@@ -189,7 +204,7 @@ path_index() {   # $1=디렉토리 → PATH 에서 몇 번째인가(1부터). �
     printf '0'
 }
 
-first_real_index() {   # $1=명령 이름 → LIBEXEC 를 뺀 PATH 에서 처음 나오는 순번. 없으면 0.
+first_real_index() {   # $1=command name → its first position in PATH excluding LIBEXEC. 0 if absent.
     local want="${1:-}" rest="$PATH:" d i=0
     while [ -n "$rest" ]; do
         d=${rest%%:*}; rest=${rest#*:}
@@ -201,16 +216,16 @@ first_real_index() {   # $1=명령 이름 → LIBEXEC 를 뺀 PATH 에서 처음
     printf '0'
 }
 
-rc_hint() {   # 셸 시작 파일 이름 추정 — 고치지는 않는다. 어디를 열지만 알려준다.
+rc_hint() {   # Guesses the shell startup file name — doesn't edit it, just says which to open.
     case "$(basename "${SHELL:-sh}")" in
         zsh)  printf '~/.zshrc' ;;
         bash) if [ "$(uname -s)" = Darwin ]; then printf '~/.bash_profile'; else printf '~/.bashrc'; fi ;;
         fish) printf '~/.config/fish/config.fish' ;;
-        *)    printf '셸 시작 파일' ;;
+        *)    printf 'your shell startup file' ;;
     esac
 }
 
-path_line() {   # PATH 를 넣는 한 줄 — fish 는 문법이 다르다
+path_line() {   # The one line that adds to PATH — fish has different syntax
     if [ "$(basename "${SHELL:-sh}")" = fish ]; then
         printf 'fish_add_path %s %s' "$LIBEXEC" "$BINDIR"
     else
@@ -218,60 +233,65 @@ path_line() {   # PATH 를 넣는 한 줄 — fish 는 문법이 다르다
     fi
 }
 
-# 설치된 fmux 가 있으면 그걸, 아직 없으면(dry-run) 레포의 것을 쓴다.
+# Uses the installed fmux if there is one; falls back to the repo's copy when there isn't yet
+# (dry-run).
 FMUX="$REPO/bin/fmux"
 
-# ── tt 라는 이름 ────────────────────────────────────────────────────────────
-# shim(libexec/claude)이 `command -v tt` 로 우리 존재를 확인하므로 이 이름이 필요하다.
-# 그런데 ~/.local/bin 에 개인 도구를 거는 가장 흔한 방식이 **심링크**다 — 팀원이 이미
-# 다른 도구를 tt 로 쓰고 있을 수 있다. 예전 가드는 `[ -e ] && [ ! -L ]` 이라 일반 파일만
-# 지키고 남의 심링크는 경고도 백업도 없이 갈아쳤다(팀 배포 게이트 I2). 원래 대상이 어디에도
-# 안 남으므로 되돌릴 수 없고, 화면은 `ok …/tt → fmux` 만 찍었다.
-# 규칙: **비어 있거나 우리 것일 때만** 건다. 그 밖이면 무엇이 있는지 보여주고 사람이 정한다.
-tt_link_absent() {   # rc 0 = 그 자리가 비어 있다(끊어진 심링크는 비어 있는 게 아니다)
+# ── the name "tt" ───────────────────────────────────────────────────────────
+# The shim (libexec/claude) confirms we exist via `command -v tt`, so this name is required.
+# But the most common way to hang a personal tool off ~/.local/bin is a **symlink** — a
+# teammate may already be using tt for something else. The old guard was `[ -e ] && [ ! -L ]`,
+# which protected regular files but replaced someone else's symlink with no warning and no
+# backup (team deploy gate I2). The original target is left nowhere, so it's unrecoverable, and
+# the screen only printed `ok …/tt → fmux`.
+# Rule: only hang it **when the spot is empty or already ours**. Otherwise show what's there and
+# let the person decide.
+tt_link_absent() {   # rc 0 = the spot is empty (a broken symlink does not count as empty)
     [ ! -e "$BINDIR/tt" ] && [ ! -L "$BINDIR/tt" ]
 }
 
-tt_link_ours() {     # rc 0 = 우리가 건 심링크다 (재실행이 멱등해야 하므로 다시 걸어도 된다)
+tt_link_ours() {     # rc 0 = it's our symlink (fine to hang again — reruns must be idempotent)
     local t
     [ -L "$BINDIR/tt" ] || return 1
     t=$(readlink "$BINDIR/tt" 2>/dev/null) || return 1
     [ "$t" = fmux ] || [ "$t" = "$BINDIR/fmux" ]
 }
 
-tt_link_what() {     # 그 자리에 무엇이 있나 — 사람이 정하려면 이것부터 봐야 한다
+tt_link_what() {     # What's actually there — the person needs to see this before deciding
     if [ -L "$BINDIR/tt" ]; then
-        printf '심링크 → %s' "$(readlink "$BINDIR/tt" 2>/dev/null || printf '?')"
-    elif [ -d "$BINDIR/tt" ]; then printf '디렉토리'
-    elif [ -e "$BINDIR/tt" ]; then printf '일반 파일'
-    else printf '없음'
+        printf 'symlink → %s' "$(readlink "$BINDIR/tt" 2>/dev/null || printf '?')"
+    elif [ -d "$BINDIR/tt" ]; then printf 'a directory'
+    elif [ -e "$BINDIR/tt" ]; then printf 'a regular file'
+    else printf 'nothing'
     fi
 }
 
-# ── 원격 모드 ───────────────────────────────────────────────────────────────
-# `curl -fsSL … | bash` 로 들어오면 $0 은 'bash' 이고 dirname 은 '.' 이라, 위에서 잡은 REPO 는
-# 그냥 "지금 디렉토리"다. 거기 우리 파일이 있을 리 없다 — 그래서 **파일 존재로** 가른다.
-# (거꾸로, 클론 안에서 파이프로 돌려도 파일이 보이므로 로컬로 간다. 그게 맞다.)
+# ── remote mode ─────────────────────────────────────────────────────────────
+# Coming in via `curl -fsSL … | bash`, $0 is 'bash' and dirname is '.', so the REPO captured
+# above is just "the current directory". Our files can't possibly be there — so the split is
+# **by file existence**. (Conversely, piping the script from inside a clone still sees the
+# files, so it goes local. That's correct.)
 REMOTE=0
 [ -f "$REPO/bin/fmux" ] && [ -d "$REPO/src" ] && [ -f "$REPO/Makefile" ] || REMOTE=1
 
-# 공개 배포 주소. **레포가 아직 비공개라 여기는 자리표시자다.**
-#   공개되면 고칠 곳은 둘뿐이다: 이 기본값과 README 의 Install 절 URL.
-# 포크·사설 미러·시험은 FMUX_SLUG 로 덮어쓴다 (FMUX_SLUG=owner/repo ./install.sh).
+# Public distribution address. **This is a placeholder because the repo is still private.**
+#   Once it's public, only two places need fixing: this default and the URL in README's
+#   Install section.
+# Forks, private mirrors, and testing override it with FMUX_SLUG (FMUX_SLUG=owner/repo ./install.sh).
 SLUG="${FMUX_SLUG:-OWNER/fleetmux}"
 SLUG_IS_PLACEHOLDER=0
 [ "$SLUG" = 'OWNER/fleetmux' ] && SLUG_IS_PLACEHOLDER=1
 
-DL=''        # 받는 도구: curl | wget
-SHA_CMD=''   # 대조 도구: sha256sum(리눅스) | shasum -a 256(맥). 없으면 빈 값.
-TMPD=''      # 원격 모드의 임시 디렉토리. 성공하든 실패하든 EXIT 에서 지운다.
+DL=''        # download tool: curl | wget
+SHA_CMD=''   # checksum tool: sha256sum (Linux) | shasum -a 256 (macOS). Empty if neither exists.
+TMPD=''      # remote mode's temp directory. Deleted on EXIT whether it succeeded or failed.
 
-# 지우는 것은 trap 하나에만 맡긴다 — 성공 경로에서만 지우는 코드는 언젠가 실패 경로를 샌다.
-# die() 도 exit 로 나가므로 이 trap 을 지난다.
+# Cleanup is left to a single trap — code that only cleans up on the success path will
+# eventually leak on a failure path. die() also exits, so it passes through this trap too.
 cleanup_tmpd() {
     [ -n "$TMPD" ] || return 0
     if [ -d "$TMPD" ]; then
-        rm -rf "$TMPD" && printf '  ok   임시 디렉토리를 지웠다: %s\n' "$TMPD"
+        rm -rf "$TMPD" && printf '  ok   deleted the temp directory: %s\n' "$TMPD"
     fi
     TMPD=''
 }
@@ -279,20 +299,21 @@ trap 'cleanup_tmpd' EXIT
 trap 'cleanup_tmpd; exit 130' INT
 trap 'cleanup_tmpd; exit 143' TERM
 
-# curl 우선, 없으면 wget. 둘 다 없으면 무엇을 깔지 말하고 멈춘다.
+# curl first, wget as fallback. If neither exists, say what's needed and stop.
 pick_downloader() {
-    if command -v curl > /dev/null 2>&1; then DL=curl; ok "curl 로 받는다"
-    elif command -v wget > /dev/null 2>&1; then DL=wget; ok "wget 으로 받는다 (curl 이 없다)"
+    if command -v curl > /dev/null 2>&1; then DL=curl; ok "downloading with curl"
+    elif command -v wget > /dev/null 2>&1; then DL=wget; ok "downloading with wget (no curl)"
     else
-        warn "curl 도 wget 도 없다 — 아무것도 받을 수 없다."
-        warn "     둘 중 하나를 깔아라:  apt install curl  /  dnf install curl  /  brew install curl"
-        warn "     또는 레포를 클론해서 그 안에서 ./install.sh 를 돌려라(로컬 모드)."
-        die "받을 도구가 없다"
+        warn "neither curl nor wget is present — nothing can be downloaded."
+        warn "     install one of them:  apt install curl  /  dnf install curl  /  brew install curl"
+        warn "     or clone the repo and run ./install.sh from inside it (local mode)."
+        die "no download tool available"
     fi
 }
 
-# $1=URL $2=받을 파일. rc 0 이면 받았다. 404·네트워크 실패는 rc≠0 이고 빈 파일을 안 남긴다
-# (wget -O 는 실패해도 파일을 만든다 — 그 껍데기를 다음 단계가 "받았다"고 믿으면 안 된다).
+# $1=URL $2=destination file. rc 0 means it was fetched. A 404 or network failure returns
+# rc≠0 and leaves no file behind (wget -O creates a file even on failure — the next step must
+# not mistake that husk for a successful fetch).
 fetch() {
     local rc=0
     case "$DL" in
@@ -304,9 +325,10 @@ fetch() {
     return 0
 }
 
-# 최신 릴리스 태그. 못 알아내면 rc 1 — **main 으로 흘러가지 않는다.**
-# main 이 깨진 순간 신규 설치가 전부 같이 깨지는 것이 태그를 기본으로 두는 이유다.
-# 파서는 sed 하나다(jq 는 없는 기계가 많다). 쉼표로 줄을 갈라 "tag_name":"…" 를 뽑는다.
+# The latest release tag. rc 1 if it can't be determined — **it never falls back to main.**
+# The moment main is broken, every new install breaking along with it is exactly why a tag is
+# the default. The parser is a single sed (many machines don't have jq). Splits on commas and
+# pulls "tag_name":"…" out of the line.
 latest_tag() {
     local f="$TMPD/latest.json" t=''
     fetch "https://api.github.com/repos/$SLUG/releases/latest" "$f" || return 1
@@ -324,331 +346,339 @@ pick_sha() {
     fi
 }
 
-# 대조를 못 하는 상황. 파이프 설치의 방어선은 이 대조 하나뿐이라 **조용히 넘어가지 않는다**.
-#   - --yes: 멈춘다. 자동 실행이 무검증으로 깔리면 안 된다.
-#   - 물을 수 있으면: 묻는다. 사람이 눈으로 보고 승낙할 때만 계속한다.
-#   - 물을 수 없으면(파이프 설치는 stdin 이 스크립트라 늘 여기다): ask_yn 이 '아니오'다 → 멈춘다.
-no_verify_gate() {   # $1=왜 대조를 못 하나
+# A situation where verification is impossible. Checksum verification is the only defence a
+# piped install has, so this **never passes through quietly**.
+#   - --yes: halt. An unattended run must not install unverified.
+#   - if we can ask: ask. Only continue once a human has looked and consented.
+#   - if we can't ask (a piped install always lands here — stdin is the script itself):
+#     ask_yn defaults to 'no' → halt.
+no_verify_gate() {   # $1=why verification is impossible
     warn "$1"
-    warn "     SHA256 대조는 파이프 설치(curl | bash)의 유일한 방어선이다 — 무검증으로 깔지 않는다."
+    warn "     Checksum verification is the only defence a piped install (curl | bash) has —"
+    warn "     we do not install unverified."
     if [ "$ASSUME_YES" = 1 ]; then
-        die "--yes 로는 무검증 설치를 승인하지 않는다 (사람이 직접 답할 때만 계속한다)"
+        die "--yes does not authorize an unverified install (only a human answering directly can continue)"
     fi
-    ask_yn "SHA256 대조 없이 그래도 계속할까?" || die "검증 없이는 설치하지 않는다"
-    note "사람이 무검증 설치를 승낙했다 — 계속한다"
+    ask_yn "Continue anyway, without SHA256 verification?" || die "not installing without verification"
+    note "a human approved an unverified install — continuing"
 }
 
-# SHA256SUMS 대조. 어긋나면 **즉시** 멈춘다(경고하고 계속하는 선택지는 없다).
-verify_sums() {   # $1=받은 아카이브  $2=SHA256SUMS
+# SHA256SUMS verification. On a mismatch, halt **immediately** (there is no warn-and-continue option).
+verify_sums() {   # $1=downloaded archive  $2=SHA256SUMS
     local name want got
     name=$(basename "$1")
     pick_sha
     if [ -z "$SHA_CMD" ]; then
-        no_verify_gate "sha256sum 도 shasum 도 없다 — 받은 파일을 대조할 도구가 이 기계에 없다."
+        no_verify_gate "neither sha256sum nor shasum is present — this machine has no tool to verify the downloaded file."
         return 0
     fi
-    # 형식: '<해시>  <파일이름>' (바이너리 표시 '*' 가 붙기도 한다)
+    # format: '<hash>  <filename>' (a binary-mode '*' marker sometimes prefixes the filename)
     want=$(awk -v f="$name" '{ n=$2; sub(/^\*/, "", n); if (n == f) { print $1; exit } }' "$2")
-    [ -n "$want" ] || die "SHA256SUMS 에 $name 항목이 없다 — 이 아카이브는 대조할 수 없다"
+    [ -n "$want" ] || die "no entry for $name in SHA256SUMS — this archive cannot be verified"
     got=$($SHA_CMD "$1" 2>/dev/null | awk 'NR==1{print $1}')
-    [ -n "$got" ] || die "$SHA_CMD 가 해시를 못 냈다 — 대조할 수 없다"
+    [ -n "$got" ] || die "$SHA_CMD produced no hash — cannot verify"
     if [ "$want" = "$got" ]; then
-        ok "SHA256 일치 — $name"
+        ok "SHA256 matches — $name"
         return 0
     fi
-    warn "기대: $want"
-    warn "실제: $got"
-    die "SHA256 가 다르다 — 받은 파일이 릴리스와 같지 않다. 설치하지 않는다."
+    warn "expected: $want"
+    warn "actual:   $got"
+    die "SHA256 mismatch — the downloaded file does not match the release. Not installing."
 }
 
-# ── 0단계: 원격이면 여기서 받는다 (여덟 단계 앞에 붙는다) ───────────────────
+# ── step 0: fetch here first if remote (this precedes the eight steps) ─────
 remote_fetch() {
-    step 0/8 "원격 — 릴리스 아카이브를 받는다"
+    step 0/8 "remote — fetching the release archive"
     local asset root d
 
     pick_downloader
-    command -v tar > /dev/null 2>&1 || die "tar 가 없다 — 아카이브를 풀 수 없다"
+    command -v tar > /dev/null 2>&1 || die "tar is not present — cannot unpack the archive"
 
     if [ "$SLUG_IS_PLACEHOLDER" = 1 ]; then
-        warn "이 빌드에는 아직 공개 배포 주소가 없다 — 레포가 비공개라 자리표시자($SLUG)로 둔 상태다."
-        warn "     공개되면 고칠 곳은 둘이다: install.sh 의 SLUG 기본값, README 의 Install 절 URL."
-        warn "     지금 당장 원격으로 깔려면 주소를 직접 줘라:  FMUX_SLUG=owner/repo bash install.sh"
-        warn "     또는 레포를 클론해서 그 안에서 ./install.sh 를 돌려라(로컬 모드)."
-        die "받을 곳을 모른다"
+        warn "this build has no public distribution address yet — the repo is still private, so it's a placeholder ($SLUG)."
+        warn "     once it's public, two places need fixing: the SLUG default in install.sh, and the URL in README's Install section."
+        warn "     to install remotely right now, give the address directly:  FMUX_SLUG=owner/repo bash install.sh"
+        warn "     or clone the repo and run ./install.sh from inside it (local mode)."
+        die "don't know where to fetch from"
     fi
 
-    TMPD=$(mktemp -d "${TMPDIR:-/tmp}/fmux-install.XXXXXX") || die "임시 디렉토리를 못 만들었다"
-    ok "임시 디렉토리: $TMPD  (끝나거나 실패하면 지운다)"
+    TMPD=$(mktemp -d "${TMPDIR:-/tmp}/fmux-install.XXXXXX") || die "could not create a temp directory"
+    ok "temp directory: $TMPD  (deleted when this finishes or fails)"
 
     if [ -n "$REF" ]; then
-        note "--ref 로 받는다: $REF"
+        note "fetching --ref: $REF"
     else
         REF=$(latest_tag) || REF=''
         if [ -z "$REF" ]; then
-            warn "최신 릴리스 태그를 알아내지 못했다 (https://api.github.com/repos/$SLUG/releases/latest)."
-            warn "     main 으로 대신 받지 않는다 — main 이 깨진 날 신규 설치가 전부 같이 깨진다."
-            warn "     받을 것을 직접 지정해라:  ... | bash -s -- --ref v1.2.3"
-            die "무엇을 받을지 정하지 못했다"
+            warn "could not determine the latest release tag (https://api.github.com/repos/$SLUG/releases/latest)."
+            warn "     not falling back to main — the day main is broken, every new install breaks with it."
+            warn "     specify what to fetch directly:  ... | bash -s -- --ref v1.2.3"
+            die "could not decide what to fetch"
         fi
-        ok "최신 릴리스 태그: $REF"
+        ok "latest release tag: $REF"
     fi
 
     asset="fleetmux-$REF.tar.gz"
     if fetch "https://github.com/$SLUG/releases/download/$REF/$asset" "$TMPD/$asset"; then
-        ok "받았다: $asset"
+        ok "downloaded: $asset"
         if fetch "https://github.com/$SLUG/releases/download/$REF/SHA256SUMS" "$TMPD/SHA256SUMS"; then
             verify_sums "$TMPD/$asset" "$TMPD/SHA256SUMS"
         else
-            no_verify_gate "이 릴리스($REF)에 SHA256SUMS 가 없다 — 받은 파일을 대조할 기준이 없다."
+            no_verify_gate "this release ($REF) has no SHA256SUMS — nothing to verify the downloaded file against."
         fi
     elif fetch "https://github.com/$SLUG/archive/$REF.tar.gz" "$TMPD/src-$REF.tar.gz"; then
-        # 브랜치·릴리스 아닌 태그. 소스 아카이브에는 SHA256SUMS 가 붙지 않는다.
+        # A branch or tag with no release. Source archives don't come with SHA256SUMS.
         asset="src-$REF.tar.gz"
-        note "릴리스 자산이 없어 소스 아카이브로 받았다: $REF"
-        no_verify_gate "소스 아카이브에는 SHA256SUMS 가 붙지 않는다 — 대조할 기준이 없다."
+        note "no release asset — fell back to the source archive: $REF"
+        no_verify_gate "source archives don't come with SHA256SUMS — nothing to verify against."
     else
-        warn "받지 못했다: https://github.com/$SLUG/releases/download/$REF/$asset"
-        warn "     그 태그가 실재하는지, 그리고 네트워크가 되는지 확인해라."
-        die "아카이브를 못 받았다 ($REF)"
+        warn "could not download: https://github.com/$SLUG/releases/download/$REF/$asset"
+        warn "     check that the tag actually exists, and that the network is reachable."
+        die "could not download the archive ($REF)"
     fi
 
-    mkdir -p "$TMPD/x" || die "$TMPD/x 를 못 만들었다"
-    tar -xzf "$TMPD/$asset" -C "$TMPD/x" || die "아카이브를 풀 수 없다: $asset"
+    mkdir -p "$TMPD/x" || die "could not create $TMPD/x"
+    tar -xzf "$TMPD/$asset" -C "$TMPD/x" || die "could not unpack the archive: $asset"
 
-    # 아카이브 안의 최상위 디렉토리 이름에 기대지 않는다 — bin/fmux 가 보이는 곳을 찾는다.
+    # Doesn't rely on the top-level directory name inside the archive — finds wherever bin/fmux is.
     root=''
     for d in "$TMPD"/x/*/; do
         [ -f "${d}bin/fmux" ] || continue
         root=${d%/}; break
     done
     [ -n "$root" ] || { [ -f "$TMPD/x/bin/fmux" ] && root="$TMPD/x"; }
-    [ -n "$root" ] || die "아카이브 안에 bin/fmux 가 없다 — 이건 fleetmux 아카이브가 아니다"
+    [ -n "$root" ] || die "no bin/fmux inside the archive — this is not a fleetmux archive"
 
     REPO="$root"
-    FMUX="$REPO/bin/fmux"       # 아래 단계들이 전부 이 둘을 본다
-    ok "풀었다 — 여기를 레포처럼 쓴다: $REPO"
-    is_dry && note "--dry-run 이라도 받기는 받는다. 임시 디렉토리 밖으로는 한 바이트도 안 나간다."
+    FMUX="$REPO/bin/fmux"       # every step below looks at these two
+    ok "unpacked — treating this as the repo: $REPO"
+    is_dry && note "--dry-run still fetches. Not one byte leaves the temp directory."
     return 0
 }
 
-# ── ① 의존성 ────────────────────────────────────────────────────────────────
+# ── 1) dependencies ─────────────────────────────────────────────────────────
 DEP_FAIL=''
 dep_fail() { DEP_FAIL="$DEP_FAIL  - $1"$'\n'; }
 
 HAVE_MAKE=0
 
 check_deps() {
-    step 1/8 "의존성"
+    step 1/8 "dependencies"
     local v rc
 
-    # bash — 이 스크립트를 돌리는 셸 자체. fmux 는 bash 3.2 문법만 쓴다.
+    # bash — the shell running this script itself. fmux only uses bash 3.2 syntax.
     if [ -z "${BASH_VERSION:-}" ]; then
-        dep_fail "bash 가 아닌 셸로 돌고 있다 — 'bash ./install.sh' 로 다시 돌려라"
+        dep_fail "running under a non-bash shell — rerun with 'bash ./install.sh'"
     else
         ver_ge "$BASH_VERSION" 3.2; rc=$?
         if [ "$rc" = 0 ]; then ok "bash $BASH_VERSION"
-        elif [ "$rc" = 1 ]; then dep_fail "bash $BASH_VERSION — 3.2 이상이 필요하다"
-        else ok "bash $BASH_VERSION (버전 문자열을 못 읽었다 — 막지는 않는다)"
+        elif [ "$rc" = 1 ]; then dep_fail "bash $BASH_VERSION — 3.2 or newer is required"
+        else ok "bash $BASH_VERSION (couldn't read the version string — not blocking on it)"
         fi
     fi
 
-    # tmux — fmux 는 tmux 팝업(display-popup)으로 뜬다. 그 명령이 3.2 에 들어왔다.
+    # tmux — fmux opens as a tmux popup (display-popup). That command arrived in 3.2.
     if ! command -v tmux > /dev/null 2>&1; then
-        dep_fail "tmux 가 없다 — fmux 는 tmux 세션 관제탑이다. 3.2 이상(팝업 display-popup)"
+        dep_fail "tmux is not present — fmux is a tmux session cockpit. 3.2 or newer (popup display-popup)"
     else
         v=$(tmux -V 2>/dev/null | awk 'NR==1{print $2}') || v=''
         ver_ge "$v" 3.2; rc=$?
         if [ "$rc" = 0 ]; then ok "tmux $v"
-        elif [ "$rc" = 1 ]; then dep_fail "tmux $v — 3.2 이상이 필요하다(팝업 display-popup 이 3.2 부터다)"
-        else warn "tmux 버전을 못 읽었다 ('${v:-빈 값}') — 3.2 이상인지 직접 확인해라"
+        elif [ "$rc" = 1 ]; then dep_fail "tmux $v — 3.2 or newer is required (popup display-popup arrived in 3.2)"
+        else warn "couldn't read the tmux version ('${v:-empty}') — check yourself that it's 3.2 or newer"
         fi
     fi
 
-    # fzf — 목록 UI. --footer 가 0.64 에 들어왔고 fmux 는 그걸 쓴다(90-main.sh).
+    # fzf — the list UI. --footer arrived in 0.64 and fmux uses it (90-main.sh).
     if ! command -v fzf > /dev/null 2>&1; then
-        dep_fail "fzf 가 없다 — 세션 목록이 fzf 다. 0.64 이상(목록 하단 --footer)"
+        dep_fail "fzf is not present — the session list is fzf. 0.64 or newer (list footer --footer)"
     else
         v=$(fzf --version 2>/dev/null | awk 'NR==1{print $1}') || v=''
         ver_ge "$v" 0.64; rc=$?
         if [ "$rc" = 0 ]; then ok "fzf $v"
-        elif [ "$rc" = 1 ]; then dep_fail "fzf $v — 0.64 이상이 필요하다(fmux 가 --footer 를 쓴다)"
-        else warn "fzf 버전을 못 읽었다 ('${v:-빈 값}') — 0.64 이상인지 직접 확인해라"
+        elif [ "$rc" = 1 ]; then dep_fail "fzf $v — 0.64 or newer is required (fmux uses --footer)"
+        else warn "couldn't read the fzf version ('${v:-empty}') — check yourself that it's 0.64 or newer"
         fi
     fi
 
-    # awk — 매니페스트 무결성 검사·목록 정렬·배선 판정이 전부 awk 다.
+    # awk — manifest integrity checks, list sorting, and wiring checks are all awk.
     if command -v awk > /dev/null 2>&1; then ok "awk"
-    else dep_fail "awk 가 없다 — 매니페스트 검사와 목록 정렬이 awk 다"
+    else dep_fail "awk is not present — manifest checks and list sorting are awk"
     fi
 
-    # flock — 있으면 좋다. 없어도 죽지 않는다: fmux 는 세 곳 전부에서
-    #   `command -v flock || return 0` 로 빠져나간다(40-mfops.sh:9, 60-rc.sh:93, 70-fleet.sh:406).
-    #   macOS 에는 기본으로 없다 — 여기서 막으면 맥 사용자는 아무도 설치할 수 없다.
-    #   그래서 막지 않고, 무엇이 약해지는지만 말한다.
+    # flock — nice to have. Nothing breaks without it: fmux exits early with
+    #   `command -v flock || return 0` in all three places it's used (40-mfops.sh:9, 60-rc.sh:93,
+    #   70-fleet.sh:406). macOS doesn't ship it by default — blocking on it here would mean no
+    #   macOS user could install at all. So it doesn't block, it just says what gets weaker.
     if command -v flock > /dev/null 2>&1; then
         ok "flock"
     else
-        warn "flock 이 없다 — 중복 실행 방지가 꺼진 채로 돈다(크론 라운드 겹침·부팅 복원 도플갱어)."
-        warn "     설치는 계속한다. macOS 라면 'brew install flock' 으로 넣을 수 있다."
+        warn "flock is not present — runs without duplicate-run protection (overlapping cron rounds, boot-restore doppelgangers)."
+        warn "     install continues anyway. On macOS, get it with 'brew install flock'."
     fi
 
-    # make — 있으면 make install 을 쓰고, 없으면 커밋된 bin/fmux 를 직접 복사한다.
+    # make — if present, uses make install; if not, copies the committed bin/fmux directly.
     if command -v make > /dev/null 2>&1; then HAVE_MAKE=1; ok "make"
-    else warn "make 가 없다 — 커밋된 bin/fmux 를 그대로 복사한다(빌드는 건너뛴다)"
+    else warn "make is not present — copying the committed bin/fmux as-is (skipping the build)"
     fi
 
     if [ -n "$DEP_FAIL" ]; then
-        printf '\n필요한 것이 빠졌거나 낮다:\n%s' "$DEP_FAIL" >&2
-        die "의존성이 안 맞는다"
+        printf '\nmissing or too old:\n%s' "$DEP_FAIL" >&2
+        die "dependencies not satisfied"
     fi
 }
 
-# ── ② 바이너리 ─────────────────────────────────────────────────────────────
+# ── 2) binary ────────────────────────────────────────────────────────────
 install_bin() {
-    step 2/8 "바이너리 — $BINDIR"
+    step 2/8 "binary — $BINDIR"
 
-    [ -f "$REPO/bin/fmux" ] || die "$REPO/bin/fmux 가 없다 — 레포가 온전한지 확인해라"
+    [ -f "$REPO/bin/fmux" ] || die "$REPO/bin/fmux is missing — check that the repo is intact"
 
-    # 빌드가 먼저다. 그래야 아래 cmp 가 "지금 설치될 것"과 비교한다.
-    #   원격 모드는 빌드하지 않는다 — **SHA256 로 대조한 그 바이트를 그대로 깐다.**
-    #   여기서 다시 이어붙이면 설치되는 것이 대조한 것과 다를 수 있고, 그러면 대조의 뜻이 없다.
+    # Build comes first, so the cmp below compares against "what would actually be installed".
+    #   Remote mode does not build — **it installs exactly the bytes that were SHA256-verified.**
+    #   Re-linking here could make what's installed differ from what was verified, which would
+    #   defeat the point of verifying at all.
     if [ "$HAVE_MAKE" = 1 ] && [ "$REMOTE" = 0 ] && ! is_dry; then
         if ! make -C "$REPO" > /dev/null; then
-            die "make 가 실패했다 — 'make' 를 직접 돌려 이유를 봐라"
+            die "make failed — run 'make' directly to see why"
         fi
     fi
 
     if [ -e "$BINDIR/fmux" ]; then
         if cmp -s "$REPO/bin/fmux" "$BINDIR/fmux"; then
-            ok "$BINDIR/fmux 이미 같은 내용 — 그대로 둔다"
+            ok "$BINDIR/fmux is already identical — leaving it as is"
         else
-            note "$BINDIR/fmux 가 이미 있고 내용이 다르다 → 덮는다"
+            note "$BINDIR/fmux already exists and differs → overwriting"
         fi
     fi
 
     if is_dry; then
         plan "mkdir -p $BINDIR && cp bin/fmux $BINDIR/fmux (make install PREFIX=$PREFIX)"
         if tt_link_absent || tt_link_ours; then
-            plan "ln -sf fmux $BINDIR/tt   (심링크 — shim 이 PATH 의 'tt' 를 찾는다)"
+            plan "ln -sf fmux $BINDIR/tt   (symlink — the shim looks for 'tt' on PATH)"
         else
-            plan "$BINDIR/tt 는 우리 것이 아니다($(tt_link_what)) → 건드리지 않는다(훅 주입이 안 붙는다)"
+            plan "$BINDIR/tt is not ours ($(tt_link_what)) → leaving it untouched (hook injection won't attach)"
         fi
     else
         if [ "$HAVE_MAKE" = 1 ] && [ "$REMOTE" = 0 ]; then
-            # Makefile 의 install 이 fmux 복사와 tt 심링크를 같이 한다 — `make install` 만 쳐도
-            # 쓸 수 있는 상태가 되어야 하기 때문이다. 여기서는 결과만 확인한다.
-            # (원격 모드는 여기로 안 온다 — 대조한 바이트를 그대로 복사한다. 아래 else 가 그 길이고,
-            #  tt 심링크 판정은 Makefile 과 같은 규칙이다.)
-            make -C "$REPO" install PREFIX="$PREFIX" > /dev/null || die "make install 이 실패했다 (PREFIX=$PREFIX)"
+            # The Makefile's install target does both the fmux copy and the tt symlink together
+            # — `make install` alone has to leave the tool usable. Here we just confirm the result.
+            # (Remote mode never reaches here — it copies the verified bytes as-is. The else
+            #  branch below is that path, and its tt symlink logic follows the same rule as the
+            #  Makefile.)
+            make -C "$REPO" install PREFIX="$PREFIX" > /dev/null || die "make install failed (PREFIX=$PREFIX)"
         else
-            mkdir -p "$BINDIR" || die "$BINDIR 를 만들 수 없다"
-            cp "$REPO/bin/fmux" "$BINDIR/fmux" || die "$BINDIR/fmux 를 쓸 수 없다"
-            chmod +x "$BINDIR/fmux" || die "$BINDIR/fmux 에 실행권한을 못 준다"
+            mkdir -p "$BINDIR" || die "could not create $BINDIR"
+            cp "$REPO/bin/fmux" "$BINDIR/fmux" || die "could not write $BINDIR/fmux"
+            chmod +x "$BINDIR/fmux" || die "could not make $BINDIR/fmux executable"
             if tt_link_absent || tt_link_ours; then ln -sf fmux "$BINDIR/tt"; fi
         fi
-        [ -x "$BINDIR/fmux" ] || die "$BINDIR/fmux 가 설치되지 않았다"
+        [ -x "$BINDIR/fmux" ] || die "$BINDIR/fmux was not installed"
         did "$BINDIR/fmux"
         ok "$BINDIR/fmux"
         FMUX="$BINDIR/fmux"
 
-        # tt 심링크 — shim(libexec/claude)이 `command -v tt` 로 우리 존재를 확인한다.
-        # 그 이름이 남의 것이면 건드리지 않고, **무엇이 있는지 보여주고 사람이 정하게 한다**.
-        # 되돌릴 수 없는 일은 설치기가 혼자 결정하지 않는다(게이트 I2).
+        # tt symlink — the shim (libexec/claude) confirms we exist via `command -v tt`.
+        # If that name belongs to something else, it's left alone — **show what's there and let
+        # the person decide**. An installer does not make an unrecoverable call on its own
+        # (gate I2).
         if tt_link_ours; then
             did "$BINDIR/tt → fmux"
             ok "$BINDIR/tt → fmux"
         elif tt_link_absent; then
-            warn "$BINDIR/tt 심링크를 못 만들었다 — 'ln -sf fmux $BINDIR/tt' 를 직접 쳐라"
+            warn "could not create the $BINDIR/tt symlink — run 'ln -sf fmux $BINDIR/tt' yourself"
         else
-            warn "$BINDIR/tt 는 우리 것이 아니다 — 건드리지 않았다."
-            warn "     지금 그 자리: $(tt_link_what)"
-            warn "     남의 tt 를 말없이 빼앗지 않는다. 어떻게 할지는 네가 정해라:"
-            warn "       ① 그 도구를 계속 쓴다 — fmux 는 'fmux' 이름으로 그대로 쓸 수 있다."
-            warn "          다만 shim 은 PATH 의 'tt' 를 찾으므로 훅 주입이 안 붙는다(상태 마크가 안 뜬다)."
-            warn "       ② fmux 에게 이 이름을 준다 — 먼저 그 자리를 네 손으로 치워라:"
+            warn "$BINDIR/tt is not ours — left untouched."
+            warn "     currently there: $(tt_link_what)"
+            warn "     someone else's tt is never silently taken over. Decide what to do:"
+            warn "       1) keep using that tool — fmux still works fine under the name 'fmux'."
+            warn "          but the shim looks for 'tt' on PATH, so hook injection won't attach (no status marker)."
+            warn "       2) give fmux this name — clear the spot yourself first:"
             warn "          mv $BINDIR/tt $BINDIR/tt.yours && ln -sf fmux $BINDIR/tt"
-            warn "       ③ PATH 의 다른 디렉토리에 'tt' 라는 이름으로 걸어도 shim 은 그걸 찾는다."
+            warn "       3) hang 'tt' in a different PATH directory instead — the shim will find it there too."
         fi
 
-        # 설치된 놈이 실제로 도는지 한 번 물어본다(tmux 를 안 부르는 문으로).
-        "$BINDIR/fmux" config path > /dev/null 2>&1 || warn "설치된 fmux 가 'config path' 에 답하지 않는다 — 직접 돌려봐라"
+        # Ask the installed binary a question that doesn't call tmux, to confirm it actually runs.
+        "$BINDIR/fmux" config path > /dev/null 2>&1 || warn "the installed fmux does not respond to 'config path' — run it yourself to check"
     fi
 
     case ":$PATH:" in
-        *":$BINDIR:"*) ok "PATH 에 $BINDIR 가 있다" ;;
-        *) note "PATH 에 $BINDIR 가 없다. $(rc_hint) 에 이 줄을 넣어라 (자동으로 안 고친다):"
+        *":$BINDIR:"*) ok "$BINDIR is on PATH" ;;
+        *) note "$BINDIR is not on PATH. Add this line to $(rc_hint) (not done automatically):"
            note "    $(path_line)" ;;
     esac
 }
 
-# ── ③ 훅 shim ──────────────────────────────────────────────────────────────
+# ── 3) hook shim ─────────────────────────────────────────────────────────
 install_shims() {
-    step 3/8 "훅 shim — $LIBEXEC"
-    note "shim 은 tmux 안에서 뜬 claude/codex 에만 훅을 --settings 로 붙인다 —"
-    note "  전역 설정(~/.claude/settings.json)은 안 건드리고, 이 파일을 지우면 흔적이 사라진다."
+    step 3/8 "hook shim — $LIBEXEC"
+    note "the shim attaches hooks via --settings only to claude/codex launched inside tmux —"
+    note "  it never touches the global config (~/.claude/settings.json), and deleting this file removes all trace."
 
     local f name real_i shim_i
     for name in claude codex; do
         f="$REPO/libexec/$name"
-        [ -f "$f" ] || die "$f 가 없다 — 레포가 온전한지 확인해라"
+        [ -f "$f" ] || die "$f is missing — check that the repo is intact"
     done
 
     for name in claude codex; do
         if [ -e "$LIBEXEC/$name" ]; then
             if cmp -s "$REPO/libexec/$name" "$LIBEXEC/$name"; then
-                ok "$LIBEXEC/$name 이미 같은 내용 — 그대로 둔다"
+                ok "$LIBEXEC/$name is already identical — leaving it as is"
                 continue
             fi
-            note "$LIBEXEC/$name 이 이미 있고 내용이 다르다 → 덮는다"
+            note "$LIBEXEC/$name already exists and differs → overwriting"
         fi
         if is_dry; then
             plan "cp libexec/$name $LIBEXEC/$name"
         else
-            mkdir -p "$LIBEXEC" || die "$LIBEXEC 를 만들 수 없다"
-            cp "$REPO/libexec/$name" "$LIBEXEC/$name" || die "$LIBEXEC/$name 을 쓸 수 없다"
-            chmod +x "$LIBEXEC/$name" || die "$LIBEXEC/$name 에 실행권한을 못 준다"
+            mkdir -p "$LIBEXEC" || die "could not create $LIBEXEC"
+            cp "$REPO/libexec/$name" "$LIBEXEC/$name" || die "could not write $LIBEXEC/$name"
+            chmod +x "$LIBEXEC/$name" || die "could not make $LIBEXEC/$name executable"
             did "$LIBEXEC/$name"
             ok "$LIBEXEC/$name"
         fi
     done
 
-    # PATH 순서 — shim 이 진짜 claude 보다 **앞**이어야 한다. 뒤면 맨 claude 가 떠서
-    # 훅이 하나도 안 오고, 함대 상태판이 통째로 조용히 죽는다(가장 흔한 설치 실패다).
+    # PATH order — the shim must come **before** the real claude. If it comes after, the real
+    # claude launches, no hooks ever arrive, and the fleet status board silently dies whole
+    # (the most common install failure).
     shim_i=$(path_index "$LIBEXEC")
     if [ "$shim_i" = 0 ]; then
-        note "PATH 에 $LIBEXEC 가 없다 — 지금은 훅이 안 붙는다. $(rc_hint) 에:"
+        note "$LIBEXEC is not on PATH — hooks won't attach right now. Add to $(rc_hint):"
         note "    $(path_line)"
     else
         for name in claude codex; do
             real_i=$(first_real_index "$name")
             if [ "$real_i" = 0 ]; then
-                note "$name 을 PATH 에서 못 찾았다 — 나중에 깔면 shim 이 앞선다(PATH 순서가 그대로라면)"
+                note "could not find $name on PATH — if installed later, the shim will still come first (as long as PATH order stays the same)"
             elif [ "$shim_i" -lt "$real_i" ]; then
-                ok "PATH 순서 좋다 — shim($shim_i) 이 진짜 $name($real_i) 보다 앞이다"
+                ok "PATH order is good — shim ($shim_i) comes before the real $name ($real_i)"
             else
-                warn "PATH 에서 진짜 $name($real_i) 이 shim($shim_i) 보다 앞이다 — 훅이 안 붙는다."
-                warn "     $LIBEXEC 를 PATH 맨 앞으로 올려라: $(path_line)"
+                warn "on PATH, the real $name ($real_i) comes before the shim ($shim_i) — hooks won't attach."
+                warn "     move $LIBEXEC to the front of PATH: $(path_line)"
             fi
         done
     fi
 }
 
-# ── ④ tmux 스니펫 ──────────────────────────────────────────────────────────
+# ── 4) tmux snippet ─────────────────────────────────────────────────────
 SNIP=''
 TMUXCONF=''
 
 snip_path() {
-    # 경로를 여기서 다시 조립하지 않는다 — fmux 가 자기 머리말에 찍는 값을 읽는다.
-    # (그래도 못 읽으면 05-config.sh 와 같은 규칙으로 접는다.)
+    # Not reassembled here from scratch — reads the value fmux itself prints in its own header.
+    # (Falls back to the same rule as 05-config.sh if that still can't be read.)
     local p=''
     p=$("$FMUX" --tmux-conf 2>/dev/null | awk '$1=="#" && $2=="source-file" {print $3; exit}') || p=''
     [ -n "$p" ] || p="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux/tmux.conf"
     printf '%s' "$p"
 }
 
-# tmux 가 읽는 사용자 설정 자리를 고른다. 있는 파일이 있으면 그걸 쓴다 —
-# ~/.config/tmux/tmux.conf 를 쓰는 사람의 ~/.tmux.conf 에 줄을 넣으면 "넣었는데 아무 일도
-# 안 일어난다" 가 된다. 둘 다 없으면 전통적인 자리(~/.tmux.conf)로 간다.
+# Picks the user config file tmux reads. If a file already exists, uses that one — appending a
+# line to the ~/.tmux.conf of someone who actually uses ~/.config/tmux/tmux.conf would mean
+# "the line went in, but nothing happens." If neither exists, falls back to the conventional
+# spot (~/.tmux.conf).
 pick_tmux_conf() {
     local x="${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
     if [ -f "$HOME/.tmux.conf" ]; then printf '%s' "$HOME/.tmux.conf"
@@ -657,12 +687,13 @@ pick_tmux_conf() {
     fi
 }
 
-# 이미 source 하고 있나 — 주석 줄은 세지 않는다.
-#   판정은 **줄 앞머리 한정 + 인자 정확 일치**여야 한다. 예전엔 `*source*<경로>*` 부분일치라,
-#   개행 없이 끝난 파일에 append 해 깨진 줄("set -g mouse onsource-file …")까지 "이미 설정됨"
-#   으로 통과시켰다 — 재실행이 자가치유를 못 하고 파손이 영구히 가려졌다(게이트 B2).
-#   fmux 쪽 판정(87-tmux-conf.sh 의 tt_tmux_conf_linked)과 같은 규칙이어야 한다.
-already_sourced() {   # $1=설정파일  $2=스니펫경로
+# Is it already sourced? Comment lines don't count.
+#   The check must be **line-start-anchored + exact argument match**. It used to be a partial
+#   match on `*source*<path>*`, so appending to a file that didn't end in a newline produced a
+#   corrupted line ("set -g mouse onsource-file …") that still passed as "already configured" —
+#   a rerun couldn't self-heal, and the damage stayed permanently hidden (gate B2). Must follow
+#   the same rule fmux itself uses (tt_tmux_conf_linked in 87-tmux-conf.sh).
+already_sourced() {   # $1=config file  $2=snippet path
     local line rest
     [ -r "$1" ] || return 1
     while IFS= read -r line || [ -n "$line" ]; do
@@ -672,14 +703,16 @@ already_sourced() {   # $1=설정파일  $2=스니펫경로
             'source '*)      rest=${line#source } ;;
             *) continue ;;
         esac
-        # 앞의 플래그(-q 등)를 걷고, 뒤 공백·인용부호를 벗긴 뒤 정확히 비교한다.
-        # 낱말 분해로 돌지 않는 이유: 남의 설정 줄에 있는 * 가 파일명으로 펴진다.
+        # Strips leading flags (like -q), trims trailing whitespace and quotes, then compares
+        # exactly. Not split into words: a * in someone else's config line would expand into
+        # filenames.
         while :; do case "$rest" in '-'*' '*) rest=${rest#* } ;; *) break ;; esac; done
         while :; do case "$rest" in *[[:blank:]]) rest=${rest%?} ;; *) break ;; esac; done
         case "$rest" in '"'*'"'|"'"*"'") rest=${rest#?}; rest=${rest%?} ;; esac
-        # 틸데(~/…)는 펴서 본다 — README 가 가르치는 모양이고 tmux 도 그렇게 읽는다(게이트 I1).
-        # 안 펴면 문서대로 손으로 넣은 사람에게 재실행이 **중복 source 줄**을 하나 더 붙인다.
-        # 패턴을 \~ 로 인용하는 이유: bash 는 ${var#word} 의 word 에도 틸데 확장을 한다.
+        # Tildes (~/…) are expanded before comparing — that's the form README teaches and how
+        # tmux itself reads it (gate I1). Without expanding, a rerun appends a **duplicate
+        # source line** for anyone who followed the docs and typed it by hand.
+        # The pattern quotes \~ because bash also expands tildes in the word of ${var#word}.
         case "$rest" in
             '~')   rest="$HOME" ;;
             '~/'*) rest="$HOME/${rest#\~/}" ;;
@@ -689,20 +722,20 @@ already_sourced() {   # $1=설정파일  $2=스니펫경로
     return 1
 }
 
-# 남의 파일에 한 줄 붙이는 유일한 자리 — 여기만큼은 과하게 조심한다(게이트 B1).
-#   ① 고치기 전에 원본을 통째로 백업하고 그 경로를 사람에게 말한다.
-#   ② 마지막 바이트가 개행이 아니면 개행부터 넣는다. `>>` 만 쓰면 사용자의 마지막 줄에
-#      우리 줄이 그대로 이어붙어 그 줄이 파괴된다(그리고 rc 0 "성공"으로 보고된다).
-#   `tail -c 1` 은 POSIX 다(GNU 전용 아님). 명령치환은 끝의 개행을 지우므로,
-#   결과가 비어 있으면 마지막 바이트가 개행이라는 뜻이다.
-append_source_line() {   # $1=설정파일  $2=스니펫경로  → rc 0 이면 넣었다
+# The one place a line gets appended to someone else's file — extra care applies here (gate B1).
+#   1) Before editing, back up the entire original and tell the person its path.
+#   2) If the last byte isn't a newline, add one first. Using `>>` alone would glue our line
+#      onto the user's last line, corrupting it (and still be reported as rc 0 "success").
+#   `tail -c 1` is POSIX (not GNU-only). Command substitution strips the trailing newline, so
+#   an empty result means the last byte already was a newline.
+append_source_line() {   # $1=config file  $2=snippet path  → rc 0 means it was added
     local f="$1" snip="$2" last
     if [ -s "$f" ]; then
-        cp "$f" "$f.fmux-bak" || { warn "$f 를 백업하지 못했다 — 아무것도 안 고친다"; return 1; }
-        ok "백업해 뒀다: $f.fmux-bak  (되돌리려면 이 파일을 되돌려 놓으면 된다)"
+        cp "$f" "$f.fmux-bak" || { warn "could not back up $f — nothing was changed"; return 1; }
+        ok "backed up: $f.fmux-bak  (restore this file to undo)"
         last=$(tail -c 1 "$f" 2>/dev/null) || last=''
         if [ -n "$last" ]; then
-            note "$f 가 개행으로 끝나지 않는다 — 마지막 줄이 깨지지 않게 개행부터 넣는다"
+            note "$f does not end in a newline — adding one first so the last line isn't corrupted"
             printf '\n' >> "$f" || return 1
         fi
     fi
@@ -710,80 +743,91 @@ append_source_line() {   # $1=설정파일  $2=스니펫경로  → rc 0 이면 
     return 0
 }
 
-# 순서가 규율이다(게이트 B5): **동의 → 남의 파일 한 줄 → 우리 스니펫 쓰기**.
-#   예전엔 스니펫을 먼저 썼다. 그 write 는 tmux 안이면 살아있는 서버에 source-file 을 쏘므로,
-#   "넣을까요?" 를 묻기도 전에 이미 적용되고, n 을 눌러도 안내문은 "안 넣었다"고 말했다.
-#   지금은 fmux 쪽에도 게이트가 있다(tt_tmux_conf_linked) — 사용자 설정에 줄이 있을 때만
-#   반영한다. 그래서 이 순서면 "동의한 사람만 이번 서버에도 반영된다"가 양쪽에서 성립한다.
+# Order is the discipline here (gate B5): **consent → the line in someone else's file → writing
+# our own snippet**.
+#   It used to write the snippet first. That write, if inside tmux, fires source-file at the
+#   live server immediately, so it was already applied before "add this line?" was even asked —
+#   and even answering n still left the message saying "not added." fmux itself now has a gate
+#   too (tt_tmux_conf_linked) — it only takes effect when the line is actually present in the
+#   user's config. With this order, "only someone who consented gets it applied to this server
+#   too" holds on both sides.
 install_snippet() {
-    step 4/8 "tmux 스니펫"
-    SNIP=$(snip_path)          # 파일을 안 쓰고 경로만 묻는다(--write 아님)
+    step 4/8 "tmux snippet"
+    SNIP=$(snip_path)          # only asks for the path, doesn't write the file (not --write)
     TMUXCONF=$(pick_tmux_conf)
     local linked=0 out
 
     if already_sourced "$TMUXCONF" "$SNIP"; then
         linked=1
-        ok "$TMUXCONF 가 이미 이 파일을 source 한다 — 아무것도 안 넣는다"
+        ok "$TMUXCONF already sources this file — adding nothing"
     else
-        printf '  넣을 줄: source-file %s\n' "$SNIP"
-        printf '  넣을 곳: %s\n' "$TMUXCONF"
-        if ask_yn "$TMUXCONF 에 이 한 줄을 넣을까?"; then
+        printf '  line to add: source-file %s\n' "$SNIP"
+        printf '  target:      %s\n' "$TMUXCONF"
+        if ask_yn "Add this one line to $TMUXCONF?"; then
             if is_dry; then
-                plan "$TMUXCONF 를 $TMUXCONF.fmux-bak 로 백업한 뒤 source-file $SNIP 한 줄 추가"
+                plan "back up $TMUXCONF to $TMUXCONF.fmux-bak, then add one line: source-file $SNIP"
             else
-                append_source_line "$TMUXCONF" "$SNIP" || die "$TMUXCONF 에 못 썼다"
+                append_source_line "$TMUXCONF" "$SNIP" || die "could not write to $TMUXCONF"
                 linked=1
-                did "$TMUXCONF 에 source-file 한 줄"
-                ok "$TMUXCONF 에 한 줄 넣었다"
-                note "이미 tmux 안이라면 prefix + : 로 'source-file $TMUXCONF' 를 한 번 쳐라(또는 새 tmux 서버)"
+                did "one line source-file added to $TMUXCONF"
+                ok "added a line to $TMUXCONF"
+                note "if already inside tmux, run prefix + : then 'source-file $TMUXCONF' once (or start a new tmux server)"
             fi
         else
-            note "안 넣었다. 위 한 줄을 직접 $TMUXCONF 에 넣으면 소환키가 산다."
-            note "  넣기 전까지는 우리 스니펫이 어떤 tmux 서버에도 반영되지 않는다 — 파일만 만들어 둔다."
+            note "not added. Add the line above to $TMUXCONF yourself to bring the summon key to life."
+            note "  until it's added, our snippet isn't applied to any tmux server — only the file itself gets created."
         fi
     fi
 
-    # 이제 스니펫을 쓴다. 이 파일은 우리 것이라 동의 없이 만들어도 되지만, 살아있는 서버에
-    # 반영되는 것은 위에서 linked 가 된 사람뿐이다(fmux 안의 게이트가 같은 판정을 한다).
+    # Now write the snippet. This file is ours, so it's fine to create without consent, but it
+    # only takes effect on a live server for whoever ended up linked above (fmux's own gate
+    # makes the same call).
     if is_dry; then
         plan "$FMUX --tmux-conf --write   → $SNIP"
     else
-        out=$("$FMUX" --tmux-conf --write) || die "스니펫을 쓸 수 없다: $SNIP"
+        out=$("$FMUX" --tmux-conf --write) || die "could not write the snippet: $SNIP"
         [ -n "$out" ] && SNIP="$out"
-        did "$SNIP (tmux 스니펫)"
+        did "$SNIP (tmux snippet)"
         ok "$SNIP"
     fi
-    note "이 파일은 fmux 것이다 — 소환키·떠날 때 스냅샷 훅이 들어 있고, 설정을 바꾸면 다시 쓰인다."
-    [ "$linked" = 1 ] || note "아직 아무 tmux 설정도 이 파일을 안 읽는다 — 소환키는 연결한 뒤에 산다."
+    note "this file belongs to fmux — it holds the summon key and the on-detach snapshot hook, and gets rewritten when config changes."
+    [ "$linked" = 1 ] || note "no tmux config reads this file yet — the summon key comes alive once it's linked."
     return 0
 }
 
-# ── ⑤ 소환키 프리셋 ────────────────────────────────────────────────────────
-# 물리 키 하나가 터미널마다 다른 이름으로 도착한다 — 그래서 목록이다(87-tmux-conf.sh).
+# ── 5) summon key preset ─────────────────────────────────────────────────
+# A single physical key arrives under a different name on each terminal — hence the list
+# (87-tmux-conf.sh).
 #
-# ── 왜 제안이 S-Left 인가 (이 판단의 근거를 여기 남긴다) ─────────────────────
-# prefix 방식은 거부됐다: "두 번 눌러야 되잖아". 원하는 것은 무prefix 한 타건이다.
-# 조합을 훑으면 **Shift+방향키가 세 플랫폼을 다 통과하는 유일한 한 타건**이다:
+# ── why the suggestion is S-Left (the reasoning is recorded here) ───────────
+# The prefix approach was rejected: "having to press twice is annoying." What's wanted is a
+# single no-prefix keystroke. Scanning the combinations, **Shift+arrow is the only single
+# keystroke that gets through on all three platforms**:
 #
-#   C-화살표 : macOS 의 Mission Control 이 가져간다(스페이스 전환·창 보기)
-#   M-화살표 : macOS 는 Option 을 ESC b 로 보내고, Windows Terminal 은 Alt+화살표를 먼저 먹는다
-#   Ctrl+글자: 거의 전부 셸 줄편집·vim·emacs·fzf 위젯이 이미 쓴다
-#   S-화살표 : 세 플랫폼 모두 통과. 손도 안 멀다(방향키 옆이 Shift)
+#   C-arrow   : macOS Mission Control takes it (space switching, window overview)
+#   M-arrow   : macOS sends Option as ESC b, and Windows Terminal eats Alt+arrow itself first
+#   Ctrl+key  : almost always already used by shell line editing, vim, emacs, fzf widgets
+#   S-arrow   : gets through on all three platforms. Not a stretch either (Shift sits right next
+#               to the arrows)
 #
-# 방향이 **왼쪽**인 이유는 취향이 아니라 이미 형성된 조작 모델이다:
-#   - 사용자는 몇 주간 C-Left·M-Left 로 왼쪽에서 팝업을 불러 왔다. S-Left 는 그 손버릇을 잇는다.
-#   - 팝업 안에서는 → 가 진입(accept), ← 가 닫기(abort)다. 그 관례는 그대로 둔다 —
-#     ranger·lf·nnn·vifm 등 TUI 계열의 보편 관례이고, 팀원 둘이 이미 그렇게 설치했다.
-#   - "밖에서 왼쪽은 부르기, 안에서 왼쪽은 닫기"는 맥락이 달라 안 헷갈린다(실사용으로 확인).
+# The direction is **left** not out of taste but because a habit was already formed:
+#   - The user has used C-Left / M-Left to summon the popup from the left for weeks. S-Left
+#     continues that muscle memory.
+#   - Inside the popup, → enters (accept), ← closes (abort). That convention stays as-is — it's
+#     the common convention across TUI tools like ranger, lf, nnn, vifm, and two teammates have
+#     already installed it that way.
+#   - "left summons outside, left closes inside" doesn't get confusing because the context
+#     differs (confirmed by actual use).
 #
-# 알려진 위험 하나 — 정직하게 적는다: **S-Left/S-Right 를 tmux 창 전환에 바인딩한 dotfile 이
-# 흔하다.** 그래서 아래 preset_conflicts 가 설정 파일을 먼저 읽어 알려주고, 그런 사람은
-# 설치 때 다른 프리셋을 고르면 된다.
+# One known risk, stated honestly: **dotfiles that bind S-Left/S-Right to tmux window switching
+# are common.** That's why preset_conflicts below reads config files first and warns; anyone in
+# that situation should just pick a different preset at install time.
 #
-# 정책은 둘로 갈린다(05-config.sh 의 key_summon_fast 기본값 주석과 짝이다):
-#   설정 기본값 = 빈 값(아무 키도 안 뺏음)  ·  설치기의 제안 = shift(S-Left)
-# 제안은 사람이 눈으로 보고 "예"라고 말할 자리가 있을 때만 유효하다. 그래서 --yes 와
-# 터미널 아닌 자리는 여전히 safe 로 간다 — 자동 승인이 남의 키를 가져가면 안 된다.
+# The policy splits in two (paired with the key_summon_fast default comment in 05-config.sh):
+#   config default = empty (steals no key)  ·  installer's suggestion = shift (S-Left)
+# The suggestion is only valid when there's a place for a human to look at it and say "yes."
+# So --yes and non-terminal contexts still go to safe — automatic approval must never take
+# someone else's key.
 preset_value() {
     case "${1:-}" in
         safe)  printf '' ;;
@@ -798,30 +842,33 @@ preset_value() {
 
 preset_why() {
     case "${1:-}" in
-        safe)  printf 'prefix 뒤의 소환키만 쓴다 — 남의 키를 하나도 안 뺏는다' ;;
-        shift) printf '맥·리눅스·Windows Terminal 세 곳 모두에 도착하는 유일한 무prefix 한 타건' ;;
-        mac)   printf '맥의 Option+← 는 터미널이 ESC b 로 보내 M-b 로 도착한다' ;;
-        linux) printf '터미널마다 C-Left 또는 M-Left 로 온다 — 둘 다 건다' ;;
-        wsl)   printf 'Windows Terminal 이 Alt+화살표를 자기가 먼저 먹는다 — C-Left 만 남는다' ;;
+        safe)  printf 'uses only the summon key behind prefix — steals no one else key' ;;
+        shift) printf 'the only no-prefix single keystroke that reaches macOS, Linux, and Windows Terminal all three' ;;
+        mac)   printf "macOS's Option+Left arrives as M-b because the terminal sends it as ESC b" ;;
+        linux) printf 'arrives as C-Left or M-Left depending on the terminal — binds both' ;;
+        wsl)   printf 'Windows Terminal eats Alt+arrow itself first — only C-Left is left' ;;
     esac
 }
 
-# 프롬프트가 기본으로 내미는 프리셋. 플랫폼 감지값이 아니다 — 세 플랫폼 공통으로 되는
-# 하나(S-Left)를 내민다. 감지값은 여전히 화면에 뜨지만 그건 "이 기계는 이렇게 보인다"는
-# 정보이지 제안이 아니다.
+# The preset the prompt defaults to. Not the platform-detected value — it defaults to the one
+# key (S-Left) that works across all three platforms. The detected value is still shown on
+# screen, but that's information about "this machine looks like X," not the suggestion itself.
 PRESET_SUGGEST=shift
 
-# 프리셋이 걸 키를 사용자가 이미 자기 설정에서 쓰고 있나 — 덮기 전에 알리기 위해서다.
-# 살아있는 tmux 서버에 묻지 않는다(list-keys): 설치기는 서버가 없어도 돌아야 하고, 남의
-# 서버에 말을 거는 것 자체가 이 프로젝트가 안 하는 일이다. 그래서 **설정 파일만** 읽는다.
-# 그래서 이 감지는 완전하지 않다 — 파일에 없는 바인딩(다른 스니펫이 source 한 것, 손으로
-# 친 것)은 못 본다. 그 한계 때문에 제안 문구에 "이미 쓰고 있다면 다른 키를 골라라"를 같이 적는다.
-preset_conflicts() {   # $1=키 목록(공백 구분) → "키  파일:줄  그 줄 전문" 을 줄마다
+# Whether the user's own config already binds the key a preset would claim — so they're warned
+# before it's overwritten. Doesn't ask a live tmux server (list-keys): the installer must work
+# even with no server running, and talking to someone else's live server is exactly the kind of
+# thing this project doesn't do. So it reads **only config files**.
+# That makes this detection incomplete — it can't see a binding that isn't in the file (sourced
+# from another snippet, or typed by hand elsewhere). Because of that limit, the suggestion text
+# also says "pick a different key if you're already using this one."
+preset_conflicts() {   # $1=space-separated key list → one line per hit: "key  file:line  full line"
     local keys="${1:-}" f line k n raw
     [ -n "$keys" ] || return 0
     for f in "$HOME/.tmux.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"; do
         [ -r "$f" ] || continue
-        # 우리 스니펫은 후보가 아니다 — 우리가 지난번에 건 것을 "남의 키"라 말하면 거짓이다.
+        # Our own snippet is not a candidate — calling what we bound last time "someone else's
+        # key" would be false.
         [ "$f" = "${SNIP:-}" ] && continue
         n=0
         while IFS= read -r line || [ -n "$line" ]; do
@@ -830,7 +877,8 @@ preset_conflicts() {   # $1=키 목록(공백 구분) → "키  파일:줄  그 
             while :; do case "$line" in [[:blank:]]*) line=${line#?} ;; *) break ;; esac; done
             case "$line" in 'bind '*|'bind-key '*) ;; *) continue ;; esac
             for k in $keys; do
-                # 낱말 경계로 본다 — 양옆에 공백을 붙여 부분일치(C-Left 안의 Left)를 막는다.
+                # Checked on word boundaries — padding both sides with a space blocks a partial
+                # match (Left inside C-Left).
                 case " $line " in *" $k "*) printf '%s  %s:%s  %s\n' "$k" "$f" "$n" "$raw" ;; esac
             done
         done < "$f"
@@ -852,107 +900,112 @@ detect_preset() {
 }
 
 install_preset() {
-    step 5/8 "소환키"
+    step 5/8 "summon key"
     local guess want cur v clash sug line
 
     guess=$(detect_preset)
     sug=$(preset_value "$PRESET_SUGGEST")
 
-    # 제안은 어느 분기로 가든 **먼저, 똑같이** 화면에 뜬다. --yes 나 CI 에서 돌린 사람도
-    # "무엇을 안 받았고 어떻게 받는지"를 그 자리에서 봐야 하기 때문이다. 결정만 분기가 가른다.
-    note "제안: $PRESET_SUGGEST — key_summon_fast='$sug' ($(preset_why "$PRESET_SUGGEST"))"
-    note "  이 키를 pane 안 모든 앱에서 가져갑니다 — vim·셸 줄편집·fzf 가 그 pane 에서 S-Left 를 못 본다."
-    note "  S-Left/S-Right 를 tmux 창 전환에 걸어 둔 dotfile 이 흔하다. 이미 쓰고 있다면 다른 키를 골라라."
+    # The suggestion appears **first, identically** no matter which branch is taken. Someone
+    # running under --yes or CI still needs to see right there "what wasn't taken and how to
+    # get it" — only the decision itself branches.
+    note "suggested: $PRESET_SUGGEST — key_summon_fast='$sug' ($(preset_why "$PRESET_SUGGEST"))"
+    note "  this takes the key away from every app in the pane — vim, shell line editing, and fzf won't see S-Left in that pane."
+    note "  dotfiles that bind S-Left/S-Right to tmux window switching are common. Pick a different key if you're already using it."
     clash=$(preset_conflicts "$sug")
     if [ -n "$clash" ]; then
-        warn "이미 그 키를 거는 줄을 설정에서 찾았다 — 프리셋을 고르면 우리 바인딩이 이깁니다:"
+        warn "found a line in your config already binding that key — our binding wins if you pick this preset:"
         printf '%s\n' "$clash" | while IFS= read -r line; do printf '      %s\n' "$line"; done
     fi
 
     if [ -n "$PRESET" ]; then
-        preset_value "$PRESET" > /dev/null 2>&1 || die "모르는 프리셋: $PRESET (safe|shift|mac|linux|wsl)"
+        preset_value "$PRESET" > /dev/null 2>&1 || die "unknown preset: $PRESET (safe|shift|mac|linux|wsl)"
         want="$PRESET"
-        note "프리셋을 인자로 받았다: $want"
+        note "preset given as an argument: $want"
     elif [ "$ASSUME_YES" = 1 ]; then
-        # --yes 는 **safe 로 간다**(팀 배포 게이트 I3). 예전엔 감지 프리셋을 자동 채택했다 —
-        # 리눅스에서 `./install.sh --yes` 가 무prefix 키 두 개(C-Left M-Left)를 말없이 전역으로
-        # 뺏었고, 그동안 README 는 "steals no key until you say so" 를 약속하고 있었다.
-        # 키를 뺏는 것은 되돌리기 귀찮은 전역 변경이라 "기본값 수락"의 범주가 아니다 —
-        # 사람이 --preset 으로 **명시**할 때만 뺏는다. 제안이 S-Left 로 바뀐 뒤에도 이 규칙은
-        # 그대로다 — 제안이 좋아졌다는 것과 동의 없이 가져가도 된다는 것은 다른 말이다.
+        # --yes goes to **safe** (team deploy gate I3). It used to auto-adopt the detected
+        # preset — on Linux, `./install.sh --yes` would silently steal two no-prefix keys
+        # (C-Left M-Left) globally, while the README was promising "steals no key until you say
+        # so." Taking a key is a global change that's a pain to undo, so it doesn't belong in
+        # the category of "accepting a default" — it's only taken when a human **explicitly**
+        # specifies --preset. This rule holds even after the suggestion became S-Left — the
+        # suggestion getting better and it being fine to take without consent are different
+        # statements.
         want=safe
-        note "--yes 는 아무 키도 안 뺏는 safe 로 간다 — 무prefix 키는 명시할 때만 뺏는다"
-        note "  한 타건을 원하면: ./install.sh --yes --preset $PRESET_SUGGEST   (이 기계는 $guess 로 보인다)"
+        note "--yes goes to safe, stealing no key — a no-prefix key is only taken when explicitly specified"
+        note "  for a single keystroke: ./install.sh --yes --preset $PRESET_SUGGEST   (this machine looks like $guess)"
     elif [ "$ASK_TTY" = 0 ]; then
-        # 무prefix 바인딩은 남의 키를 뺏는 일이다. 물을 수 없는 자리에서는 안 뺏는 쪽으로 간다.
+        # A no-prefix binding steals someone's key. Where we can't ask, default to not stealing.
         want=safe
-        note "터미널이 아니라 묻지 않았다 — 아무 키도 안 뺏는 safe 로 간다"
-        note "  한 타건을 원하면: ./install.sh --preset $PRESET_SUGGEST   (이 기계는 $guess 로 보인다)"
+        note "not a terminal, so we did not ask — going with safe, which steals no key"
+        note "  for a single keystroke: ./install.sh --preset $PRESET_SUGGEST   (this machine looks like $guess)"
     else
-        note "고를 수 있는 것:"
-        note "shift  S-Left — 위에 적은 그 제안 (기본값)"
-        note "safe   무prefix 없음 — $(preset_why safe)"
+        note "choices:"
+        note "shift  S-Left — the suggestion above (default)"
+        note "safe   no no-prefix key — $(preset_why safe)"
         note "mac    M-b — $(preset_why mac)"
         note "linux  C-Left M-Left — $(preset_why linux)"
         note "wsl    C-Left — $(preset_why wsl)"
-        note "감지: $(uname -s 2>/dev/null || echo unknown) → $guess. 그래도 제안은 $PRESET_SUGGEST 다 —"
-        note "  mac·linux·wsl 프리셋은 각자 자기 플랫폼에서만 되고, 셋 다에서 되는 것은 S-Left 하나다."
-        note "  거절하면(safe) prefix 방식으로 간다 — prefix 뒤에 소환키를 누른다. 아무 키도 안 뺏는다."
-        want=$(ask_word "프리셋 (shift|safe|mac|linux|wsl)" "$PRESET_SUGGEST")
+        note "detected: $(uname -s 2>/dev/null || echo unknown) → $guess. Still, the suggestion is $PRESET_SUGGEST —"
+        note "  the mac/linux/wsl presets each only work on their own platform; S-Left is the only one that works on all three."
+        note "  declining (safe) goes with the prefix approach — press prefix, then the summon key. Steals no key."
+        want=$(ask_word "preset (shift|safe|mac|linux|wsl)" "$PRESET_SUGGEST")
         if ! preset_value "$want" > /dev/null 2>&1; then
-            warn "모르는 프리셋 '$want' — safe 로 간다"
+            warn "unknown preset '$want' — going with safe"
             want=safe
         fi
     fi
     v=$(preset_value "$want")
     note "$want: key_summon_fast='$v' — $(preset_why "$want")"
-    # 제안이 아닌 키를 골랐으면 그 키로 다시 잰다 — 위에서 잰 것은 S-Left 였다.
+    # If a key other than the suggestion was picked, check it again — the check above was for S-Left.
     if [ "$want" != "$PRESET_SUGGEST" ] && [ -n "$v" ]; then
         clash=$(preset_conflicts "$v")
         if [ -n "$clash" ]; then
-            warn "고른 키를 이미 거는 줄이 설정에 있다 — 우리 바인딩이 이깁니다:"
+            warn "found a line in your config already binding the key you picked — our binding wins:"
             printf '%s\n' "$clash" | while IFS= read -r line; do printf '      %s\n' "$line"; done
         fi
     fi
-    note "prefix 뒤 소환키(key_summon)는 그대로 둔다 — 바꾸려면 tt config set key_summon <키>"
+    note "the summon key behind prefix (key_summon) is left as-is — to change it: tt config set key_summon <key>"
 
     cur=$("$FMUX" config get key_summon_fast 2>/dev/null) || cur=''
     if [ "$cur" = "$v" ]; then
-        ok "key_summon_fast 가 이미 '$v' 다 — 그대로 둔다"
+        ok "key_summon_fast is already '$v' — leaving it as is"
         return 0
     fi
 
     if is_dry; then
-        if [ -z "$v" ]; then plan "fmux config unset key_summon_fast   (지금: '$cur')"
-        else plan "fmux config set key_summon_fast '$v'   (지금: '$cur')"; fi
+        if [ -z "$v" ]; then plan "fmux config unset key_summon_fast   (currently: '$cur')"
+        else plan "fmux config set key_summon_fast '$v'   (currently: '$cur')"; fi
         return 0
     fi
 
-    # config set/unset 은 스니펫을 스스로 다시 쓴다(85-config-cli.sh 의 tt_conf_resnip).
+    # config set/unset rewrite the snippet themselves (tt_conf_resnip in 85-config-cli.sh).
     if [ -z "$v" ]; then
-        "$FMUX" config unset key_summon_fast > /dev/null || die "key_summon_fast 를 못 지웠다"
-        did "설정 key_summon_fast 제거(safe)"
+        "$FMUX" config unset key_summon_fast > /dev/null || die "could not clear key_summon_fast"
+        did "removed config key_summon_fast (safe)"
     else
-        "$FMUX" config set key_summon_fast "$v" > /dev/null || die "key_summon_fast 를 못 넣었다"
-        did "설정 key_summon_fast='$v'"
+        "$FMUX" config set key_summon_fast "$v" > /dev/null || die "could not set key_summon_fast"
+        did "config key_summon_fast='$v'"
     fi
-    ok "key_summon_fast='$v' (스니펫도 같이 다시 쓰였다)"
+    ok "key_summon_fast='$v' (the snippet was rewritten too)"
 }
 
-# ── ⑥ 에이전트 스킬 ────────────────────────────────────────────────────────
+# ── 6) agent skill ────────────────────────────────────────────────────────
 SKILL_SRC=''
 SKILL_DST=''
 SKILL_BAK=''
 
-# 우리 복사(cp -R "$SKILL_SRC/." "$SKILL_DST/")가 **덮어쓸 남의 내용**을 한 줄에 하나씩.
-# 비면 잃을 것이 없다는 뜻이다 — 그때는 백업을 만들 이유도 없다.
-#   왜 "디렉토리가 다르다"가 아니라 이걸 재나: cp 는 병합이라, SRC 에 없는 파일(사용자가 옆에
-#   둔 메모 등)은 애초에 위험하지 않다. 그걸 '다름'으로 세면 재실행마다 백업이 하나씩 쌓인다.
+# One line per file that our copy (cp -R "$SKILL_SRC/." "$SKILL_DST/") would **overwrite
+# content that isn't ours**. Empty means nothing would be lost — in which case there's no
+# reason to back up either.
+#   Why check this instead of just "the directory differs": cp merges, so a file not present in
+#   SRC (a note the user left alongside, say) was never at risk to begin with. Counting that as
+#   'different' would pile up a backup on every rerun.
 skill_clobber_list() {
     local f rel
     [ -n "$SKILL_SRC" ] && [ -e "$SKILL_DST" ] || return 0
     if [ ! -d "$SKILL_DST" ]; then printf '%s\n' "$SKILL_DST"; return 0; fi
-    # find 는 POSIX. 디렉토리는 안 센다 — cp -R 이 디렉토리를 지우지는 않는다.
+    # find is POSIX. Directories aren't counted — cp -R never deletes a directory.
     find "$SKILL_SRC" -type f 2>/dev/null | while IFS= read -r f; do
         rel=${f#"$SKILL_SRC"/}
         [ -e "$SKILL_DST/$rel" ] || continue
@@ -961,134 +1014,138 @@ skill_clobber_list() {
 }
 
 install_skill() {
-    step 6/8 "에이전트 스킬"
+    step 6/8 "agent skill"
     local clob=''
     SKILL_SRC="$REPO/skills/fleetmux"
     SKILL_DST="$HOME/.claude/skills/fleetmux"
 
     if [ ! -f "$SKILL_SRC/SKILL.md" ]; then
-        skip "이 레포에 skills/fleetmux/SKILL.md 가 없다 — 건너뛴다"
+        skip "this repo has no skills/fleetmux/SKILL.md — skipping"
         SKILL_SRC=''
-        SKILL_DST=''      # 안 깔았으면 '지우려면' 목록에도 나오면 안 된다
+        SKILL_DST=''      # if it wasn't installed, it must not show up in the 'to remove' list either
         return 0
     fi
 
     if [ -e "$SKILL_DST" ]; then
-        note "$SKILL_DST 가 이미 있다 → 덮어쓴다(우리가 넣은 파일만)"
-        note "  덮을 남의 내용이 있으면 그 전에 $SKILL_DST.fmux-bak 로 통째로 백업한다"
-        note "  그 백업이 이미 있으면 그건 네 원본이다 — 덮지 않고 타임스탬프를 붙여 옆에 남긴다"
+        note "$SKILL_DST already exists → will overwrite (only the files we place)"
+        note "  if there's content of yours that would be overwritten, it's backed up whole to $SKILL_DST.fmux-bak first"
+        note "  if that backup already exists, it's your original — left untouched, this run's backup gets a timestamp instead"
     fi
-    if ask_yn "에이전트 스킬을 $SKILL_DST 에 깔까?"; then
+    if ask_yn "Install the agent skill to $SKILL_DST?"; then
         if is_dry; then
             plan "mkdir -p $SKILL_DST && cp -R skills/fleetmux/. $SKILL_DST/"
         else
-            # 남의 파일을 되돌릴 수 없게 덮지 않는다 — 우리 이름과 같은 스킬을 이미 쓰던
-            # 사람에게 --yes 는 "제안된 기본값 수락"이지 "네 스킬을 버려라"가 아니다(권고 N1).
+            # Someone else's files are never overwritten in a way that can't be undone — for
+            # anyone already using a skill with our same name, --yes means "accept the
+            # suggested defaults," not "throw away your skill" (recommendation N1).
             #
-            # ⚠️ **백업은 한 번 만들면 절대 덮지 않는다**(팀 배포 게이트 C3). 예전엔 여기서
-            #   `rm -rf "$SKILL_DST.fmux-bak"` 로 시작했다 — 2회차 실행이 1회차가 남긴
-            #   **사용자 원본**을 먼저 지우고, 이미 우리 파일로 덮인 디렉토리를 그 자리에 다시
-            #   백업했다. 화면은 두 번 다 "백업해 뒀다"를 찍는데 사용자 원본은 기계 어디에도
-            #   안 남는다. 재실행이 안전하다는 README 의 약속을 정면으로 어긴 자리다.
-            #   지금 규칙: ① 우리 복사가 덮어쓸 남의 내용이 하나도 없으면 백업하지 않는다
-            #   (재실행마다 사본이 쌓이는 것도 그 자체로 사고다) ② .fmux-bak 이 이미 있으면
-            #   그건 원본이다 — 손대지 않고 이번 것만 타임스탬프를 붙여 옆에 남긴다.
+            # WARNING: **once a backup exists, it is never overwritten** (team deploy gate C3).
+            #   This used to start with `rm -rf "$SKILL_DST.fmux-bak"` — a second run would
+            #   delete the **user's original** left by the first run, then back up the
+            #   directory that was already overwritten with our files into that same spot. The
+            #   screen printed "backed up" both times, yet the user's original ends up nowhere
+            #   on the machine. This directly broke README's promise that reruns are safe.
+            #   Current rule: 1) if our copy would overwrite none of someone else's content, no
+            #   backup is made (a copy piling up on every rerun is itself an incident) 2) if
+            #   .fmux-bak already exists, that's the original — leave it untouched and give
+            #   this run's backup a timestamp instead.
             clob=$(skill_clobber_list)
             if [ -e "$SKILL_DST" ] && [ -z "$clob" ]; then
-                ok "$SKILL_DST 에 우리가 덮어쓸 남의 내용이 없다 — 백업할 것이 없다"
+                ok "nothing at $SKILL_DST that our copy would overwrite — nothing to back up"
             elif [ -e "$SKILL_DST" ]; then
-                note "덮어쓸 파일: $(printf '%s' "$clob" | tr '\n' ' ')"
+                note "files to be overwritten: $(printf '%s' "$clob" | tr '\n' ' ')"
                 SKILL_BAK="$SKILL_DST.fmux-bak"
                 if [ -e "$SKILL_BAK" ]; then
-                    note "$SKILL_BAK 이 이미 있다 — 그건 첫 실행이 남긴 네 원본이다. 덮지 않는다."
-                    # 초가 같은 두 실행이 같은 이름을 잡으면 백업이 백업 안에 겹쳐 들어간다.
-                    # $$ 로 실행마다 갈라 놓는다.
+                    note "$SKILL_BAK already exists — that's your original from the first run. Not overwriting it."
+                    # If two runs land in the same second, the backup would nest inside the
+                    # backup. $$ separates them per run.
                     SKILL_BAK="$SKILL_DST.fmux-bak.$(date +%Y%m%d-%H%M%S).$$"
                 fi
                 cp -R "$SKILL_DST" "$SKILL_BAK" \
-                    || die "$SKILL_DST 를 백업하지 못했다 — 덮지 않고 멈춘다"
-                did "$SKILL_BAK (덮기 전 백업)"
-                ok "백업해 뒀다: $SKILL_BAK"
+                    || die "could not back up $SKILL_DST — stopping without overwriting"
+                did "$SKILL_BAK (backup before overwrite)"
+                ok "backed up: $SKILL_BAK"
             fi
-            mkdir -p "$SKILL_DST" || die "$SKILL_DST 를 만들 수 없다"
-            cp -R "$SKILL_SRC/." "$SKILL_DST/" || die "$SKILL_DST 로 못 복사했다"
+            mkdir -p "$SKILL_DST" || die "could not create $SKILL_DST"
+            cp -R "$SKILL_SRC/." "$SKILL_DST/" || die "could not copy to $SKILL_DST"
             did "$SKILL_DST/"
             ok "$SKILL_DST/"
         fi
     else
         SKILL_DST=''
-        note "안 깔았다. 나중에: cp -R $SKILL_SRC/. ~/.claude/skills/fleetmux/"
+        note "not installed. Later: cp -R $SKILL_SRC/. ~/.claude/skills/fleetmux/"
     fi
 }
 
-# ── ⑦ 크론 안내 (보여주기만 한다) ──────────────────────────────────────────
+# ── 7) cron guidance (display only) ──────────────────────────────────────
 show_cron() {
-    step 7/8 "크론 — 보여주기만 한다"
-    note "crontab 은 이 스크립트가 절대 안 고친다. 원하면 'crontab -e' 로 직접 넣어라:"
+    step 7/8 "cron — display only"
+    note "this script never touches crontab. Add these yourself with 'crontab -e' if you want them:"
     printf '\n'
     printf '    * * * * * %s/fmux --cron >/dev/null 2>&1\n' "$BINDIR"
     printf '    @reboot %s/fmux --boot-restore >/dev/null 2>&1\n' "$BINDIR"
     printf '\n'
-    note "첫 줄: 1분마다 rc 자동복구 + 함대 스냅샷(매니페스트가 늘 1분 안쪽으로 최신)"
-    note "둘째 줄: 부팅 뒤 세션·대화 복원. 끄고 싶은 날은 touch ~/.cache/tt/no-autorestore"
-    note "둘 다 tt config 로도 끌 수 있다: tt config set rc off / snapshot off / boot_restore off"
+    note "first line: rc auto-recovery + fleet snapshot every minute (the manifest stays under a minute stale)"
+    note "second line: session and conversation restore after boot. To turn it off some day: touch ~/.cache/tt/no-autorestore"
+    note "both can also be turned off with tt config: tt config set rc off / snapshot off / boot_restore off"
 }
 
-# ── ⑧ 요약 ─────────────────────────────────────────────────────────────────
+# ── 8) summary ────────────────────────────────────────────────────────────
 summary() {
-    step 8/8 "요약"
+    step 8/8 "summary"
     local fastnow
     if is_dry; then
-        printf '  --dry-run 이었다 — 파일을 하나도 안 만들었다. 위 dry 줄이 할 일이다.\n'
-        printf '  실제로 하려면: ./install.sh\n'
+        printf '  this was --dry-run — created zero files. The dry lines above are what would be done.\n'
+        printf '  to actually do it: ./install.sh\n'
         return 0
     fi
 
-    printf '\n무엇이 어디에 있나\n'
+    printf '\nwhat is where\n'
     printf '%s' "$DID"
 
-    printf '\n다음 한 걸음\n'
+    printf '\nnext step\n'
     case ":$PATH:" in
-        *":$BINDIR:"*) printf '  - 새 tmux 세션에서 tt 를 쳐봐라 (또는 prefix + %s)\n' "$("$FMUX" config get key_summon 2>/dev/null || echo F)" ;;
-        *) printf '  - PATH 를 먼저 고쳐라: %s\n' "$(path_line)" ;;
+        *":$BINDIR:"*) printf '  - try tt in a new tmux session (or prefix + %s)\n' "$("$FMUX" config get key_summon 2>/dev/null || echo F)" ;;
+        *) printf '  - fix PATH first: %s\n' "$(path_line)" ;;
     esac
-    # 무prefix 키가 실제로 걸렸으면 그 키를 말한다. 안 걸렸으면 어떻게 얻는지를 말한다 —
-    # 화면과 문서가 다른 말을 하면 안 되고, "안 뺏었다"도 결과의 일부다.
+    # If a no-prefix key was actually bound, name it. If not, say how to get one — the screen
+    # and the docs must not contradict each other, and "we took nothing" is part of the result too.
     fastnow=$("$FMUX" config get key_summon_fast 2>/dev/null) || fastnow=''
     if [ -n "$fastnow" ]; then
-        printf '  - 무prefix 한 타건도 걸렸다: %s  (되돌리려면 tt config unset key_summon_fast)\n' "$fastnow"
+        printf '  - a no-prefix single keystroke is also bound: %s  (to undo: tt config unset key_summon_fast)\n' "$fastnow"
     else
-        printf '  - 무prefix 한 타건은 안 걸었다 — 원하면: tt config set key_summon_fast %s\n' "$(preset_value "$PRESET_SUGGEST")"
+        printf '  - no no-prefix single keystroke was bound — if you want one: tt config set key_summon_fast %s\n' "$(preset_value "$PRESET_SUGGEST")"
     fi
-    printf '  - tt --help 가 키·설정·복원을 전부 설명한다. tt config list 로 설정을 본다.\n'
+    printf '  - tt --help explains keys, config, and restore in full. tt config list shows the config.\n'
 
-    printf '\n지우려면\n'
+    printf '\nto remove\n'
     printf '  rm -f  %s/fmux %s/tt\n' "$BINDIR" "$BINDIR"
     printf '  rm -rf %s\n' "$LIBEXEC"
     printf '  rm -f  %s\n' "$SNIP"
     printf '  rm -rf %s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
-    printf '  rm -rf %s/.cache/tt   (상태·로그 — 지워도 잃는 건 이력뿐)\n' "$HOME"
-    printf "  %s 의 'source-file %s' 줄 삭제\n" "$TMUXCONF" "$SNIP"
+    printf '  rm -rf %s/.cache/tt   (state and logs — deleting only loses history)\n' "$HOME"
+    printf "  delete the 'source-file %s' line in %s\n" "$SNIP" "$TMUXCONF"
     [ -n "$SKILL_DST" ] && printf '  rm -rf %s\n' "$SKILL_DST"
-    printf '  crontab 에 넣은 줄이 있으면 crontab -e 로 직접 지운다\n'
-    printf '  ※ 위 줄을 그대로 치기 전에 그 자리에 네 파일이 섞여 있지 않은지 한 번 봐라.\n'
-    printf '    우리가 덮기 전에 남긴 백업은 전부 <원본>.fmux-bak 이다.\n'
+    printf '  if you added lines to crontab, remove them yourself with crontab -e\n'
+    printf '  note: before running the lines above as-is, check that none of your own files ended up mixed in there.\n'
+    printf '    every backup we left before overwriting something is named <original>.fmux-bak.\n'
 }
 
-# ── 본체 ────────────────────────────────────────────────────────────────────
-# 무엇이 일어나는지 사용자가 먼저 알아야 한다 — 어느 모드로 가는지 한 줄로 밝히고 시작한다.
-printf 'fleetmux 설치\n'
+# ── main ────────────────────────────────────────────────────────────────────
+# The user needs to know what's about to happen before anything happens — announce which mode
+# this run is in, in one line, before starting.
+printf 'fleetmux install\n'
 if [ "$REMOTE" = 1 ]; then
-    printf '  모드   원격 — 여기(%s)에 레포가 없다. 릴리스 아카이브를 받아 설치한다.\n' "$REPO"
-    printf '         받을 것: %s\n' "${REF:-최신 릴리스 태그(정해서 알려준다)}"
+    printf '  mode   remote — no repo here (%s). Fetching and installing the release archive.\n' "$REPO"
+    printf '         fetching: %s\n' "${REF:-latest release tag (will be determined)}"
 else
-    printf '  모드   로컬 — 옆에 레포가 있다. 그 bin/fmux 를 설치한다.\n'
-    printf '  레포   %s\n' "$REPO"
-    [ -n "$REF" ] && printf '  참고   --ref %s 는 로컬 모드에서 쓰이지 않는다 — 지금 이 레포를 그대로 깐다\n' "$REF"
+    printf '  mode   local — a repo is right here. Installing its bin/fmux.\n'
+    printf '  repo   %s\n' "$REPO"
+    [ -n "$REF" ] && printf '  note   --ref %s is not used in local mode — installing this repo as-is\n' "$REF"
 fi
 printf '  prefix %s\n' "$PREFIX"
-is_dry && printf '  모드   --dry-run — 아무것도 바꾸지 않는다\n'
-[ "$ASSUME_YES" = 1 ] && printf '  모드   --yes — 물음에 전부 yes\n'
+is_dry && printf '  mode   --dry-run — changing nothing\n'
+[ "$ASSUME_YES" = 1 ] && printf '  mode   --yes — yes to every prompt\n'
 
 [ "$REMOTE" = 1 ] && remote_fetch
 
@@ -1101,5 +1158,5 @@ install_skill
 show_cron
 summary
 
-printf '\n끝.\n'
+printf '\ndone.\n'
 exit 0
