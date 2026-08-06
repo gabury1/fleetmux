@@ -185,7 +185,7 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
     #   didn't write it, the stale badges from right before it was turned off would linger on
     #   screen for up to 5 more minutes (the staleness window in 80-view.sh).
     [ -n "$only" ] || printf '%s%s\n' "$(date +%s)" "$off" > "$STATE/rc-off"
-    # Also solidify the fleet snapshot here (Eunsu's idea) — since we're already walking every
+    # Also solidify the fleet snapshot here — since we're already walking every
     # session once a minute anyway.
     # The manifest stays current even without opening the popup, so up to 1 minute of state
     # survives even a sudden reboot.

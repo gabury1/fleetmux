@@ -15,7 +15,7 @@
 #   `claude --resume <id>` doesn't work from just anywhere — it only finds that conversation from
 #   'the project folder that corresponds to the current cwd'. But a tmux session's cwd and the
 #   cwd the conversation was born in often differ (refact-worker: session cwd=…/_myproject,
-#   transcript is under ~/.claude/projects/-home-euns/). Restoring with only the session cwd drops
+#   transcript is under ~/.claude/projects/-home-user/). Restoring with only the session cwd drops
 #   you into the shell with "No conversation found". So the two are recorded separately — restore
 #   creates the session at the session cwd, but runs the resume itself from the conversation home.
 # TT_MANIFEST lets the path be swapped: an escape hatch so tests don't overwrite the real fleet
