@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tt codex wrapper — injects the tt hook via -c only into codex launched inside tmux (leaves the global ~/.codex/config.toml untouched)
+# fmux codex wrapper — injects the fmux hook via -c only into codex launched inside tmux (leaves the global ~/.codex/config.toml untouched)
 # A PATH shim isomorphic to the claude wrapper. Delete this file and the intervention disappears entirely.
 # Excluding itself = avoids infinite recursion. Excluding by the 'libexec/tt' substring would
 # wrongly exclude the real binary if its path contained that string, dying with exit 127 — so
@@ -11,10 +11,10 @@ while IFS= read -r cand; do
     [ "$(readlink -f "$cand" 2>/dev/null || printf '%s' "$cand")" = "$SELF" ] && continue
     REAL="$cand"; break
 done < <(type -ap codex 2>/dev/null)
-[ -n "$REAL" ] || { echo "tt-wrapper: real codex not found in PATH" >&2; exit 127; }
+[ -n "$REAL" ] || { echo "fmux-wrapper: real codex not found in PATH" >&2; exit 127; }
 
-# Outside tmux, or tt is missing → pass through transparently
-if [ -z "${TMUX:-}" ] || ! command -v tt >/dev/null 2>&1; then
+# Outside tmux, or fmux is missing → pass through transparently
+if [ -z "${TMUX:-}" ] || ! command -v fmux >/dev/null 2>&1; then
     exec "$REAL" "$@"
 fi
 
@@ -37,13 +37,13 @@ done
 
 # Hook args arrive one per line — read into an array and pass through as-is (no eval = zero shell injection surface)
 TT_HOOK_ARGS=()
-while IFS= read -r line; do TT_HOOK_ARGS+=("$line"); done < <(tt --codex-hooks 2>/dev/null)
+while IFS= read -r line; do TT_HOOK_ARGS+=("$line"); done < <(fmux --codex-hooks 2>/dev/null)
 [ ${#TT_HOOK_ARGS[@]} -gt 0 ] || exec "$REAL" "$@"
 
 # Boot self-report: codex's SessionStart only fires once the first prompt is submitted, so the
 # wrapper fills in the gap at launch time
-# (tt --hook inherits the wrapper's $TMUX_PANE here, so it knows its own session)
-tt --hook boot </dev/null >/dev/null 2>&1 || true
+# (fmux --hook inherits the wrapper's $TMUX_PANE here, so it knows its own session)
+fmux --hook boot </dev/null >/dev/null 2>&1 || true
 
 # Unmanaged (-c injected) hooks require trust approval → the bypass flag must be included
 exec "$REAL" --dangerously-bypass-hook-trust "${TT_HOOK_ARGS[@]}" "$@"

@@ -61,7 +61,7 @@ if [ "${1:-}" = "--do-new" ]; then
         tmux send-keys -t "=$n:" -l "$cmd"
         tmux send-keys -t "=$n:" Enter
         case "$cmd" in claude*)
-            # Reserve a /rename — it actually runs when the SessionStart hook (tt --hook boot)
+            # Reserve a /rename — it actually runs when the SessionStart hook (fmux --hook boot)
             # confesses that it booted. The first field stores the reservation time: a TTL cuts
             # off a reservation that never got consumed instead of letting it live forever
             mkdir -p "$STATE"
@@ -249,7 +249,7 @@ EOF
     exit 0
 fi
 
-# Help screen (entered via ? in the popup, or `tt --help` on the CLI)
+# Help screen (entered via ? in the popup, or `fmux --help` on the CLI)
 #
 # `--pause` prints the screen and then waits for one key. The popup binds ? to
 # `--help --pause`, and the waiting **must happen in here**, not in the binding.
@@ -277,17 +277,26 @@ if [ "${1:-}" = "--help" ]; then
     hrecent=$(tt_conf_num recent_hours)
     hunseen=$(tt_conf_num unseen_minutes)
     hkset=$(tt_key_label "$TT_KEY_SETTINGS")   # display form derived from the same value as the popup binding
-    if [ -n "$hsum" ]; then hsummon="prefix + $hsum"; else hsummon="(key_summon is empty)"; fi
-    if [ -n "$hfast" ]; then hsummon="$hsummon  ·  $hfast  ${D}prefix-less${R}"
-    else hsummon="$hsummon  ${D}· no prefix-less key — tt config set key_summon_fast S-Left${R}"
+    # The summon key gets the first line of the screen, on its own.
+    #   It is the one thing a reader has to leave with: every other key here only matters once the
+    #   popup is already open, and it is the key people fail to find (measured — a teammate had a
+    #   working install and no way to open it).
+    #   prefix + <key> still works and is still listed by `fmux config list`; it is left off this
+    #   screen on purpose, so the one keystroke that matters is not competing with a two-keystroke
+    #   alternative nobody reaches for.
+    if [ -n "$hfast" ]; then
+        hsummon="${B}${T}$hfast${R}  ${D}anywhere in tmux, no prefix${R}"
+    else
+        hsummon="${B}not set${R}  ${D}— turn it on: fmux config set key_summon_fast S-Left${R}"
     fi
     cat << EOF
 
-  ${B}tt — tmux session manager${R}  ${D}works with claude & codex sessions${R}
+  ${B}fmux — tmux session manager${R}  ${D}works with claude & codex sessions${R}
+
+  ${T}summon${R}     $hsummon
 
   ${T}navigate${R}
     →/Enter    enter session          ←/Esc    close    ^D  detach tmux (back to shell)
-    summon     $hsummon
 
   ${T}manage${R}
     ^N  new session     ^E  rename     ^X  kill     ^R  refresh
@@ -296,11 +305,11 @@ if [ "${1:-}" = "--help" ]; then
     ${hkset}  open settings — the only door; the popup footer shows this key too
     Enter flips a switch on the spot; number/text keys ask for a value and validate it
     ${D}rows marked "not wired" are not wired to any behaviour yet — the toggle would be a lie${R}
-    tt config list   ${D}the same table from the shell; tt config path shows the file${R}
+    fmux config list   ${D}the same table from the shell; fmux config path shows the file${R}
 
   ${T}tmux binding${R}  ${D}fmux owns one file and borrows one line of your ~/.tmux.conf${R}
-    tt --tmux-conf          print the snippet — summon key, and the on-exit snapshot hooks
-    tt --tmux-conf --write  write it, then add ${D}source-file <printed path>${R} to ~/.tmux.conf
+    fmux --tmux-conf          print the snippet — summon key, and the on-exit snapshot hooks
+    fmux --tmux-conf --write  write it, then add ${D}source-file <printed path>${R} to ~/.tmux.conf
     ${D}key_summon is pressed after the prefix; key_summon_fast is a space-separated list of${R}
     ${D}prefix-less keys — one physical key arrives under different names per terminal${R}
     ${D}changing either key, or snapshot_on_exit, rewrites the snippet on the spot${R}
@@ -308,7 +317,7 @@ if [ "${1:-}" = "--help" ]; then
     ${D}tmux on macOS, Linux and Windows Terminal alike. It takes that key from everything in${R}
     ${D}the pane (vim, shell line-editing, fzf) — that is why it is offered, never a default.${R}
     ${D}Some dotfiles bind S-Left/S-Right to window switching; pick another key if yours does.${R}
-    ${D}tt config unset key_summon_fast gives the key back — key_summon still summons.${R}
+    ${D}fmux config unset key_summon_fast gives the key back — key_summon still summons.${R}
 
   ${T}broadcast${R}
     Tab-mark multiple sessions, then Enter — send one prompt to all
@@ -316,10 +325,10 @@ if [ "${1:-}" = "--help" ]; then
     ${D}^B does the same but keeps the popup open — for repeated sends${R}
 
   ${T}fleet${R}  ${D}survive a reboot — the manifest remembers what was up${R}
-    tt --snapshot           record every live session: cwd, kind, command, conversation
-    tt --restore [--dry]    bring them all back — live ones are skipped, --dry just plans
-    tt --boot-restore       ${D}[--dry]${R} same, but safe to hang off @reboot cron
-    tt --forget ${D}<name>${R}     drop one session from the manifest
+    fmux --snapshot           record every live session: cwd, kind, command, conversation
+    fmux --restore [--dry]    bring them all back — live ones are skipped, --dry just plans
+    fmux --boot-restore       ${D}[--dry]${R} same, but safe to hang off @reboot cron
+    fmux --forget ${D}<name>${R}     drop one session from the manifest
     ${D}--boot-restore waits up to 120s for DNS before restoring, and aborts if it never comes —${R}
     ${D}claudes started without a network die into a shell, then look "already running" forever${R}
     ${D}touch ~/.cache/tt/no-autorestore to skip it on the next boot; log is ~/.cache/tt/boot.log${R}
@@ -335,8 +344,8 @@ if [ "${1:-}" = "--help" ]; then
     ⊘ remote control dropped — retried every minute; ${B}red ⊘${R} = gave up after 3 tries
 
   ${T}status bar${R}  ${D}the snippet appends the tally to status-right — yours survives${R}
-    ${D}tt config set status_badges off  takes it back out, live server included${R}
-    tt --status prints it; nothing shows up until you put it in your own tmux config:
+    ${D}fmux config set status_badges off  takes it back out, live server included${R}
+    fmux --status prints it; nothing shows up until you put it in your own tmux config:
       ${D}set -g status-interval 5${R}
       ${D}set -ag status-right '#($SELF --status)'${R}
     ⏸n ✻n — fleet tally: sessions awaiting you / working right now

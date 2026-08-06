@@ -3,7 +3,7 @@
 #   Tracks claude/codex session state via hooks, lets you pick and jump in, broadcast, and restore
 #   →/Enter: enter session   ←/Esc: close   Ctrl-N: new session   Ctrl-E: rename   Ctrl-X: delete   Ctrl-R: refresh   Ctrl-D: detach from tmux
 #   The summon key comes from config — the default is only prefix + F, and the no-prefix key
-#   defaults to empty (it steals no key). Turn it on with tt config set key_summon_fast — 87-tmux-conf.sh embeds it in the snippet.
+#   defaults to empty (it steals no key). Turn it on with fmux config set key_summon_fast — 87-tmux-conf.sh embeds it in the snippet.
 set -euo pipefail
 export LC_ALL=en_US.UTF-8   # cron has no locale — prevents unicode glyph regexes from misbehaving
 
@@ -41,7 +41,7 @@ tt_self() {
     printf '%s/%s' "$d" "${p##*/}"
 }
 SELF=$(tt_self)
-[ -x "$SELF" ] || SELF="tt"      # last-resort fallback: if it still can't be found, defer to PATH as before
+[ -x "$SELF" ] || SELF="fmux"      # last-resort fallback: if it still can't be found, defer to PATH as before
 # A safely quoted form to embed in shell strings (fzf --bind, hook commands) — doesn't break even if the path has spaces or quotes
 SELFQ="'${SELF//\'/\'\\\'\'}'"
 

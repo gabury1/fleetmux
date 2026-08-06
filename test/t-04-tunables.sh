@@ -220,24 +220,27 @@ assert_eq "$got" "no" "when wiring evidence can't be obtained, no not-wired mark
 assert_contains "$out" "key_new" "the table itself still renders normally"
 
 # ── ⑥ The --help first screen states this machine's current config (gate B7) ─
-# The installer sends teammates off with "tt --help explains everything" at the end — it's the
+# The installer sends teammates off with "fmux --help explains everything" at the end — it's the
 # first screen read right after install. This used to hardcode Option+← and 6h/10 min here. The
 # default binds no prefix-less key at all (key_summon_fast is empty), so that first line was
 # **a lie teaching a key that doesn't exist**.
 : > "$CONF"
 h=$("$TTBIN" --help 2>/dev/null)
 assert_eq "$(printf '%s' "$h" | grep -c 'Option+←' || true)" "0" "it doesn't teach a key that isn't bound"
-assert_contains "$h" "prefix + F"          "reads the default summon key from config and shows it"
-assert_contains "$h" "no prefix-less key"  "says so when there is no prefix-less key"
+# The help screen shows the fast summon key only — prefix + <key> still works and is still in
+# `fmux config list`, but it is deliberately off this screen so the one keystroke that matters is
+# not competing with a two-keystroke alternative.
+assert_eq "$(printf '%s' "$h" | grep -c 'prefix + ' || true)" "0" \
+    "★the help screen does not teach the prefix route — one summon key, stated once"
+assert_contains "$h" "not set"             "says so when no prefix-less key is bound"
 assert_contains "$h" "key_summon_fast"     "writes how to turn it on right there"
 assert_contains "$h" "talked within 1h"    "reads and prints the default recent_hours"
 assert_contains "$h" "or 10 min"           "reads and prints the default unseen_minutes"
 
 printf 'key_summon=T\nkey_summon_fast=C-Left M-Left\nrecent_hours=3\nunseen_minutes=45\n' > "$CONF"
 h=$("$TTBIN" --help 2>/dev/null)
-assert_contains "$h" "prefix + T"      "the changed key_summon shows up on screen"
 assert_contains "$h" "C-Left M-Left"   "the changed key_summon_fast shows up on screen"
-assert_eq "$(printf '%s' "$h" | grep -c 'no prefix-less key' || true)" "0" "when a key is bound, it doesn't say there is none"
+assert_eq "$(printf '%s' "$h" | grep -c 'not set' || true)" "0" "when a key is bound, it does not say there is none"
 assert_contains "$h" "talked within 3h" "the changed recent_hours shows up on screen"
 assert_contains "$h" "or 45 min"        "the changed unseen_minutes shows up on screen"
 assert_eq "$(printf '%s' "$h" | grep -c 'talked within 6h' || true)" "0" "the old hardcoded value is not left behind"
@@ -245,7 +248,8 @@ assert_eq "$(printf '%s' "$h" | grep -c 'talked within 6h' || true)" "0" "the ol
 # Must be honest even to someone who empties out every summon key
 printf 'key_summon=\nkey_summon_fast=\n' > "$CONF"
 h=$("$TTBIN" --help 2>/dev/null)
-assert_contains "$h" "key_summon is empty" "when even the prefix key is empty, it says so"
+assert_contains "$h" "not set" "with every summon key emptied, the screen says so instead of showing a blank"
+assert_contains "$h" "key_summon_fast" "and tells you the one command that fixes it"
 
 # ── Seal check ────────────────────────────────────────────────────────────
 # This file actually calls --list, --status, --cron. All of them passed through the sealed fake

@@ -3,7 +3,7 @@
 #   Colors match the --list palette exactly (⏸ orange 215, ✻ yellow 33). Omitted when 0.
 #
 # This is also the **sampler** for the CPU snapshot. The status bar runs status-interval 5,
-# refreshing every 5 seconds (`#(tt --status)` in .tmux.conf) and refreshes the sample of
+# refreshing every 5 seconds (`#(fmux --status)` in .tmux.conf) and refreshes the sample of
 # working sessions — thanks to that, the popup (--list) always gets a fresh 3-10 second window
 # with sleep 0, no matter when it's opened. Keeping the sampler here is the axis of the design.
 #
@@ -124,7 +124,7 @@ if [ "${1:-}" = "--hook" ]; then
     # The stdin payload arrives with every event (claude: session_id=conversation id, cwd,
     # hook_event_name). Read it only once — the waiting verdict and the manifest record can't
     # both read the same stream twice.
-    # If stdin is a tty (a human typed tt --hook by hand), don't read it — that would make it
+    # If stdin is a tty (a human typed fmux --hook by hand), don't read it — that would make it
     # wait a full 2 seconds.
     payload=""
     [ -t 0 ] || IFS= read -r -d '' -t 2 payload || true
@@ -305,7 +305,7 @@ fi
 # Status bar: fleet aggregate (⏸n ✻n) + finished-session ✓name badge
 #   The badge disappears once you've visited that session, or after unseen_minutes
 #   (10 minutes by default) has passed.
-#   Called every 5 seconds by #(tt --status) in .tmux.conf's status-right.
+#   Called every 5 seconds by #(fmux --status) in .tmux.conf's status-right.
 if [ "${1:-}" = "--status" ]; then
     f="$STATE/finished"
     now=$(date +%s)

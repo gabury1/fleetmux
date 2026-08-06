@@ -8,7 +8,7 @@
 #   (2) does README's config table match the real defaults and wiring state (no lying table)
 #   (3) do the tt entry points the skill teaches actually exist in src
 #
-# Not a single line of tmux is called. The `tt config …` used here is a door that does not
+# Not a single line of tmux is called. The `fmux config …` used here is a door that does not
 # touch tmux.
 set -u
 . "$(dirname "$0")/lib.sh"
@@ -54,17 +54,17 @@ for flag in --list --status --preview --rc --snapshot --restore --forget \
     assert_contains "$RM"  "$flag" "README documents $flag"
     assert_contains "$SRC" "\"\${1:-}\" = \"$flag\"" "the $flag entry point actually exists"
 done
-assert_contains "$SRC" '"${1:-}" = "config"' "the tt config entry point actually exists"
+assert_contains "$SRC" '"${1:-}" = "config"' "the fmux config entry point actually exists"
 
 # ── (2) is the config table honest ──────────────────────────────────────────
 # README lists "keys that are wired" separately from "keys that only get saved." If that
-# split disagrees with what the code decides (the not-wired marker in tt config list), the
+# split disagrees with what the code decides (the not-wired marker in fmux config list), the
 # doc is selling a toggle that does nothing.
 WIRED='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_summon key_summon_fast'
 UNWIRED='key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings'
 
 list=$("$TTBIN" config list 2>/dev/null) || list=''
-assert_contains "$list" "KEY" "tt config list prints a table"
+assert_contains "$list" "KEY" "fmux config list prints a table"
 
 for k in $WIRED; do
     row=$(printf '%s\n' "$list" | grep "^$k ") || row=''
@@ -118,7 +118,7 @@ assert_eq "$(sed -n '2,8p' "$SKILL" | grep -c '^---$' || true)" "1" "the frontma
 
 # The commands the skill points to must be entry points that actually exist.
 for cmd in --status --list --preview --do-broadcast; do
-    assert_contains "$SK"  "tt $cmd" "the skill documents tt $cmd"
+    assert_contains "$SK"  "fmux $cmd" "the skill documents fmux $cmd"
     assert_contains "$SRC" "\"\${1:-}\" = \"$cmd\"" "the $cmd entry point actually exists"
 done
 
@@ -164,7 +164,7 @@ done
 
 # ── (4)-a does the fact "the suggestion is S-Left" say the same thing on screen, in the
 #     docs, and in the code ────────────────────────────────────────────────────────────────
-# If the key the installer suggests, README's table/paragraph, and tt --help's guidance say
+# If the key the installer suggests, README's table/paragraph, and fmux --help's guidance say
 # different things, a teammate has no way to know which of the three to trust. Tie all three
 # to the same string.
 assert_contains "$INST_SH" 'PRESET_SUGGEST=shift' "install.sh's suggested default is shift"
@@ -178,16 +178,16 @@ assert_contains "$RM" 'the only prefix-less single keystroke that survives all t
 assert_contains "$RM" 'bind `S-Left`/`S-Right` to' "README states the known risk (window-switching bindings)"
 assert_contains "$RM" 'Why a single keystroke is what the installer offers' \
     "README has a paragraph on why a single keystroke"
-assert_contains "$RM" 'tt config unset key_summon_fast   # rewrites the snippet' \
+assert_contains "$RM" 'fmux config unset key_summon_fast   # rewrites the snippet' \
     "README states how to turn it off"
 assert_contains "$RM" 'installing the config file alone steals nothing' \
     "README states the config default is still empty"
-# The screen (tt --help) must say the same thing — the old key must not be taught only here.
+# The screen (fmux --help) must say the same thing — the old key must not be taught only here.
 HELP=$("$TTBIN" --help 2>&1) || HELP=''
-assert_contains "$HELP" 'S-Left' "tt --help documents S-Left"
-assert_contains "$HELP" 'takes that key from everything in' "tt --help also states what it takes away"
+assert_contains "$HELP" 'S-Left' "fmux --help documents S-Left"
+assert_contains "$HELP" 'takes that key from everything in' "fmux --help also states what it takes away"
 assert_eq "$(printf '%s' "$HELP" | grep -c "key_summon_fast 'C-Left M-Left'" || true)" "0" \
-    "the old suggestion (C-Left M-Left) does not linger in tt --help"
+    "the old suggestion (C-Left M-Left) does not linger in fmux --help"
 
 # The config default must stay split off — the default must not follow the suggestion just
 # because the suggestion changed.
@@ -214,7 +214,7 @@ assert_contains "$SRC" '/proc/$1/stat' "the rc verdict actually hangs on /proc"
 assert_contains "$RM"  'Linux only'    "README states rc is Linux-only"
 assert_contains "$RM"  '/proc'         "README states the reason (/proc)"
 assert_contains "$RM"  'macOS — what works and what does not' "it splits out what works and what does not on macOS"
-assert_contains "$SRC" 'no /proc (macOS unsupported)' "tt --rc also states that boundary on screen"
+assert_contains "$SRC" 'no /proc (macOS unsupported)' "fmux --rc also states that boundary on screen"
 
 # ── (4)-d does the snapshot=off description match the code (deploy gate B9) ────────────────
 # The hook path's upsert is **outside** the switch — that's why the manifest never goes
@@ -252,7 +252,7 @@ done
 
 # ── (5) status bar — do the doc and the snippet say the same thing (deploy gate C1) ────────
 # This is the spot t-13 missed entirely: four places (two spots in README, SKILL.md, and
-# tt --help) **flatly asserted** the status-bar tally as a working feature, and the wiring
+# fmux --help) **flatly asserted** the status-bar tally as a working feature, and the wiring
 # code was not in the repo. 100% of teammates would never see that screen. So here we don't
 # count sentences — we **render what the snippet actually produces** and match it against the
 # doc. Once someone later wires it in, this same judgment automatically demands the opposite
@@ -271,7 +271,7 @@ if [ "$wired" = no ]; then
     assert_contains "$SK" 'Wiring it into `status-right` is manual' \
         "the skill also assumes someone who has never seen the status bar"
     assert_contains "$("$TTBIN" --help 2>/dev/null)" 'not wired automatically' \
-        "tt --help says the same thing"
+        "fmux --help says the same thing"
     # The disproven flat claim must not linger.
     assert_eq "$(grep -c 'Status bar carries the fleet tally' "$README" || true)" "0" \
         "the old claim ('status bar carries the tally') is not in README"
@@ -283,9 +283,9 @@ else
     assert_eq "$(grep -c 'does not wire your status bar' "$README" || true)" "0" \
         "once it is wired, the 'does not attach' notice must not linger"
     assert_contains "$RM" 'status_badges' "README documents the switch that controls it"
-    assert_contains "$RM" 'tt config set status_badges off' "README says how to turn it off"
+    assert_contains "$RM" 'fmux config set status_badges off' "README says how to turn it off"
     assert_eq "$(printf '%s' "$("$TTBIN" --help 2>/dev/null)" | grep -c 'not wired automatically' || true)" "0" \
-        "tt --help no longer claims the status bar is not wired"
+        "fmux --help no longer claims the status bar is not wired"
 fi
 
 # ── (6) macOS --boot-restore boundary (deploy gate C2) ─────────────────────────────────────
@@ -300,7 +300,7 @@ assert_contains "$RM"  'ABORT: no DNS+tcp/443' "it states what symptom this show
 assert_contains "$SRC" 'ABORT: no DNS+tcp/443' "that string is actually in the code"
 # --restore (by hand) does not pass through that gate — it works on macOS too. That
 # distinction must be in the doc.
-assert_contains "$RM" 'tt --restore` (by hand)' "it states separately that --restore by hand works on macOS"
+assert_contains "$RM" 'fmux --restore` (by hand)' "it states separately that --restore by hand works on macOS"
 
 # ── (7) login-shell detection (deploy gate I4) ──────────────────────────────────────────────
 # getent belongs to glibc, so it doesn't exist on macOS -> not a fallback, a hardcoded /bin/bash.
@@ -325,7 +325,7 @@ assert_contains "$RM" 'restores nothing' "Q5 — rc / boot restore"
 # teach a file or behaviour that does not exist.
 assert_contains "$SRC" 'STATE/boot.log'  "the boot.log path exists in the code"
 assert_contains "$RM"  '~/.cache/tt/boot.log' "Q5 documents that log"
-assert_contains "$(cat libexec/claude)" 'command -v tt' "the shim-firing condition Q3 states is real code"
-assert_contains "$RM"  'command -v tt' "Q3 states that condition verbatim"
+assert_contains "$(cat libexec/claude)" 'command -v fmux' "the shim-firing condition Q3 states is real code"
+assert_contains "$RM"  'command -v fmux' "Q3 states that condition verbatim"
 
 tt_test_done

@@ -631,7 +631,9 @@ install_bin() {
         ok "$BINDIR/fmux"
         FMUX="$BINDIR/fmux"
 
-        # tt symlink — the shim (libexec/claude) confirms we exist via `command -v tt`.
+        # The tt symlink. The shim no longer needs it — it looks for `fmux` on PATH now — so this
+        # is kept only as a convenience alias, and only where the spot is free or already ours.
+        # Someone else's tt is never touched.
         # If that name belongs to something else, it's left alone — **show what's there and let
         # the person decide**. An installer does not make an unrecoverable call on its own
         # (gate I2).
@@ -1018,7 +1020,7 @@ install_preset() {
             printf '%s\n' "$clash" | while IFS= read -r line; do printf '      %s\n' "$line"; done
         fi
     fi
-    note "the summon key behind prefix (key_summon) is left as-is — to change it: tt config set key_summon <key>"
+    note "the summon key behind prefix (key_summon) is left as-is — to change it: fmux config set key_summon <key>"
 
     cur=$("$FMUX" config get key_summon_fast 2>/dev/null) || cur=''
     if [ "$cur" = "$v" ]; then
@@ -1140,7 +1142,7 @@ show_cron() {
     printf '\n'
     note "first line: rc auto-recovery + fleet snapshot every minute (the manifest stays under a minute stale)"
     note "second line: session and conversation restore after boot. To turn it off some day: touch ~/.cache/tt/no-autorestore"
-    note "both can also be turned off with tt config: tt config set rc off / snapshot off / boot_restore off"
+    note "both can also be turned off with fmux config: fmux config set rc off / snapshot off / boot_restore off"
 }
 
 # ── 8) summary ────────────────────────────────────────────────────────────
@@ -1165,11 +1167,11 @@ summary() {
     # and the docs must not contradict each other, and "we took nothing" is part of the result too.
     fastnow=$("$FMUX" config get key_summon_fast 2>/dev/null) || fastnow=''
     if [ -n "$fastnow" ]; then
-        printf '  - a no-prefix single keystroke is also bound: %s  (to undo: tt config unset key_summon_fast)\n' "$fastnow"
+        printf '  - a no-prefix single keystroke is also bound: %s  (to undo: fmux config unset key_summon_fast)\n' "$fastnow"
     else
-        printf '  - no no-prefix single keystroke was bound — if you want one: tt config set key_summon_fast %s\n' "$(preset_value "$PRESET_SUGGEST")"
+        printf '  - no no-prefix single keystroke was bound — if you want one: fmux config set key_summon_fast %s\n' "$(preset_value "$PRESET_SUGGEST")"
     fi
-    printf '  - tt --help explains keys, config, and restore in full. tt config list shows the config.\n'
+    printf '  - fmux --help explains keys, config, and restore in full. fmux config list shows the config.\n'
 
     printf '\nto remove\n'
     printf '  rm -f  %s/fmux %s/tt\n' "$BINDIR" "$BINDIR"

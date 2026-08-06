@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tt claude wrapper — injects the tt hook via --settings only into claude launched inside tmux (leaves the global config untouched)
+# fmux claude wrapper — injects the fmux hook via --settings only into claude launched inside tmux (leaves the global config untouched)
 # cmux's PATH shim pattern. Delete this file and the intervention disappears entirely.
 # Finding the real binary: exclude only itself, exactly.
 #   It used to exclude any path containing the substring 'libexec/tt' — but if the real claude
@@ -12,10 +12,10 @@ while IFS= read -r cand; do
     [ "$(readlink -f "$cand" 2>/dev/null || printf '%s' "$cand")" = "$SELF" ] && continue
     REAL="$cand"; break
 done < <(type -ap claude 2>/dev/null)
-[ -n "$REAL" ] || { echo "tt-wrapper: real claude not found in PATH" >&2; exit 127; }
+[ -n "$REAL" ] || { echo "fmux-wrapper: real claude not found in PATH" >&2; exit 127; }
 
-# Outside tmux, or the user already passed --settings, or tt is missing → pass through transparently
-if [ -z "${TMUX:-}" ] || ! command -v tt >/dev/null 2>&1 || printf '%s\n' "$@" | grep -qx -- '--settings'; then
+# Outside tmux, or the user already passed --settings, or fmux is missing → pass through transparently
+if [ -z "${TMUX:-}" ] || ! command -v fmux >/dev/null 2>&1 || printf '%s\n' "$@" | grep -qx -- '--settings'; then
     exec "$REAL" "$@"
 fi
-exec "$REAL" --settings "$(tt --hooks-json)" "$@"
+exec "$REAL" --settings "$(fmux --hooks-json)" "$@"

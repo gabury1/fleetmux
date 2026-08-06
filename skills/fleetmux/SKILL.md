@@ -24,7 +24,7 @@ Order of operations, always: **state first, panes second.**
 ## Step 1 — the tally
 
 ```bash
-tt --status
+fmux --status
 ```
 
 One line: `⏸2 ✻3` — sessions awaiting a human / sessions working right now, plus
@@ -45,7 +45,7 @@ else, and say which sessions they are.
 ## Step 2 — the roster
 
 ```bash
-tt --list
+fmux --list
 ```
 
 One row per session. Each row is `<name>` TAB `<display string>`, where the display
@@ -70,7 +70,7 @@ command; names may contain spaces.
 ## Step 3 — one session in detail
 
 ```bash
-tt --preview <session-name>
+fmux --preview <session-name>
 ```
 
 The tail of that pane, trailing blank lines stripped — the bottom is where the
@@ -114,7 +114,7 @@ doing:   <one line>
 blocked: <what it needs, or none>
 ```
 
-Then merge. `tt --status` and `tt --list` already give you the tally and the marks, so
+Then merge. `fmux --status` and `fmux --list` already give you the tally and the marks, so
 the subagents only have to fill in the "why".
 
 ## Writing into other sessions
@@ -125,7 +125,7 @@ interrupts whatever it is doing and cannot be undone.
 If — and only if — the human explicitly asks you to send something:
 
 ```bash
-tt --do-broadcast <name> [<name>...]
+fmux --do-broadcast <name> [<name>...]
 ```
 
 It prints `targets: …`, then asks for the prompt text **on the terminal** (`/dev/tty`)
@@ -142,7 +142,7 @@ Two rules that do not bend:
    manifest) and reports `skipped N tool sessions`, but say which sessions you are
    about to touch anyway. A silent filter is not a substitute for looking.
 
-Everything else that changes state — `tt --restore`, `tt --forget`, `tt config set`,
+Everything else that changes state — `fmux --restore`, `fmux --forget`, `fmux config set`,
 killing or renaming sessions — is the human's call, not yours. Propose, do not run.
 
 ## When tt is not installed

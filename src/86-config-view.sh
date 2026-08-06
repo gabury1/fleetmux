@@ -11,7 +11,7 @@ tt_conf_is_bool() {
     case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore|status_badges) return 0 ;; *) return 1 ;; esac
 }
 
-# tt_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `tt config list`
+# tt_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `fmux config list`
 #   uses the same judgment, and since 85 is concatenated before this file we can just call it here.
 #   It's pulled from code rather than a hand-written list: there's no longer any need to remember
 #   "update the list too when you wire a new key".
@@ -72,7 +72,7 @@ tt_conf_view_once() {
         read -rsn1 </dev/tty 2>/dev/null || true
         return 0
     fi
-    # rc 2 = not a boolean → read a typed value. Validation is left entirely to tt config set.
+    # rc 2 = not a boolean → read a typed value. Validation is left entirely to fmux config set.
     printf '\nnew value for %s — currently %s. Enter alone leaves it unchanged: ' \
         "$k" "$("$SELF" config get "$k")" >/dev/tty
     IFS= read -r nv </dev/tty || return 0

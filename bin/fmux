@@ -3,7 +3,7 @@
 #   Tracks claude/codex session state via hooks, lets you pick and jump in, broadcast, and restore
 #   →/Enter: enter session   ←/Esc: close   Ctrl-N: new session   Ctrl-E: rename   Ctrl-X: delete   Ctrl-R: refresh   Ctrl-D: detach from tmux
 #   The summon key comes from config — the default is only prefix + F, and the no-prefix key
-#   defaults to empty (it steals no key). Turn it on with tt config set key_summon_fast — 87-tmux-conf.sh embeds it in the snippet.
+#   defaults to empty (it steals no key). Turn it on with fmux config set key_summon_fast — 87-tmux-conf.sh embeds it in the snippet.
 set -euo pipefail
 export LC_ALL=en_US.UTF-8   # cron has no locale — prevents unicode glyph regexes from misbehaving
 
@@ -41,7 +41,7 @@ tt_self() {
     printf '%s/%s' "$d" "${p##*/}"
 }
 SELF=$(tt_self)
-[ -x "$SELF" ] || SELF="tt"      # last-resort fallback: if it still can't be found, defer to PATH as before
+[ -x "$SELF" ] || SELF="fmux"      # last-resort fallback: if it still can't be found, defer to PATH as before
 # A safely quoted form to embed in shell strings (fzf --bind, hook commands) — doesn't break even if the path has spaces or quotes
 SELFQ="'${SELF//\'/\'\\\'\'}'"
 
@@ -55,7 +55,7 @@ SELFQ="'${SELF//\'/\'\\\'\'}'"
 TT_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
 TT_CONF="${TT_CONF_FILE:-$TT_CONF_DIR/config}"
 
-# Known keys. This order is exactly the order `tt config` lists them in.
+# Known keys. This order is exactly the order `fmux config` lists them in.
 TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
 
 # Defaults. Unknown key → rc 1 — this function also doubles as the "is this a known key" check.
@@ -541,7 +541,7 @@ tt_working() {
 # 3-second sampling can't be put in.
 # So it uses **the delta against the snapshot left by the previous call** (same existing
 # convention of keeping state in one line of a small file).
-# The sampler is the status bar — `#(tt --status)` in .tmux.conf runs every 5 seconds via
+# The sampler is the status bar — `#(fmux --status)` in .tmux.conf runs every 5 seconds via
 # status-interval 5, and refreshes the snapshot of working sessions. So the popup, whenever
 # opened, instantly gets a fresh 3~10 second window.
 # In an environment with no status bar (no attached client), the window always exceeds MAXWIN,
@@ -1596,7 +1596,7 @@ tt_mf_forget() {
 #   Colors match the --list palette exactly (⏸ orange 215, ✻ yellow 33). Omitted when 0.
 #
 # This is also the **sampler** for the CPU snapshot. The status bar runs status-interval 5,
-# refreshing every 5 seconds (`#(tt --status)` in .tmux.conf) and refreshes the sample of
+# refreshing every 5 seconds (`#(fmux --status)` in .tmux.conf) and refreshes the sample of
 # working sessions — thanks to that, the popup (--list) always gets a fresh 3-10 second window
 # with sleep 0, no matter when it's opened. Keeping the sampler here is the axis of the design.
 #
@@ -1717,7 +1717,7 @@ if [ "${1:-}" = "--hook" ]; then
     # The stdin payload arrives with every event (claude: session_id=conversation id, cwd,
     # hook_event_name). Read it only once — the waiting verdict and the manifest record can't
     # both read the same stream twice.
-    # If stdin is a tty (a human typed tt --hook by hand), don't read it — that would make it
+    # If stdin is a tty (a human typed fmux --hook by hand), don't read it — that would make it
     # wait a full 2 seconds.
     payload=""
     [ -t 0 ] || IFS= read -r -d '' -t 2 payload || true
@@ -1898,7 +1898,7 @@ fi
 # Status bar: fleet aggregate (⏸n ✻n) + finished-session ✓name badge
 #   The badge disappears once you've visited that session, or after unseen_minutes
 #   (10 minutes by default) has passed.
-#   Called every 5 seconds by #(tt --status) in .tmux.conf's status-right.
+#   Called every 5 seconds by #(fmux --status) in .tmux.conf's status-right.
 if [ "${1:-}" = "--status" ]; then
     f="$STATE/finished"
     now=$(date +%s)
@@ -2025,7 +2025,7 @@ rc_target() {
 #   injecting while working would pollute the input.
 #   Typing /remote-control into an already-connected session doesn't disconnect it, it just
 #   opens the modal -> Escape is mandatory after injection.
-#   tt --cron <session name> checks only one session (for debugging).
+#   fmux --cron <session name> checks only one session (for debugging).
 # The display cache for --list ($STATE/rc-off) is swapped at the end of each round — the list
 # is a path the user's hand touches often, and running a pgrep fan-out there would make the
 # popup noticeably sluggish (measured 0.05s -> 0.4s). The verdict is computed only here.
@@ -2043,7 +2043,7 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
     # cron mail piles up every minute), and only tell the reason on a terminal a human typed
     # into directly.
     if [ "$tt_rc_enabled" = 0 ] && [ -t 1 ]; then
-        printf 'rc=off — skipping auto-recovery (tt config set rc on)\n'
+        printf 'rc=off — skipping auto-recovery (fmux config set rc on)\n'
     fi
     only="${2:-}"; off=""
     mkdir -p "$STATE"
@@ -2143,7 +2143,7 @@ if [ "${1:-}" = "--rc" ]; then
     # Bail out before the first tmux call that draws the table (the while below) — for someone
     # who has turned off auto-recovery, the rc status table would just be a table asking "why
     # is everything OFF" right back at them.
-    tt_conf_on rc || { printf 'rc=off — auto-recovery is disabled (tt config set rc on)\n'; exit 0; }
+    tt_conf_on rc || { printf 'rc=off — auto-recovery is disabled (fmux config set rc on)\n'; exit 0; }
     # The entire rc verdict hangs on /proc/<pid>/stat (rc_procstart). On a machine without
     # /proc (macOS), rc_target always fails and the table below becomes **'?' in every row** —
     # that's unsupported, not broken, but looking at the table alone you can't tell the
@@ -2203,7 +2203,7 @@ if [ "${1:-}" = "--snapshot" ]; then
     # The instant we enter the while loop below, process substitution forks tmux, and inside the
     # loop display-message gets called again per session — we must bail before that to block
     # 'everything'. No lock is held yet.
-    tt_conf_on snapshot || { printf 'snapshot=off — not recording (tt config set snapshot on)\n'; exit 0; }
+    tt_conf_on snapshot || { printf 'snapshot=off — not recording (fmux config set snapshot on)\n'; exit 0; }
     mkdir -p "$STATE"
     rows=""; n=0
     while IFS=$'\t' read -r sid name; do
@@ -2327,7 +2327,7 @@ fi
 #   truly retiring a session
 if [ "${1:-}" = "--forget" ]; then
     n="${2:-}"
-    [ -n "$n" ] || { echo "usage: tt --forget <session name>"; exit 1; }
+    [ -n "$n" ] || { echo "usage: fmux --forget <session name>"; exit 1; }
     tt_mf_forget "$n" || { echo "manifest busy — try again"; exit 1; }
     if [ "${TT_MF_HITS:-0}" -gt 0 ]; then
         printf 'forgot %s\n' "$n"
@@ -2348,7 +2348,7 @@ fi
 if [ "${1:-}" = "--restore" ]; then
     dry=0; [ "${2:-}" = "--dry" ] && dry=1
     if [ ! -s "$MANIFEST" ]; then
-        echo "no manifest at $MANIFEST — run 'tt --snapshot' while the fleet is up"
+        echo "no manifest at $MANIFEST — run 'fmux --snapshot' while the fleet is up"
         exit 1
     fi
     # After a reboot, tmux reissues session ids starting from $0 → a new session inherits a dead
@@ -2564,14 +2564,14 @@ if [ "${1:-}" = "--boot-restore" ]; then
     blog "=== boot-restore start (dry=$dry, pid $$)"
 
     # ⓪ Config switch. Means the same thing as the ① kill switch, just a different handle (a
-    #    single file vs `tt config`). The placement must match too — exiting here means we don't
+    #    single file vs `fmux config`). The placement must match too — exiting here means we don't
     #    touch the PATH fixup, flock, the network wait (up to 120s), or tmux start-server (the spot
     #    where this entry point first calls tmux) below at all.
     #    (The config cache was already set up before the log rotation above — because rotation
     #    reads log_max.)
     if ! tt_conf_on boot_restore; then
         blog "boot_restore=off in config — nothing done"
-        printf 'boot_restore=off — skipping boot restore (tt config set boot_restore on)\n'
+        printf 'boot_restore=off — skipping boot restore (fmux config set boot_restore on)\n'
         exit 0
     fi
 
@@ -3045,7 +3045,7 @@ TT_CONF_RESERVED='esc enter left'
 
 # ── "Is this key actually wired to a real action?" — pulled from code, not hand-written ──────
 # A key whose value is saved but that nobody reads is a **lying toggle**. The user believes the
-# feature they turned off is actually off. So the two screens that display config (`tt config
+# feature they turned off is actually off. So the two screens that display config (`fmux config
 # list` and the in-popup settings screen) mark such keys.
 #
 # Writing that list by hand always drifts — the person who wires a key into the code and the
@@ -3154,7 +3154,7 @@ tt_conf_validate() {
 }
 
 # The "actual runtime behaviour" of a hand-edited invalid value, in one line. Prints nothing if valid.
-#   `tt config set` rejects invalid values, but README:168 also documents hand-editing the file as a
+#   `fmux config set` rejects invalid values, but README:168 also documents hand-editing the file as a
 #   normal path — a value that comes in that way folds differently per consumer (numbers fall back
 #   to the default, booleans fall back to off, a summon key just drops out of the snippet). If the
 #   table showed that value as if it were in effect, the two screens would tell different truths
@@ -3195,7 +3195,7 @@ tt_conf_write() {
 
 # If the key whose value just changed is one that's baked into the tmux snippet, re-render the snippet.
 #   Why we call ourselves again: the render function lives in 87-tmux-conf.sh, and that file is
-#   concatenated after this one. On top of that, `tt config …` exits in the block below, so
+#   concatenated after this one. On top of that, `fmux config …` exits in the block below, so
 #   execution never reaches 87 — this process never even has a function named tt_tmux_conf_write.
 #   Following the $SELF re-invocation convention already used in ~20 other places is safer than
 #   flipping the file order.
@@ -3239,14 +3239,14 @@ if [ "${1:-}" = "config" ]; then
             [ "$bogus" = 1 ] && printf 'invalid value = saved to the file but not something the code can use — it folds as noted above.\n'
             exit 0 ;;
         get|source)
-            [ -n "${3:-}" ] || { echo "usage: tt config $2 <key>" >&2; exit 1; }
+            [ -n "${3:-}" ] || { echo "usage: fmux config $2 <key>" >&2; exit 1; }
             if [ "$2" = get ]; then tt_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
             else                    tt_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
             fi
             echo
             exit 0 ;;
         set)
-            [ -n "${3:-}" ] || { echo "usage: tt config set <key> <value>" >&2; exit 1; }
+            [ -n "${3:-}" ] || { echo "usage: fmux config set <key> <value>" >&2; exit 1; }
             shift 2; k=$1; shift
             v="$*"
             tt_conf_validate "$k" "$v" || exit 1
@@ -3260,7 +3260,7 @@ if [ "${1:-}" = "config" ]; then
             tt_conf_wired "$k" || printf '  ↑ %s is not wired to any action yet — saved, but nothing changes right now\n' "$k" >&2
             exit 0 ;;
         unset)
-            [ -n "${3:-}" ] || { echo "usage: tt config unset <key>" >&2; exit 1; }
+            [ -n "${3:-}" ] || { echo "usage: fmux config unset <key>" >&2; exit 1; }
             tt_conf_default "$3" >/dev/null 2>&1 || { echo "unknown key: $3" >&2; exit 1; }
             tt_conf_write "$3" '' unset || exit 1
             tt_conf_resnip "$3"
@@ -3269,7 +3269,7 @@ if [ "${1:-}" = "config" ]; then
         path)
             printf '%s\n' "$TT_CONF"; exit 0 ;;
         *)
-            echo "usage: tt config [list|get|source|set|unset|path]" >&2; exit 1 ;;
+            echo "usage: fmux config [list|get|source|set|unset|path]" >&2; exit 1 ;;
     esac
 fi
 # ── In-popup settings screen ─────────────────────────────────────────────────
@@ -3285,7 +3285,7 @@ tt_conf_is_bool() {
     case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore|status_badges) return 0 ;; *) return 1 ;; esac
 }
 
-# tt_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `tt config list`
+# tt_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `fmux config list`
 #   uses the same judgment, and since 85 is concatenated before this file we can just call it here.
 #   It's pulled from code rather than a hand-written list: there's no longer any need to remember
 #   "update the list too when you wire a new key".
@@ -3346,7 +3346,7 @@ tt_conf_view_once() {
         read -rsn1 </dev/tty 2>/dev/null || true
         return 0
     fi
-    # rc 2 = not a boolean → read a typed value. Validation is left entirely to tt config set.
+    # rc 2 = not a boolean → read a typed value. Validation is left entirely to fmux config set.
     printf '\nnew value for %s — currently %s. Enter alone leaves it unchanged: ' \
         "$k" "$("$SELF" config get "$k")" >/dev/tty
     IFS= read -r nv </dev/tty || return 0
@@ -3463,7 +3463,7 @@ tt_tmux_conf_unbind_list() {
     printf '%s' "${seen# }"
 }
 
-# Print the snippet's contents to stdout. The file itself is untouched — so `tt --tmux-conf` lets you look before you leap.
+# Print the snippet's contents to stdout. The file itself is untouched — so `fmux --tmux-conf` lets you look before you leap.
 tt_tmux_conf_render() {
     # The popup summon command. SELFQ is a quoted form that survives even if the path has spaces
     # (00-header.sh). --from '#S' tells it the current session — so it can exclude itself from the list (90-main.sh:251).
@@ -3472,7 +3472,7 @@ tt_tmux_conf_render() {
     local popup="display-popup -E -w 85% -h 75% -b rounded -T ' ⌘ fmux ' $SELFQ --from '#S'"
     local k fast
 
-    printf '# File generated by fleetmux — do not hand-edit. tt config set … rewrites it.\n'
+    printf '# File generated by fleetmux — do not hand-edit. fmux config set … rewrites it.\n'
     printf '# Add only this one line to your own config (~/.tmux.conf):\n'
     printf '#   source-file %s\n' "$TT_TMUX_CONF"
     printf '\n'
@@ -3514,7 +3514,7 @@ tt_tmux_conf_render() {
     if tt_conf_on status_badges; then
         printf '\n# Fleet badges in the status bar — ⏸ waiting · ✓ finished · ✻ working.\n'
         printf '#   Knowing who is stuck without opening anything is the point of the tool, so this\n'
-        printf '#   is on by default. Turn it off with: tt config set status_badges off\n'
+        printf '#   is on by default. Turn it off with: fmux config set status_badges off\n'
         # ⛔ Never append unconditionally. This file is re-sourced on every config reload, and a
         #    config that does not set status-right itself (the tmux default) keeps whatever was
         #    there — so `set -ag` would stack another copy of the badges on every reload.
@@ -3563,7 +3563,7 @@ tt_tmux_conf_render() {
 #   same two as install.sh's pick_tmux_conf.
 #   A tilde (~/…) is expanded before comparing (team release gate I1): tmux handles `source-file
 #   ~/.config/…` normally and the README teaches that exact form, but comparing only exact absolute
-#   paths would read that person's config as "not linked" — then tt config set wouldn't apply to the
+#   paths would read that person's config as "not linked" — then fmux config set wouldn't apply to the
 #   live server while the screen still prints success, and re-running the installer appends yet
 #   another duplicate source line. **A hole that catches exactly the person who followed the docs to the letter.**
 tt_tmux_conf_linked() {
@@ -3609,7 +3609,7 @@ tt_tmux_conf_write() {
     # Applying to the live server only happens when both are true:
     #   ① we're inside tmux right now  ② the user's config actually has a line sourcing this file
     # Skipping ② would push our bindings even into the server of someone "not yet linked" — just
-    # running `tt --tmux-conf --write` to eyeball the snippet would change their keys as a side effect.
+    # running `fmux --tmux-conf --write` to eyeball the snippet would change their keys as a side effect.
     # For someone not linked, nothing happens either at the next tmux start or on this server (only our file is up to date).
     if [ -n "${TMUX:-}" ] && tt_tmux_conf_linked; then
         tmux source-file "$TT_TMUX_CONF" 2>/dev/null || true
@@ -3751,7 +3751,7 @@ if [ "${1:-}" = "--do-new" ]; then
         tmux send-keys -t "=$n:" -l "$cmd"
         tmux send-keys -t "=$n:" Enter
         case "$cmd" in claude*)
-            # Reserve a /rename — it actually runs when the SessionStart hook (tt --hook boot)
+            # Reserve a /rename — it actually runs when the SessionStart hook (fmux --hook boot)
             # confesses that it booted. The first field stores the reservation time: a TTL cuts
             # off a reservation that never got consumed instead of letting it live forever
             mkdir -p "$STATE"
@@ -3939,7 +3939,7 @@ EOF
     exit 0
 fi
 
-# Help screen (entered via ? in the popup, or `tt --help` on the CLI)
+# Help screen (entered via ? in the popup, or `fmux --help` on the CLI)
 #
 # `--pause` prints the screen and then waits for one key. The popup binds ? to
 # `--help --pause`, and the waiting **must happen in here**, not in the binding.
@@ -3967,17 +3967,26 @@ if [ "${1:-}" = "--help" ]; then
     hrecent=$(tt_conf_num recent_hours)
     hunseen=$(tt_conf_num unseen_minutes)
     hkset=$(tt_key_label "$TT_KEY_SETTINGS")   # display form derived from the same value as the popup binding
-    if [ -n "$hsum" ]; then hsummon="prefix + $hsum"; else hsummon="(key_summon is empty)"; fi
-    if [ -n "$hfast" ]; then hsummon="$hsummon  ·  $hfast  ${D}prefix-less${R}"
-    else hsummon="$hsummon  ${D}· no prefix-less key — tt config set key_summon_fast S-Left${R}"
+    # The summon key gets the first line of the screen, on its own.
+    #   It is the one thing a reader has to leave with: every other key here only matters once the
+    #   popup is already open, and it is the key people fail to find (measured — a teammate had a
+    #   working install and no way to open it).
+    #   prefix + <key> still works and is still listed by `fmux config list`; it is left off this
+    #   screen on purpose, so the one keystroke that matters is not competing with a two-keystroke
+    #   alternative nobody reaches for.
+    if [ -n "$hfast" ]; then
+        hsummon="${B}${T}$hfast${R}  ${D}anywhere in tmux, no prefix${R}"
+    else
+        hsummon="${B}not set${R}  ${D}— turn it on: fmux config set key_summon_fast S-Left${R}"
     fi
     cat << EOF
 
-  ${B}tt — tmux session manager${R}  ${D}works with claude & codex sessions${R}
+  ${B}fmux — tmux session manager${R}  ${D}works with claude & codex sessions${R}
+
+  ${T}summon${R}     $hsummon
 
   ${T}navigate${R}
     →/Enter    enter session          ←/Esc    close    ^D  detach tmux (back to shell)
-    summon     $hsummon
 
   ${T}manage${R}
     ^N  new session     ^E  rename     ^X  kill     ^R  refresh
@@ -3986,11 +3995,11 @@ if [ "${1:-}" = "--help" ]; then
     ${hkset}  open settings — the only door; the popup footer shows this key too
     Enter flips a switch on the spot; number/text keys ask for a value and validate it
     ${D}rows marked "not wired" are not wired to any behaviour yet — the toggle would be a lie${R}
-    tt config list   ${D}the same table from the shell; tt config path shows the file${R}
+    fmux config list   ${D}the same table from the shell; fmux config path shows the file${R}
 
   ${T}tmux binding${R}  ${D}fmux owns one file and borrows one line of your ~/.tmux.conf${R}
-    tt --tmux-conf          print the snippet — summon key, and the on-exit snapshot hooks
-    tt --tmux-conf --write  write it, then add ${D}source-file <printed path>${R} to ~/.tmux.conf
+    fmux --tmux-conf          print the snippet — summon key, and the on-exit snapshot hooks
+    fmux --tmux-conf --write  write it, then add ${D}source-file <printed path>${R} to ~/.tmux.conf
     ${D}key_summon is pressed after the prefix; key_summon_fast is a space-separated list of${R}
     ${D}prefix-less keys — one physical key arrives under different names per terminal${R}
     ${D}changing either key, or snapshot_on_exit, rewrites the snippet on the spot${R}
@@ -3998,7 +4007,7 @@ if [ "${1:-}" = "--help" ]; then
     ${D}tmux on macOS, Linux and Windows Terminal alike. It takes that key from everything in${R}
     ${D}the pane (vim, shell line-editing, fzf) — that is why it is offered, never a default.${R}
     ${D}Some dotfiles bind S-Left/S-Right to window switching; pick another key if yours does.${R}
-    ${D}tt config unset key_summon_fast gives the key back — key_summon still summons.${R}
+    ${D}fmux config unset key_summon_fast gives the key back — key_summon still summons.${R}
 
   ${T}broadcast${R}
     Tab-mark multiple sessions, then Enter — send one prompt to all
@@ -4006,10 +4015,10 @@ if [ "${1:-}" = "--help" ]; then
     ${D}^B does the same but keeps the popup open — for repeated sends${R}
 
   ${T}fleet${R}  ${D}survive a reboot — the manifest remembers what was up${R}
-    tt --snapshot           record every live session: cwd, kind, command, conversation
-    tt --restore [--dry]    bring them all back — live ones are skipped, --dry just plans
-    tt --boot-restore       ${D}[--dry]${R} same, but safe to hang off @reboot cron
-    tt --forget ${D}<name>${R}     drop one session from the manifest
+    fmux --snapshot           record every live session: cwd, kind, command, conversation
+    fmux --restore [--dry]    bring them all back — live ones are skipped, --dry just plans
+    fmux --boot-restore       ${D}[--dry]${R} same, but safe to hang off @reboot cron
+    fmux --forget ${D}<name>${R}     drop one session from the manifest
     ${D}--boot-restore waits up to 120s for DNS before restoring, and aborts if it never comes —${R}
     ${D}claudes started without a network die into a shell, then look "already running" forever${R}
     ${D}touch ~/.cache/tt/no-autorestore to skip it on the next boot; log is ~/.cache/tt/boot.log${R}
@@ -4025,8 +4034,8 @@ if [ "${1:-}" = "--help" ]; then
     ⊘ remote control dropped — retried every minute; ${B}red ⊘${R} = gave up after 3 tries
 
   ${T}status bar${R}  ${D}the snippet appends the tally to status-right — yours survives${R}
-    ${D}tt config set status_badges off  takes it back out, live server included${R}
-    tt --status prints it; nothing shows up until you put it in your own tmux config:
+    ${D}fmux config set status_badges off  takes it back out, live server included${R}
+    fmux --status prints it; nothing shows up until you put it in your own tmux config:
       ${D}set -g status-interval 5${R}
       ${D}set -ag status-right '#($SELF --status)'${R}
     ⏸n ✻n — fleet tally: sessions awaiting you / working right now

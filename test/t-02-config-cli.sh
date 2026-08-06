@@ -58,7 +58,7 @@ _count=$(printf '%s\n' "$_warn" | grep -c "unknown key: unknown_key")
 assert_eq "$_count" "1" "set's conflict-check loop also warns only once"
 
 # ⑩ does not present a hand-edited invalid value as if it were the effective value (recommendation N4)
-# `tt config set` rejects invalid values, but the README also documents hand-editing the file as a
+# `fmux config set` rejects invalid values, but the README also documents hand-editing the file as a
 # normal path. A value that arrives through that path folds differently depending on the consumer —
 # if the table does not disclose that, the two screens tell two different truths ("the config says
 # 6h, so why doesn't it run every 6 hours?").

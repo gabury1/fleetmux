@@ -176,7 +176,7 @@ assert_contains "$(cat "$TT_TMUX_LOG")" "source-file $SNIP" "someone who is wire
 # ── ⑩-b A line written with a tilde counts as wired too (gate I1) ────────────
 # This is exactly the shape README teaches: `source-file ~/.config/fleetmux/tmux.conf`. tmux
 # handles this line normally, but if we only matched exact absolute paths, **exactly the person who
-# followed the docs** would read as "not wired" → tt config set wouldn't apply to the live server
+# followed the docs** would read as "not wired" → fmux config set wouldn't apply to the live server
 # while the screen still prints success, and re-running the installer would append yet another
 # duplicate source line.
 : > "$TT_TMUX_LOG"

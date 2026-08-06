@@ -128,7 +128,7 @@ tt_working() {
 # 3-second sampling can't be put in.
 # So it uses **the delta against the snapshot left by the previous call** (same existing
 # convention of keeping state in one line of a small file).
-# The sampler is the status bar — `#(tt --status)` in .tmux.conf runs every 5 seconds via
+# The sampler is the status bar — `#(fmux --status)` in .tmux.conf runs every 5 seconds via
 # status-interval 5, and refreshes the snapshot of working sessions. So the popup, whenever
 # opened, instantly gets a fresh 3~10 second window.
 # In an environment with no status bar (no attached client), the window always exceeds MAXWIN,

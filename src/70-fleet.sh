@@ -33,7 +33,7 @@ if [ "${1:-}" = "--snapshot" ]; then
     # The instant we enter the while loop below, process substitution forks tmux, and inside the
     # loop display-message gets called again per session — we must bail before that to block
     # 'everything'. No lock is held yet.
-    tt_conf_on snapshot || { printf 'snapshot=off — not recording (tt config set snapshot on)\n'; exit 0; }
+    tt_conf_on snapshot || { printf 'snapshot=off — not recording (fmux config set snapshot on)\n'; exit 0; }
     mkdir -p "$STATE"
     rows=""; n=0
     while IFS=$'\t' read -r sid name; do
@@ -157,7 +157,7 @@ fi
 #   truly retiring a session
 if [ "${1:-}" = "--forget" ]; then
     n="${2:-}"
-    [ -n "$n" ] || { echo "usage: tt --forget <session name>"; exit 1; }
+    [ -n "$n" ] || { echo "usage: fmux --forget <session name>"; exit 1; }
     tt_mf_forget "$n" || { echo "manifest busy — try again"; exit 1; }
     if [ "${TT_MF_HITS:-0}" -gt 0 ]; then
         printf 'forgot %s\n' "$n"
@@ -178,7 +178,7 @@ fi
 if [ "${1:-}" = "--restore" ]; then
     dry=0; [ "${2:-}" = "--dry" ] && dry=1
     if [ ! -s "$MANIFEST" ]; then
-        echo "no manifest at $MANIFEST — run 'tt --snapshot' while the fleet is up"
+        echo "no manifest at $MANIFEST — run 'fmux --snapshot' while the fleet is up"
         exit 1
     fi
     # After a reboot, tmux reissues session ids starting from $0 → a new session inherits a dead
@@ -394,14 +394,14 @@ if [ "${1:-}" = "--boot-restore" ]; then
     blog "=== boot-restore start (dry=$dry, pid $$)"
 
     # ⓪ Config switch. Means the same thing as the ① kill switch, just a different handle (a
-    #    single file vs `tt config`). The placement must match too — exiting here means we don't
+    #    single file vs `fmux config`). The placement must match too — exiting here means we don't
     #    touch the PATH fixup, flock, the network wait (up to 120s), or tmux start-server (the spot
     #    where this entry point first calls tmux) below at all.
     #    (The config cache was already set up before the log rotation above — because rotation
     #    reads log_max.)
     if ! tt_conf_on boot_restore; then
         blog "boot_restore=off in config — nothing done"
-        printf 'boot_restore=off — skipping boot restore (tt config set boot_restore on)\n'
+        printf 'boot_restore=off — skipping boot restore (fmux config set boot_restore on)\n'
         exit 0
     fi
 

@@ -4,7 +4,7 @@ TT_CONF_RESERVED='esc enter left'
 
 # ── "Is this key actually wired to a real action?" — pulled from code, not hand-written ──────
 # A key whose value is saved but that nobody reads is a **lying toggle**. The user believes the
-# feature they turned off is actually off. So the two screens that display config (`tt config
+# feature they turned off is actually off. So the two screens that display config (`fmux config
 # list` and the in-popup settings screen) mark such keys.
 #
 # Writing that list by hand always drifts — the person who wires a key into the code and the
@@ -113,7 +113,7 @@ tt_conf_validate() {
 }
 
 # The "actual runtime behaviour" of a hand-edited invalid value, in one line. Prints nothing if valid.
-#   `tt config set` rejects invalid values, but README:168 also documents hand-editing the file as a
+#   `fmux config set` rejects invalid values, but README:168 also documents hand-editing the file as a
 #   normal path — a value that comes in that way folds differently per consumer (numbers fall back
 #   to the default, booleans fall back to off, a summon key just drops out of the snippet). If the
 #   table showed that value as if it were in effect, the two screens would tell different truths
@@ -154,7 +154,7 @@ tt_conf_write() {
 
 # If the key whose value just changed is one that's baked into the tmux snippet, re-render the snippet.
 #   Why we call ourselves again: the render function lives in 87-tmux-conf.sh, and that file is
-#   concatenated after this one. On top of that, `tt config …` exits in the block below, so
+#   concatenated after this one. On top of that, `fmux config …` exits in the block below, so
 #   execution never reaches 87 — this process never even has a function named tt_tmux_conf_write.
 #   Following the $SELF re-invocation convention already used in ~20 other places is safer than
 #   flipping the file order.
@@ -198,14 +198,14 @@ if [ "${1:-}" = "config" ]; then
             [ "$bogus" = 1 ] && printf 'invalid value = saved to the file but not something the code can use — it folds as noted above.\n'
             exit 0 ;;
         get|source)
-            [ -n "${3:-}" ] || { echo "usage: tt config $2 <key>" >&2; exit 1; }
+            [ -n "${3:-}" ] || { echo "usage: fmux config $2 <key>" >&2; exit 1; }
             if [ "$2" = get ]; then tt_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
             else                    tt_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
             fi
             echo
             exit 0 ;;
         set)
-            [ -n "${3:-}" ] || { echo "usage: tt config set <key> <value>" >&2; exit 1; }
+            [ -n "${3:-}" ] || { echo "usage: fmux config set <key> <value>" >&2; exit 1; }
             shift 2; k=$1; shift
             v="$*"
             tt_conf_validate "$k" "$v" || exit 1
@@ -219,7 +219,7 @@ if [ "${1:-}" = "config" ]; then
             tt_conf_wired "$k" || printf '  ↑ %s is not wired to any action yet — saved, but nothing changes right now\n' "$k" >&2
             exit 0 ;;
         unset)
-            [ -n "${3:-}" ] || { echo "usage: tt config unset <key>" >&2; exit 1; }
+            [ -n "${3:-}" ] || { echo "usage: fmux config unset <key>" >&2; exit 1; }
             tt_conf_default "$3" >/dev/null 2>&1 || { echo "unknown key: $3" >&2; exit 1; }
             tt_conf_write "$3" '' unset || exit 1
             tt_conf_resnip "$3"
@@ -228,6 +228,6 @@ if [ "${1:-}" = "config" ]; then
         path)
             printf '%s\n' "$TT_CONF"; exit 0 ;;
         *)
-            echo "usage: tt config [list|get|source|set|unset|path]" >&2; exit 1 ;;
+            echo "usage: fmux config [list|get|source|set|unset|path]" >&2; exit 1 ;;
     esac
 fi

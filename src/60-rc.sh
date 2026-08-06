@@ -83,7 +83,7 @@ rc_target() {
 #   injecting while working would pollute the input.
 #   Typing /remote-control into an already-connected session doesn't disconnect it, it just
 #   opens the modal -> Escape is mandatory after injection.
-#   tt --cron <session name> checks only one session (for debugging).
+#   fmux --cron <session name> checks only one session (for debugging).
 # The display cache for --list ($STATE/rc-off) is swapped at the end of each round — the list
 # is a path the user's hand touches often, and running a pgrep fan-out there would make the
 # popup noticeably sluggish (measured 0.05s -> 0.4s). The verdict is computed only here.
@@ -101,7 +101,7 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
     # cron mail piles up every minute), and only tell the reason on a terminal a human typed
     # into directly.
     if [ "$tt_rc_enabled" = 0 ] && [ -t 1 ]; then
-        printf 'rc=off — skipping auto-recovery (tt config set rc on)\n'
+        printf 'rc=off — skipping auto-recovery (fmux config set rc on)\n'
     fi
     only="${2:-}"; off=""
     mkdir -p "$STATE"
@@ -201,7 +201,7 @@ if [ "${1:-}" = "--rc" ]; then
     # Bail out before the first tmux call that draws the table (the while below) — for someone
     # who has turned off auto-recovery, the rc status table would just be a table asking "why
     # is everything OFF" right back at them.
-    tt_conf_on rc || { printf 'rc=off — auto-recovery is disabled (tt config set rc on)\n'; exit 0; }
+    tt_conf_on rc || { printf 'rc=off — auto-recovery is disabled (fmux config set rc on)\n'; exit 0; }
     # The entire rc verdict hangs on /proc/<pid>/stat (rc_procstart). On a machine without
     # /proc (macOS), rc_target always fails and the table below becomes **'?' in every row** —
     # that's unsupported, not broken, but looking at the table alone you can't tell the
