@@ -138,4 +138,11 @@ assert_eq "$(grep -c ':-0}" in .*\[!0-9\]' "$TTBIN" || true)" "0" \
 assert_eq "$(grep -cE 'read [^|;]*< "\$STATE/[^"]*" 2>/dev/null' "$TTBIN" || true)" "0" \
     "★no read puts 2>/dev/null after the input redirect (too late to catch a failed open)"
 
+# The status-right wiring must go through fmux for the same reason the ? pause does: a run-shell
+# body has to survive tmux quoting and shell quoting at once, and prepending has no tmux flag.
+for e in '--status-bind' '--status-unbind' '--status-fit'; do
+    assert_contains "$(grep -a -c "\"\${1:-}\" = \"$e\"" "$TTBIN" || true)" '1' \
+        "$e is a real entry point in the binary"
+done
+
 tt_test_done

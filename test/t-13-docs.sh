@@ -258,7 +258,8 @@ done
 # doc. Once someone later wires it in, this same judgment automatically demands the opposite
 # claim — it's not a net that only runs one direction.
 snip=$("$TTBIN" --tmux-conf 2>/dev/null) || snip=''
-case "$snip" in *status-right*) wired=yes ;; *) wired=no ;; esac
+# The snippet no longer names status-right directly — it calls fmux, which does the prepend.
+case "$snip" in *status-right*|*--status-bind*) wired=yes ;; *) wired=no ;; esac
 # 2026-08-06: it got wired (status_badges, on by default), so the judgment flipped — exactly
 # what this block was built to do.
 assert_eq "$wired" "yes" "the snippet now wires status-right (fact check)"

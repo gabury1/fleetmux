@@ -209,9 +209,9 @@ unset TMUX
 #    text #{status-right} — a self-reference. Expanding it (set -F) is worse: a status-right
 #    holding %H:%M or #{session_name} freezes to the values it had at that instant.
 ON=$("$TTBIN" --tmux-conf 2>/dev/null)
-assert_contains "$ON" 'set -ag status-right' "on: it appends to status-right rather than replacing it"
-assert_contains "$ON" '#{s|--status||:status-right}' \
-    "★on: the append is guarded by a no-op-substitution test, so re-sourcing cannot stack copies"
+assert_contains "$ON" -- '--status-bind' "on: it wires status-right through fmux, not with raw tmux commands"
+assert_eq "$(printf '%s\n' "$ON" | grep -c 'set -ag status-right' || true)" "0" \
+    "★on: it does not append — the badges go at the very front of status-left, and an appended fragment is also the first thing truncated"
 assert_contains "$ON" 'status-interval 5' "on: it sets a redraw interval the badges can keep up with"
 assert_eq "$(printf '%s\n' "$ON" | grep -c '@fmux_sr_base' || true)" "0" \
     "★it does not stash the old status-right in a user option (that saves a self-reference, or freezes live formats)"
@@ -220,7 +220,7 @@ assert_eq "$(printf '%s\n' "$ON" | grep -E '^[[:space:]]*set -ag status-right' |
 
 printf 'status_badges=off\n' > "$CONF"
 OFF=$("$TTBIN" --tmux-conf 2>/dev/null)
-assert_eq "$(printf '%s\n' "$OFF" | grep -c 'set -ag status-right' || true)" "0" "off: it appends nothing"
+assert_eq "$(printf '%s\n' "$OFF" | grep -c -- '--status-bind' || true)" "0" "off: it does not wire anything"
 assert_contains "$OFF" -- '--status-unbind' "★off: it actively takes the fragment back out of a live server"
 assert_eq "$(printf '%s\n' "$OFF" | grep -cF '$(' || true)" "0" \
     "★off: no command substitution in the snippet — a run-shell body has to survive tmux quoting and shell quoting at once (the first attempt died with \"too many arguments\"), so the work happens inside fmux"

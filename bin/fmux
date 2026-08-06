@@ -3509,7 +3509,7 @@ tt_tmux_conf_render() {
         #    %H:%M or #{session_name} would be frozen to the values it had at that instant.
         # So: append only when our fragment is not already in there. The test is a no-op
         # substitution — if removing the marker changes nothing, it was never there.
-        printf "if -F '#{==:#{s|--status||:status-right},#{status-right}}' \"set -ag status-right ' #(%s --status)'\"\n" "$SELF"
+        printf "run-shell \"'%s' --status-bind\"\n" "$SELF"
         # Badges are only as fresh as the redraw interval. 5s is the cadence the hooks assume.
         printf 'set -g status-interval 5\n'
         # tmux truncates status-right at status-right-length, and the default is 40 — enough for a
@@ -3615,17 +3615,47 @@ tt_tmux_conf_write() {
 # Make room for the badges. tmux cuts status-right at status-right-length, default 40 — a clock
 # and a date already fill that, so appended badges are drawn and then truncated away unseen.
 # Raise only: a config that already allows more keeps its own value.
+# Put the badges at the **front** of status-right.
+#
+# They went on the end at first, and that was wrong twice over: the most urgent signal in the tool
+# sat behind the clock and the date, and when the line ran out of width the badges were the first
+# thing cut (measured — status-right-length defaults to 40).
+#
+# Prepending has no tmux flag the way `set -ag` appends, so it happens here: read the current line,
+# and only if our fragment is not already in it, write it back with ours in front. Reading with
+# `tmux show -gv` returns the **unexpanded** format string, so everything else on that line —
+# %H:%M, #{pane_title} — is written back exactly as it was and stays live.
+if [ "${1:-}" = "--status-bind" ]; then
+    # Strip any fragment of ours from **both** halves first, then put one back at the very front
+    # of status-left. In that order this is idempotent (re-sourcing cannot stack copies) and a
+    # migration at once — an install that had the badges on the right gets them moved over.
+    for _o in status-left status-right; do
+        _cur=$(tmux show -gv "$_o" 2>/dev/null) || continue
+        _new=$(printf '%s' "$_cur" | sed 's| *#([^)]*--status)||g')
+        [ "$_cur" = "$_new" ] || tmux set -g "$_o" "$_new" 2>/dev/null || true
+    done
+    cur=$(tmux show -gv status-left 2>/dev/null) || exit 0
+    tmux set -g status-left "#($SELF --status)$cur" 2>/dev/null || true
+    exit 0
+fi
+
 if [ "${1:-}" = "--status-fit" ]; then
-    cur=$(tmux show -gv status-right-length 2>/dev/null) || exit 0
-    case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
-    [ "$cur" -ge 120 ] || tmux set -g status-right-length 120 2>/dev/null || true
+    # status-left-length defaults to **10** — that does not fit a single badge with a session name,
+    # so without this the badges are drawn and then cut off, which looks exactly like not working.
+    for _o in status-left-length status-right-length; do
+        cur=$(tmux show -gv "$_o" 2>/dev/null) || continue
+        case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+        [ "$cur" -ge 120 ] || tmux set -g "$_o" 120 2>/dev/null || true
+    done
     exit 0
 fi
 
 if [ "${1:-}" = "--status-unbind" ]; then
-    cur=$(tmux show -gv status-right 2>/dev/null) || exit 0
-    new=$(printf '%s' "$cur" | sed 's| *#([^)]*--status)||g')
-    [ "$new" = "$cur" ] || tmux set -g status-right "$new" 2>/dev/null || true
+    for _o in status-left status-right; do
+        cur=$(tmux show -gv "$_o" 2>/dev/null) || continue
+        new=$(printf '%s' "$cur" | sed 's| *#([^)]*--status)||g')
+        [ "$new" = "$cur" ] || tmux set -g "$_o" "$new" 2>/dev/null || true
+    done
     exit 0
 fi
 

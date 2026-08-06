@@ -225,10 +225,13 @@ The snippet is regenerated automatically whenever you change `key_summon`,
 `tt --status` prints the fleet tally `⏸2 ✻3` plus a `✓name` badge for work that
 finished while you were away — one line, meant for a tmux status bar.
 
-> **The snippet wires this for you** (`status_badges`, on by default). It *appends* to
-> `status-right` rather than replacing it, so whatever you already had there survives,
-> formats and all. Turn it off with `tt config set status_badges off` — which also takes
-> the fragment back out of a running server, leaving the rest of your line untouched.
+> **The snippet wires this for you** (`status_badges`, on by default). It goes at the very
+> front of `status-left`, ahead of everything else — it is the most urgent thing on that
+> line, and anything appended to the end is also the first thing tmux truncates. Your own
+> `status-left` is kept, formats and all, and `status-left-length` is raised if it is below
+> 120 (the default, 10, does not fit one badge). Turn it off with
+> `tt config set status_badges off` — that also takes the fragment back out of a running
+> server, from both halves of the status line.
 
 ## Configuration
 
