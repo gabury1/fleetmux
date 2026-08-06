@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Open up fmux's hardcoded preferences (rc auto-recovery, cron snapshots, thresholds, color, keybindings) into a config file, changeable via the `tt config` CLI and an in-popup settings screen.
+**Goal:** Open up fmux's hardcoded preferences (rc auto-recovery, cron snapshots, thresholds, color, keybindings) into a config file, changeable via the `fmux config` CLI and an in-popup settings screen.
 
 **Architecture:** A new file `src/05-config.sh` defines the whitelist parser and `fmux_conf_get`, loaded once at script start (never `source`d). Consumption sites (`--cron`, `--snapshot`, `--boot-restore`, `--list`, `--status`, the popup) call `fmux_conf_get` instead of using constants. The CLI lives in `src/85-config-cli.sh`, the in-popup settings screen in `src/86-config-view.sh`. On the tmux side (summon key, exit-snapshot hook), fmux generates a snippet file it owns, so the user's `.tmux.conf` is never touched.
 
@@ -272,7 +272,7 @@ Expected: `t-01-config-parse.sh` fails entirely (there's no `config` subcommand 
 FMUX_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
 FMUX_CONF="${FMUX_CONF_FILE:-$FMUX_CONF_DIR/config}"
 
-# The known keys. This order is also the order `tt config` lists them in.
+# The known keys. This order is also the order `fmux config` lists them in.
 FMUX_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
 
 # Defaults. rc 1 for an unknown key — this function also doubles as the "is this a
@@ -377,7 +377,7 @@ Append this to the end of `src/05-config.sh`:
 ```bash
 # config query entry point (minimal). 85-config-cli.sh handles the rest of the subcommands.
 if [ "${1:-}" = "config" ] && { [ "${2:-}" = "get" ] || [ "${2:-}" = "source" ]; }; then
-    [ -n "${3:-}" ] || { echo "usage: tt config ${2} <key>" >&2; exit 1; }
+    [ -n "${3:-}" ] || { echo "usage: fmux config ${2} <key>" >&2; exit 1; }
     if [ "$2" = get ]; then fmux_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
     else                    fmux_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
     fi
@@ -435,7 +435,7 @@ git commit -m "feat: config parser — whitelist-based, env>file>default"
 
 ---
 
-### Task 3: `tt config` CLI (list / set / unset / path)
+### Task 3: `fmux config` CLI (list / set / unset / path)
 
 **Files:**
 - Create: `src/85-config-cli.sh`
@@ -449,7 +449,7 @@ git commit -m "feat: config parser — whitelist-based, env>file>default"
   - `fmux_conf_validate <key> <value>` — rc 0 if valid, rc 1 + reason on stderr otherwise
   - `fmux_conf_set <key> <value>` — atomic write. Preserves comments and line order
   - `fmux_conf_unset <key>` — deletes that line
-  - CLI: `tt config` / `tt config get <k>` / `tt config source <k>` / `tt config set <k> <v>` / `tt config unset <k>` / `tt config path`
+  - CLI: `fmux config` / `fmux config get <k>` / `fmux config source <k>` / `fmux config set <k> <v>` / `fmux config unset <k>` / `fmux config path`
 
 - [ ] **Step 1: Write a failing test**
 
@@ -616,14 +616,14 @@ if [ "${1:-}" = "config" ]; then
             done
             exit 0 ;;
         get|source)
-            [ -n "${3:-}" ] || { echo "usage: tt config $2 <key>" >&2; exit 1; }
+            [ -n "${3:-}" ] || { echo "usage: fmux config $2 <key>" >&2; exit 1; }
             if [ "$2" = get ]; then fmux_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
             else                    fmux_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
             fi
             echo
             exit 0 ;;
         set)
-            [ -n "${3:-}" ] || { echo "usage: tt config set <key> <value>" >&2; exit 1; }
+            [ -n "${3:-}" ] || { echo "usage: fmux config set <key> <value>" >&2; exit 1; }
             shift 2; k=$1; shift
             v="$*"
             fmux_conf_validate "$k" "$v" || exit 1
@@ -631,7 +631,7 @@ if [ "${1:-}" = "config" ]; then
             printf '%s=%s\n' "$k" "$v"
             exit 0 ;;
         unset)
-            [ -n "${3:-}" ] || { echo "usage: tt config unset <key>" >&2; exit 1; }
+            [ -n "${3:-}" ] || { echo "usage: fmux config unset <key>" >&2; exit 1; }
             fmux_conf_default "$3" >/dev/null 2>&1 || { echo "unknown key: $3" >&2; exit 1; }
             fmux_conf_write "$3" '' unset || exit 1
             printf '%s → default %s\n' "$3" "$(fmux_conf_default "$3")"
@@ -639,7 +639,7 @@ if [ "${1:-}" = "config" ]; then
         path)
             printf '%s\n' "$FMUX_CONF"; exit 0 ;;
         *)
-            echo "usage: tt config [list|get|source|set|unset|path]" >&2; exit 1 ;;
+            echo "usage: fmux config [list|get|source|set|unset|path]" >&2; exit 1 ;;
     esac
 fi
 ```
@@ -660,7 +660,7 @@ If two places handle the same subcommand, the earlier file wins and 85's code ne
 Add to the comment too:
 
 ```
-#   85-config-cli.sh config CLI — validation, atomic writes, tt config subcommands
+#   85-config-cli.sh config CLI — validation, atomic writes, fmux config subcommands
 ```
 
 - [ ] **Step 6: Confirm the tests pass**
@@ -676,7 +676,7 @@ Expected: `t-01` and `t-02` all `ok`.
 ```bash
 make check
 git add src/05-config.sh src/85-config-cli.sh Makefile bin/fmux test/t-02-config-cli.sh
-git commit -m "feat: tt config CLI — validation, conflict detection, atomic writes"
+git commit -m "feat: fmux config CLI — validation, conflict detection, atomic writes"
 ```
 
 ---
@@ -767,7 +767,7 @@ Close it right where the loop ends (**before** the `--snapshot` call at line 142
 Insert this right after `if [ "${1:-}" = "--rc"; then` (line 147) in `src/60-rc.sh`:
 
 ```bash
-    fmux_conf_on rc || { echo "rc=off — auto-recovery is off (tt config set rc on)"; exit 0; }
+    fmux_conf_on rc || { echo "rc=off — auto-recovery is off (fmux config set rc on)"; exit 0; }
 ```
 
 - [ ] **Step 4: Wire the switch into `--snapshot` and `--boot-restore`**
@@ -775,7 +775,7 @@ Insert this right after `if [ "${1:-}" = "--rc"; then` (line 147) in `src/60-rc.
 Right after `if [ "${1:-}" = "--snapshot" ]; then` in `src/70-fleet.sh`:
 
 ```bash
-    fmux_conf_on snapshot || { echo "snapshot=off — not recording (tt config set snapshot on)"; exit 0; }
+    fmux_conf_on snapshot || { echo "snapshot=off — not recording (fmux config set snapshot on)"; exit 0; }
 ```
 
 Right after `if [ "${1:-}" = "--boot-restore" ]; then` in `src/70-fleet.sh`:
@@ -795,9 +795,9 @@ Expected: `t-03` all `ok`.
 - [ ] **Step 6: Confirm by hand that behavior is unchanged when the switches are on**
 
 ```bash
-tt config set snapshot on
-tt --snapshot
-tt config              # check snapshot shows as on/file
+fmux config set snapshot on
+fmux --snapshot
+fmux config              # check snapshot shows as on/file
 ```
 
 Expected: `snapshot: N sessions → …` prints exactly as it always did.
@@ -929,8 +929,8 @@ FMUX_LOG_MAX=$(fmux_conf_get log_max)
 
 ```bash
 make && ./test/run.sh
-tt config set accent 200 && tt --list | head -3   # see the color change with your own eyes
-tt config unset accent
+fmux config set accent 200 && fmux --list | head -3   # see the color change with your own eyes
+fmux config unset accent
 ```
 
 - [ ] **Step 7: Commit**
@@ -943,7 +943,7 @@ git commit -m "feat: make thresholds and accent color configurable"
 
 ---
 
-### Task 6: Generate the tmux snippet (`tt --tmux-conf`) — summon key and exit snapshot
+### Task 6: Generate the tmux snippet (`fmux --tmux-conf`) — summon key and exit snapshot
 
 **Files:**
 - Create: `src/87-tmux-conf.sh`
@@ -957,7 +957,7 @@ git commit -m "feat: make thresholds and accent color configurable"
   - `FMUX_TMUX_CONF` — the snippet file's absolute path (`$FMUX_CONF_DIR/tmux.conf`)
   - `fmux_tmux_conf_render` — prints the snippet contents to stdout
   - `fmux_tmux_conf_write` — writes the snippet atomically. Reflects immediately via `source-file` if inside tmux
-  - CLI: `tt --tmux-conf` (render to stdout) / `tt --tmux-conf --write` (write the file)
+  - CLI: `fmux --tmux-conf` (render to stdout) / `fmux --tmux-conf --write` (write the file)
 
 - [ ] **Step 1: Write a failing test**
 
@@ -1034,7 +1034,7 @@ fmux_tmux_conf_render() {
     local popup="display-popup -E -w 85% -h 75% -b rounded -T ' tt ' $SELFQ --from '#S'"
     local k fast
 
-    printf '# file generated by fleetmux — do not edit by hand. Changed via tt config set …\n'
+    printf '# file generated by fleetmux — do not edit by hand. Changed via fmux config set …\n'
     printf '# your own config only needs this one line:  source-file %s\n\n' "$FMUX_TMUX_CONF"
 
     # strip prior-version prefix-less bindings first (fails silently if absent, which is fine)
@@ -1116,7 +1116,7 @@ Expected: `t-05` all `ok`.
 - [ ] **Step 6: Confirm for real (non-destructive)**
 
 ```bash
-tt --tmux-conf            # prints to screen only — never touches a file
+fmux --tmux-conf            # prints to screen only — never touches a file
 ```
 
 Expected: `bind F …` and the two exit-snapshot hook lines appear.
@@ -1256,7 +1256,7 @@ session=$(fmux_popup_fzf) || rc=$?
 if [ "$rc" = 2 ]; then
     # fzf never even came up because of a configured key — retry once with defaults.
     # A control tower that fails to come up at all is the worst failure this tool can have.
-    printf 'fleetmux warning: couldn'"'"'t launch the popup with the configured keys — launching with defaults (check tt config)\n' >&2
+    printf 'fleetmux warning: couldn'"'"'t launch the popup with the configured keys — launching with defaults (check fmux config)\n' >&2
     rc=0
     session=$(FMUX_KEYS_DEFAULT=1 fmux_popup_fzf) || rc=$?
 fi
@@ -1283,11 +1283,11 @@ fmux_key() {
 
 ```bash
 make && ./test/run.sh
-tt config set key_new ctrl-t
+fmux config set key_new ctrl-t
 tmux new-session -d -s zz-keytest 'sleep 60'   # a zz prefix is excluded from the manifest
 # open the popup and confirm with your own eyes that Ctrl-T opens a new session, then
 tmux kill-session -t zz-keytest
-tt config unset key_new
+fmux config unset key_new
 ```
 
 - [ ] **Step 7: Commit**
@@ -1312,9 +1312,9 @@ git commit -m "feat: popup keybinding remap — validation, per-key fallback, re
 **Interfaces:**
 - Consumes: `fmux_conf_get`, `fmux_conf_source`, `FMUX_CONF_KEYS` (Task 2), `fmux_conf_validate` (Task 3)
 - Produces:
-  - `tt --config-list` — prints one line per setting for the settings screen (`key<TAB>display string`)
-  - `tt --config-toggle <key>` — flips and saves if boolean, otherwise rc 2 (a signal that the caller needs to prompt for a value)
-  - `tt --config-view` — the fzf settings screen
+  - `fmux --config-list` — prints one line per setting for the settings screen (`key<TAB>display string`)
+  - `fmux --config-toggle <key>` — flips and saves if boolean, otherwise rc 2 (a signal that the caller needs to prompt for a value)
+  - `fmux --config-view` — the fzf settings screen
 
 - [ ] **Step 1: Write a failing test**
 
@@ -1496,7 +1496,7 @@ fi
 
 ```bash
 make && ./test/run.sh
-tt --config-list | head -5
+fmux --config-list | head -5
 # open the popup and confirm with your own eyes that Ctrl-O opens the settings screen,
 # and Esc returns to the list
 ```
@@ -1531,7 +1531,7 @@ the pane and changes it again). The skill follows the same discipline:
 - Test: `test/t-08-skill.sh`
 
 **Interfaces:**
-- Consumes: `tt --list`, `tt --status`, `tt --preview` (existing CLI, unchanged), `~/.cache/fmux/hook-*`
+- Consumes: `fmux --list`, `fmux --status`, `fmux --preview` (existing CLI, unchanged), `~/.cache/fmux/hook-*`
 - Produces: a file copied to `~/.claude/skills/fleetmux/SKILL.md` at install time. No code changes
 
 - [ ] **Step 1: Write a failing test**
@@ -1599,8 +1599,8 @@ Codex hooks, and fmux writes that down. Read what it wrote.
 ## Fleet at a glance
 
 ```bash
-tt --status     # one line: "⏸2 ✻3" — waiting for you / working right now, plus ✓name badges
-tt --list       # one row per session: name, marks, last activity
+fmux --status     # one line: "⏸2 ✻3" — waiting for you / working right now, plus ✓name badges
+fmux --list       # one row per session: name, marks, last activity
 ```
 
 Marks: `●` attached · `✻` working · `⏸` awaiting your approval · `✓` finished while you were away
@@ -1612,7 +1612,7 @@ plan approval, a question. Surface those first, before anything else.
 ## One session in detail
 
 ```bash
-tt --preview <session-name>    # tail of that pane — the bottom is where the prompt lives
+fmux --preview <session-name>    # tail of that pane — the bottom is where the prompt lives
 ```
 
 Use this only after the state told you which session is interesting. It is a rendering: quote it
@@ -1640,7 +1640,7 @@ doing:   <one line>
 blocked: <what it needs, or none>
 ```
 
-Then merge. `tt --status` already gives you the tally, so the subagents only fill in the "why".
+Then merge. `fmux --status` already gives you the tally, so the subagents only fill in the "why".
 
 ## Writing into other sessions
 
@@ -1650,7 +1650,7 @@ whatever it is doing and cannot be undone.
 If — and only if — the human explicitly asks to send something:
 
 ```bash
-tt --do-broadcast <name> [<name>...]    # prompts, then sends to each
+fmux --do-broadcast <name> [<name>...]    # prompts, then sends to each
 ```
 
 Confirm the exact target list with the human first. Never broadcast to tool sessions (shells,
@@ -1679,7 +1679,7 @@ cp skills/fleetmux/SKILL.md ~/.claude/skills/fleetmux/SKILL.md
 ```
 
 In a new claude session, ask "what are the other sessions doing?" and confirm the
-skill fires and calls `tt --status` first.
+skill fires and calls `fmux --status` first.
 
 > Install automation (having `install.sh` ask whether to lay down this directory) is
 > covered in the **public-release plan**. The skill is Claude Code-only — codex has no

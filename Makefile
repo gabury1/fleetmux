@@ -8,25 +8,25 @@
 # final file's order. Changing the order changes behavior.
 #
 # What each file holds:
-#   00-header.sh   shebang · set -euo pipefail · LC_ALL · STATE · resolving its own absolute path (tt_self/SELF/SELFQ)
-#   05-config.sh   config — whitelist parser · env > file > default precedence · tt_conf_get/on/source
-#   10-util.sh     portability helpers (tt_comm) · bash 3.2 branch (TT_TINY_READ) · hook.log rotation
+#   00-header.sh   shebang · set -euo pipefail · LC_ALL · STATE · resolving its own absolute path (fmux_self/SELF/SELFQ)
+#   05-config.sh   config — whitelist parser · env > file > default precedence · fmux_conf_get/on/source
+#   10-util.sh     portability helpers (fmux_comm) · bash 3.2 branch (FMUX_TINY_READ) · hook.log rotation
 #   20-manifest.sh manifest path/format · uuid detection · integrity check (awk) · atomic write · 3-generation backup
-#   30-state.sh    state-determination layer — screen "working" detection (tt_working) · finished lock/normalize ·
-#                  hook file validity (tt_hook_valid) · tt_is_agent · tt_broadcast · hook sweep · tt_jv
+#   30-state.sh    state-determination layer — screen "working" detection (fmux_working) · finished lock/normalize ·
+#                  hook file validity (fmux_hook_valid) · fmux_is_agent · fmux_broadcast · hook sweep · fmux_jv
 #   35-lastprompt.sh last prompt (last-<sid>) — awk scanner that extracts from the payload · save function ·
 #                  awk that renders the preview header. Both 50 (hook) and 90 (preview) use it, hence it comes before both.
 #   40-mfops.sh    manifest mutation — lock · line lookup · upsert · rename · forget
-#   50-hook.sh     fleet aggregation (tt_fleet_agg) · --hook receiver (working/idle/waiting/clear/boot) · --status
+#   50-hook.sh     fleet aggregation (fmux_fleet_agg) · --hook receiver (working/idle/waiting/clear/boot) · --status
 #   60-rc.sh       rc detection helpers (rc_*) · --cron (=--rc-check) · --rc
-#   70-fleet.sh    tt_conv_of · --snapshot · --forget · --restore
+#   70-fleet.sh    fmux_conv_of · --snapshot · --forget · --restore
 #   80-view.sh     --list
-#   85-config-cli.sh config CLI — validation · atomic write · tt config subcommands
+#   85-config-cli.sh config CLI — validation · atomic write · fmux config subcommands
 #   86-config-view.sh in-popup config screen — --config-list/--config-toggle/--config-view
 #   87-tmux-conf.sh  generates the tmux snippet — summon-key binding · on-detach snapshot hook (--tmux-conf [--write])
-#                    Comes after 85: `tt config set` exits inside 85, so it can't see this file's functions.
+#                    Comes after 85: `fmux config set` exits inside 85, so it can't see this file's functions.
 #                    So 85 doesn't call the function directly — it re-invokes via `$SELF --tmux-conf --write`.
-#   90-main.sh     tt_prompt · --do-* · --preview · --hooks-json · --codex-hooks · --help · entry point (fzf popup)
+#   90-main.sh     fmux_prompt · --do-* · --preview · --hooks-json · --codex-hooks · --help · entry point (fzf popup)
 #
 # The shebang must live only in 00-header.sh — putting it in another file would bury a shebang
 # in the middle of the concatenated result.
@@ -123,14 +123,14 @@ install: $(OUT)
 	cp $(OUT) $(BINDIR)/fmux
 	chmod +x $(BINDIR)/fmux
 	@echo "installed $(BINDIR)/fmux"
-# The tt symlink. It must be usable right after a bare `make install` — the PATH shim
-# (libexec/claude) confirms we exist via `command -v tt`, so without this name the hook
-# injection doesn't attach at all.
+# The tt symlink — a convenience alias, nothing more. It used to be a hard dependency: the PATH
+# shim confirmed we existed with `command -v tt` and called `tt --hooks-json`, so deleting this
+# name killed hook injection silently. The shim looks for `fmux` now, so this is optional.
 # Never overwrite someone else's tt — an installer must not delete another tool.
 #   ⚠️ The old guard was `[ -e ] && [ ! -L ]`: it protected regular files but **clobbered
 #   other people's symlinks**. Symlinking a personal tool into ~/.local/bin is the most common
 #   pattern, so this comment was misrepresenting the code (team deploy gate I2). install.sh
-#   inherits this same rule when make is present, so its tt_link_ours and this one must make
+#   inherits this same rule when make is present, so its fmux_link_ours and this one must make
 #   **the same call**: only touch it when it's absent or already a symlink pointing at fmux.
 	@if [ ! -e "$(BINDIR)/tt" ] && [ ! -L "$(BINDIR)/tt" ]; then \
 		ln -sf fmux "$(BINDIR)/tt"; \

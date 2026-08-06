@@ -46,7 +46,7 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux/config
 ```
 
 ```ini
-# fleetmux config — tt config set <key> <value>
+# fleetmux config — fmux config set <key> <value>
 rc=off
 recent_hours=12
 key_new=ctrl-t
@@ -69,7 +69,7 @@ key_new=ctrl-t
 env var  >  config file  >  code default
 ```
 
-Env vars are for one-off experiments (`FMUX_RC=0 tt --cron`). The existing
+Env vars are for one-off experiments (`FMUX_RC=0 fmux --cron`). The existing
 `FMUX_LOG_MAX`, `FMUX_BOOT_NETWAIT`, `FMUX_MANIFEST` are kept as-is (backward compatible).
 
 ### 3. Key list v1
@@ -127,11 +127,11 @@ key." A control tower that fails to come up at all is the worst possible failure
 ### 5. CLI
 
 ```
-tt config                 # everything — value + source (default|file|env)
-tt config get <key>
-tt config set <key> <val> # validate → tmp file → mv (atomic), same flock pattern as the manifest
-tt config unset <key>     # remove the line from the file → revert to default
-tt config path            # print the config file path
+fmux config                 # everything — value + source (default|file|env)
+fmux config get <key>
+fmux config set <key> <val> # validate → tmp file → mv (atomic), same flock pattern as the manifest
+fmux config unset <key>     # remove the line from the file → revert to default
+fmux config path            # print the config file path
 ```
 
 An invalid key/value prints rc 1 and the allowed range. `set` preserves comments and
@@ -207,12 +207,12 @@ source-file ~/.config/fleetmux/tmux.conf
 
 ```tmux
 # example generated — key_summon=F, key_summon_fast="C-Left M-b"
-bind    F      display-popup -E -w 85% -h 75% "tt --from '#S'"
-bind -n C-Left display-popup -E -w 85% -h 75% "tt --from '#S'"
-bind -n M-b    display-popup -E -w 85% -h 75% "tt --from '#S'"
+bind    F      display-popup -E -w 85% -h 75% "fmux --from '#S'"
+bind -n C-Left display-popup -E -w 85% -h 75% "fmux --from '#S'"
+bind -n M-b    display-popup -E -w 85% -h 75% "fmux --from '#S'"
 ```
 
-`tt config set key_summon_fast "C-Left M-b"` only rewrites its own file, and if you're
+`fmux config set key_summon_fast "C-Left M-b"` only rewrites its own file, and if you're
 inside tmux it reflects immediately via `tmux source-file`. Any key dropped from the
 list also gets an `unbind` emitted — otherwise the removed binding stays alive until
 the server dies.
@@ -223,7 +223,7 @@ Same philosophy as the shim — **borrow one line, and removing it leaves no tra
 
 - Two entry points: `key_settings` (default `ctrl-o`) from anywhere, or the
   `⚙ settings` item at the bottom of the list
-- The screen is an fzf re-invocation (`tt --config-view`). Each line is
+- The screen is an fzf re-invocation (`fmux --config-view`). Each line is
   `key · current value · one-line description`
 - Enter:
   - boolean → immediate toggle, save, reload
@@ -250,8 +250,8 @@ separate socket):
 
 ```tmux
 # ~/.config/fleetmux/tmux.conf — file owned by fmux (same place as the summon key)
-set-hook -g client-detached 'run-shell -b "tt --snapshot >/dev/null 2>&1"'
-set-hook -g session-closed  'run-shell "tt --snapshot >/dev/null 2>&1"'
+set-hook -g client-detached 'run-shell -b "fmux --snapshot >/dev/null 2>&1"'
+set-hook -g session-closed  'run-shell "fmux --snapshot >/dev/null 2>&1"'
 ```
 
 - `client-detached` uses `-b` (background). A snapshot must never hold up someone who
@@ -310,7 +310,7 @@ Wired into `make check`.
 
 ## Docs
 
-- README gets a `Configuration` section — file location, key table, `tt config`
+- README gets a `Configuration` section — file location, key table, `fmux config`
   usage, "what off means"
 - One line added to `config` in `--help`
 - Also fixes the wrong libexec path in the README (`libexec/fleetmux` →

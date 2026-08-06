@@ -42,7 +42,7 @@ free here and painful any other way.
 The same payload carries the prompt you just typed, so the `UserPromptSubmit` hook
 also parks it in `~/.cache/fmux/last-<session-id>` (4096 bytes, control characters
 stripped). That file holds **what you typed**, so it is written `0600` regardless of your
-umask — it is the only thing under `~/.cache/tt` that is conversation content rather than
+umask — it is the only thing under `~/.cache/fmux` that is conversation content rather than
 bookkeeping, and a shared machine has other uids on it. The popup preview puts its first
 3 lines above the pane tail — "what did I ask this one to do?" is the question the screen
 cannot answer, because the answer scrolled away hours ago. It is decoration only: no file,
