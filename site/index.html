@@ -1,0 +1,125 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fleetmux — a tmux cockpit for a fleet of AI agents</title>
+<meta name="description" content="See which of your Claude Code / Codex sessions are working, which are waiting on you, and which finished while you were away — without opening a single one.">
+<meta property="og:title" content="fleetmux">
+<meta property="og:description" content="A tmux cockpit for running a fleet of AI coding agents.">
+<style>
+  :root{
+    --bg:#0f1319; --panel:#151b23; --line:#232c38;
+    --fg:#c8d3d5; --dim:#7d8b98; --teal:#4ec9b0; --amber:#d7af5f; --green:#7fae6e;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:880px;margin:0 auto;padding:0 22px}
+  a{color:var(--teal)}
+  header{padding:72px 0 34px;text-align:center}
+  h1{font:600 44px/1.1 var(--mono);margin:0 0 14px;letter-spacing:-.02em}
+  h1 .m{color:var(--teal)}
+  .tag{font-size:19px;color:var(--fg);margin:0 auto 10px;max-width:620px}
+  .sub{color:var(--dim);font-size:15px;margin:0}
+  .cta{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:26px 0 0}
+  .btn{display:inline-block;padding:9px 17px;border-radius:8px;border:1px solid var(--line);
+       color:var(--fg);text-decoration:none;font-size:14px;background:var(--panel)}
+  .btn.primary{border-color:var(--teal);color:var(--teal)}
+  figure{margin:44px 0 0}
+  figure img{width:100%;border-radius:11px;border:1px solid var(--line);display:block}
+  figcaption{color:var(--dim);font-size:13.5px;margin-top:12px;text-align:center}
+  section{padding:56px 0 0}
+  h2{font-size:14px;letter-spacing:.09em;text-transform:uppercase;color:var(--teal);
+     margin:0 0 18px;font-weight:600}
+  .lede{font-size:18px;margin:0 0 22px}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+      padding:15px 17px;overflow-x:auto;font:14px/1.6 var(--mono);margin:0 0 12px}
+  code{font-family:var(--mono);font-size:.93em}
+  p code{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+  .grid{display:grid;gap:22px;grid-template-columns:repeat(auto-fit,minmax(238px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:20px}
+  .card h3{margin:0 0 8px;font:600 15px/1.4 var(--mono);color:var(--fg)}
+  .card p{margin:0;color:var(--dim);font-size:14.5px}
+  .mark{font-family:var(--mono);font-weight:700}
+  .mark.w{color:var(--amber)} .mark.r{color:#8ab4f8} .mark.d{color:var(--green)}
+  .note{color:var(--dim);font-size:14.5px}
+  footer{margin:70px 0 40px;padding-top:24px;border-top:1px solid var(--line);
+         color:var(--dim);font-size:13.5px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  @media (max-width:560px){h1{font-size:34px}header{padding:48px 0 26px}}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>fleet<span class="m">mux</span></h1>
+  <p class="tag">A tmux cockpit for running a fleet of AI coding agents.</p>
+  <p class="sub">One bash file. No runtime to install.</p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/gabury1/fleetmux">GitHub</a>
+    <a class="btn" href="https://github.com/gabury1/fleetmux/releases/latest">Latest release</a>
+  </div>
+
+  <figure>
+    <img src="demo.gif" alt="The status bar shows a session waiting for approval; one keystroke opens the fleet list and the preview shows the last prompt.">
+    <figcaption>The status bar already told you. One keystroke opens the list — and lands you on the session that was blocked on a human.</figcaption>
+  </figure>
+</header>
+
+<section>
+  <h2>The problem</h2>
+  <p class="lede">Run five agents at once and the expensive one is not the slow session — it is
+  the one that finished asking you a question forty minutes ago and has been idle ever since.</p>
+  <p class="note">You cannot see that from outside the session, so you go in and look. Five times.
+  Then you do it again in ten minutes.</p>
+</section>
+
+<section>
+  <h2>What you get</h2>
+  <div class="grid">
+    <div class="card">
+      <h3><span class="mark w">⏸</span> waiting on you</h3>
+      <p>The one that matters. It is named in the status bar, so you know <em>which</em> session
+      is blocked without opening anything.</p>
+    </div>
+    <div class="card">
+      <h3><span class="mark r">✻</span> working</h3>
+      <p>Actually running right now — judged from agent hooks and CPU, not from guessing at
+      what the screen looks like.</p>
+    </div>
+    <div class="card">
+      <h3><span class="mark d">✓</span> finished while away</h3>
+      <p>Unread results sit at the top of the list and clear themselves the moment you visit.</p>
+    </div>
+    <div class="card">
+      <h3>survives a reboot</h3>
+      <p><code>fmux --restore</code> brings the whole fleet back — every session in its own
+      directory, each agent resuming its own conversation.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Why not just read the screen?</h2>
+  <p>Because that was the first version, and it was wrong three separate ways. Spinner wording
+  changes between releases. An idle session still repaints its status line. Attaching to a
+  session reflows it and every heuristic shifts underneath you.</p>
+  <p class="lede">The screen is a rendering, not the content.</p>
+  <p class="note">So state comes from the agent itself. Claude Code and Codex hooks report
+  <code>working</code> / <code>idle</code> / <code>waiting</code> as they happen, and fmux draws
+  what they said. The hooks are injected through a PATH shim that only fires inside tmux — your
+  global config is never touched, and deleting one file removes every trace.</p>
+</section>
+
+<section>
+  <h2>Install</h2>
+  <pre>curl -fsSL https://raw.githubusercontent.com/gabury1/fleetmux/main/install.sh | bash</pre>
+  <p class="note">Or read it first, which is the reasonable thing to do with any
+  <code>curl | sh</code> — the README shows that path too. The installer checks its
+  dependencies, never edits your crontab, and never takes a key or a file that is already
+  someone else's. Requires tmux ≥ 3.2, fzf ≥ 0.64, bash. Linux and macOS; Windows via WSL2.</p>
+</section>
+
+<footer>
+  <span>MIT · <a href="https://github.com/gabury1/fleetmux">github.com/gabury1/fleetmux</a></span>
+  <span>Built for a Raspberry Pi running ten agents at once.</span>
+</footer>
+</div>
