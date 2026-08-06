@@ -30,7 +30,7 @@ rendering.** Scraping the prompt from the screen breaks every time on line wraps
 characters, scrolling. And there's no need to:
 
 The `--hook` receiver in `src/50-hook.sh` already reads and parses a payload from
-stdin (`tt_jv "$payload" session_id`, `tt_jv "$payload" cwd`). Claude Code's
+stdin (`fmux_jv "$payload" session_id`, `fmux_jv "$payload" cwd`). Claude Code's
 `UserPromptSubmit` payload includes the prompt body itself. **The material is already
 in hand — it just needs to be pulled out one more time.**
 
@@ -39,7 +39,7 @@ in hand — it just needs to be pulled out one more time.**
 ### 1. Storage
 
 ```
-~/.cache/tt/last-<tmux-session-id>
+~/.cache/fmux/last-<tmux-session-id>
   line 1     recorded time (unix epoch)
   line 2+    raw prompt text
 ```
@@ -58,7 +58,7 @@ in hand — it just needs to be pulled out one more time.**
 
 - The `SessionEnd` (clear) hook deletes that session's file — same spot where
   `hook-<sid>` gets deleted.
-- The orphan sweep (`tt_sweep_hooks`), when it sweeps `hook-*`, sweeps `last-*` too.
+- The orphan sweep (`fmux_sweep_hooks`), when it sweeps `hook-*`, sweeps `last-*` too.
   After a reboot, tmux reissues session IDs starting from `$0`, so a dead session's
   file must be kept from attaching to a new session. **It uses the exact same
   criterion as `hook-*`** (no separate one is built).

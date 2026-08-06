@@ -18,16 +18,16 @@
 #   transcript is under ~/.claude/projects/-home-user/). Restoring with only the session cwd drops
 #   you into the shell with "No conversation found". So the two are recorded separately — restore
 #   creates the session at the session cwd, but runs the resume itself from the conversation home.
-# TT_MANIFEST lets the path be swapped: an escape hatch so tests don't overwrite the real fleet
+# FMUX_MANIFEST lets the path be swapped: an escape hatch so tests don't overwrite the real fleet
 # record.
-MANIFEST="${TT_MANIFEST:-$STATE/manifest}"
+MANIFEST="${FMUX_MANIFEST:-$STATE/manifest}"
 
 # A conversation id is a uuid. Not "something uuid-like" — only an exact uuid is let through.
 #   There was a real incident (2026-07-25) where a field shifted by one slot and a string like
 #   "claude" or "agent" sat in the conversation-id slot, propagating through every snapshot after
 #   that. --resume on that line makes the conversation look like it vanished entirely.
 #   Why case glob instead of [[ =~ ]]: no forks, no regex engine, no shell-implementation gap.
-tt_is_uuid() {
+fmux_is_uuid() {
     case "${1:-}" in
         [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) return 0 ;;
     esac
@@ -50,7 +50,7 @@ tt_is_uuid() {
 #   Why `|| s=''` is attached: this file is under `set -euo pipefail`. A pipeline with a
 #   nonexistent command is rc 127, and pipefail propagates that out of the assignment — without
 #   this, the function would die silently depending on the calling context.
-tt_login_shell() {
+fmux_login_shell() {
     local s u
     u=$(id -un 2>/dev/null) || u=''
     s=$(getent passwd "$u" 2>/dev/null | cut -d: -f7) || s=''
@@ -62,8 +62,8 @@ tt_login_shell() {
 }
 
 # Is an agent actually running in the pane — for restore verification. Same criteria as the
-# second clause of tt_is_agent.
-tt_pane_has_agent() {
+# second clause of fmux_is_agent.
+fmux_pane_has_agent() {
     tmux list-panes -s -t "=${1:-}:" -F '#{pane_current_command}' 2>/dev/null \
         | grep -qxE 'claude|codex'
 }
@@ -76,7 +76,7 @@ tt_pane_has_agent() {
 #   Checks: field count is 5 or 6 / no empty fields / kind is agent|tool / conv is '-' or a uuid.
 #   Why uuid detection doesn't use regex {n} repetition: interval support differs across awk
 #   implementations (BSD awk).
-TT_MF_CHECK_AWK='
+FMUX_MF_CHECK_AWK='
     function isuuid(s,   i, c) {
         if (length(s) != 36) return 0
         for (i = 1; i <= 36; i++) {
@@ -92,14 +92,14 @@ TT_MF_CHECK_AWK='
     $3 != "agent" && $3 != "tool" { bad = 1; exit }
     $5 != "-" && !isuuid($5) { bad = 1; exit }
     END { exit (bad ? 1 : 0) }'
-tt_mf_check() { printf '%s' "${1:-}" | awk -F'\t' "$TT_MF_CHECK_AWK"; }
+fmux_mf_check() { printf '%s' "${1:-}" | awk -F'\t' "$FMUX_MF_CHECK_AWK"; }
 
 # Atomic manifest replace — only content that passed validation lands. On failure the existing
 # file is left untouched.
 #   Warnings go to stderr: the hook path is 2>/dev/null so it stays quiet, while a human-run
 #   --snapshot will notice it.
-tt_mf_write() {
-    if ! tt_mf_check "${1:-}"; then
+fmux_mf_write() {
+    if ! fmux_mf_check "${1:-}"; then
         printf 'fmux: manifest write refused — malformed rows; %s left untouched\n' "$MANIFEST" >&2
         return 1
     fi
@@ -116,7 +116,7 @@ tt_mf_write() {
 #   Back when there was only 1 generation, since --snapshot runs on a 1-minute cron, the window to
 #   catch an "oops" and recover was 60 seconds — one more bad snapshot and even the one backup
 #   gets overwritten with bad content. With 3 generations, there's at least 3 minutes.
-tt_mf_backup() {
+fmux_mf_backup() {
     [ -f "$MANIFEST" ] || return 0
     [ -f "$MANIFEST.bak2" ] && cp -f "$MANIFEST.bak2" "$MANIFEST.bak3" 2>/dev/null
     [ -f "$MANIFEST.bak" ]  && cp -f "$MANIFEST.bak"  "$MANIFEST.bak2" 2>/dev/null

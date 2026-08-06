@@ -1,24 +1,24 @@
 # ── In-popup settings screen ─────────────────────────────────────────────────
-# Change settings without leaving the popup. One way in — ^O in the popup (TT_KEY_SETTINGS in 90-main.sh).
+# Change settings without leaving the popup. One way in — ^O in the popup (FMUX_KEY_SETTINGS in 90-main.sh).
 #
 # A line has the same shape as --list: "<key>\t<human-readable display>". fzf hides field 1 via
 # --with-nth, and instead of {1} we cut off everything before the tab of the chosen line ourselves
 # (same discipline as --list).
 
 # Boolean keys — keys that can be flipped instantly with Enter. Everything else needs a typed value.
-#   This list must stay in sync with the boolean branch of tt_conf_validate (85-config-cli.sh).
-tt_conf_is_bool() {
+#   This list must stay in sync with the boolean branch of fmux_conf_validate (85-config-cli.sh).
+fmux_conf_is_bool() {
     case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore|status_badges) return 0 ;; *) return 1 ;; esac
 }
 
-# tt_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `fmux config list`
+# fmux_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `fmux config list`
 #   uses the same judgment, and since 85 is concatenated before this file we can just call it here.
 #   It's pulled from code rather than a hand-written list: there's no longer any need to remember
 #   "update the list too when you wire a new key".
 
 # One-line description. Avoid parentheses — if this string ever ends up inside an fzf --bind
 # execute/reload argument, a closing paren would truncate the binding (same reason as 80-view.sh:58).
-tt_conf_desc() {
+fmux_conf_desc() {
     case "${1:-}" in
         rc)               printf 'auto-recover the remote-control link' ;;
         snapshot)         printf 'record the fleet on every popup/cron tick' ;;
@@ -46,9 +46,9 @@ tt_conf_desc() {
 # One round of the settings screen: draw once, pick once.
 #   Returning rc 1 tells the caller to end the loop (Esc/← = back to the session list).
 #   The list is regenerated as a fresh child process every time — the value that was just changed
-#   needs to show up right away, but this process's tt_conf_load cache is stuck on the file as it
+#   needs to show up right away, but this process's fmux_conf_load cache is stuck on the file as it
 #   was at start.
-tt_conf_view_once() {
+fmux_conf_view_once() {
     local line k rc nv
     # The child's stderr goes to a log, not the screen. If the hand-edited config has a broken
     # line, the warning would paint over the screen fzf drew and make the settings screen
@@ -86,19 +86,19 @@ tt_conf_view_once() {
 
 # List for the settings screen. One line = "<key>\t<display>".
 if [ "${1:-}" = "--config-list" ]; then
-    # Contract (05-config.sh:53): the loop below calls tt_conf_get/tt_conf_source via $(...) for
-    # every key — all subshells, so unless tt_conf_load is fired here first as a bare statement, one
+    # Contract (05-config.sh:53): the loop below calls fmux_conf_get/fmux_conf_source via $(...) for
+    # every key — all subshells, so unless fmux_conf_load is fired here first as a bare statement, one
     # broken config line repeats its warning once per key. This list runs every time the screen redraws.
-    tt_conf_load
-    for k in $TT_CONF_KEYS; do
-        v=$(tt_conf_get "$k")
+    fmux_conf_load
+    for k in $FMUX_CONF_KEYS; do
+        v=$(fmux_conf_get "$k")
         # An empty value is a valid value too (that's key_summon_fast's default) — leaving the
         # slot blank would collapse the column, so we fill it with '-'. Width alignment is %-16s, so it must be ASCII.
         [ -n "$v" ] || v='-'
         # A key pinned by env doesn't change no matter what's written to the file — flag that next to the value.
-        [ "$(tt_conf_source "$k")" = env ] && v="$v @env"
-        d=$(tt_conf_desc "$k")
-        if tt_conf_wired "$k"; then
+        [ "$(fmux_conf_source "$k")" = env ] && v="$v @env"
+        d=$(fmux_conf_desc "$k")
+        if fmux_conf_wired "$k"; then
             printf '%s\t%-18s %-16s %s\n' "$k" "$k" "$v" "$d"
         else
             printf '%s\t%-18s %-16s \033[2mnot wired · %s\033[0m\n' "$k" "$k" "$v" "$d"
@@ -110,37 +110,37 @@ fi
 # If it's a boolean, flip and save it and return rc 0. If not, rc 2 — a signal that "the caller
 # should read a value". Any other rejection (unknown key, pinned by env) is rc 1 with the reason on stderr.
 if [ "${1:-}" = "--config-toggle" ]; then
-    tt_conf_load
+    fmux_conf_load
     k="${2:-}"
-    tt_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; exit 1; }
+    fmux_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; exit 1; }
     # A key that env wins doesn't change no matter what's written to the file — blocked precisely
     #   because that's the "lying toggle".
     #   This check comes before the boolean check: keys that take a typed value fail the same way,
     #   so it's better not to ask at all than to take input and throw it away.
-    #   log_max used to always hit this — 10-util.sh set up the TT_LOG_MAX global itself, and that
+    #   log_max used to always hit this — 10-util.sh set up the FMUX_LOG_MAX global itself, and that
     #   name is exactly this key's environment variable name, so it always read as "env wins". Once
     #   threshold wiring removed that global, this now only triggers when a real environment
     #   variable is actually set.
-    if [ "$(tt_conf_source "$k")" = env ]; then
-        echo "$k is overridden by environment variable $(tt_conf_envname "$k") — writing to the config file has no effect" >&2
+    if [ "$(fmux_conf_source "$k")" = env ]; then
+        echo "$k is overridden by environment variable $(fmux_conf_envname "$k") — writing to the config file has no effect" >&2
         exit 1
     fi
-    tt_conf_is_bool "$k" || exit 2
-    if tt_conf_on "$k"; then nv=off; else nv=on; fi
+    fmux_conf_is_bool "$k" || exit 2
+    if fmux_conf_on "$k"; then nv=off; else nv=on; fi
     # Validate and write directly in this process (functions from 85-config-cli.sh). Forking via
     # `$SELF config set` would make the child re-parse the config file, turning one broken line into two warnings per toggle.
-    tt_conf_validate "$k" "$nv" || exit 1
-    tt_conf_write "$k" "$nv" set || exit 1
+    fmux_conf_validate "$k" "$nv" || exit 1
+    fmux_conf_write "$k" "$nv" set || exit 1
     # snapshot_on_exit is a boolean baked into the tmux snippet — flipping it here must also update
-    # the snippet. The value-input path (tt_conf_view_once) leaves this to `$SELF config set`, which already runs it there.
-    tt_conf_resnip "$k"
+    # the snippet. The value-input path (fmux_conf_view_once) leaves this to `$SELF config set`, which already runs it there.
+    fmux_conf_resnip "$k"
     exit 0
 fi
 
 # Settings screen. Runs round after round until Esc/← exits.
 if [ "${1:-}" = "--config-view" ]; then
     while :; do
-        tt_conf_view_once || break
+        fmux_conf_view_once || break
     done
     exit 0
 fi

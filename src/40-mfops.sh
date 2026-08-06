@@ -4,7 +4,7 @@
 #   This is also called from the hook path, so the wait stays short. If we can't get the
 #   lock, we just give up on this one write — if the manifest delayed the hook's actual
 #   job (status updates, completion notifications), that would be the tail wagging the dog.
-tt_mf_lock() {
+fmux_mf_lock() {
     local d="${MANIFEST%/*}"
     [ -d "$d" ] || mkdir -p "$d" 2>/dev/null || return 1
     command -v flock >/dev/null 2>&1 || return 0
@@ -12,10 +12,10 @@ tt_mf_lock() {
     flock -w 2 8 2>/dev/null || return 1
     return 0
 }
-tt_mf_unlock() { exec 8>&- 2>/dev/null || true; return 0; }
+fmux_mf_unlock() { exec 8>&- 2>/dev/null || true; return 0; }
 
 # Prints that session's manifest line verbatim (empty output if none)
-tt_mf_row() {
+fmux_mf_row() {
     local line t=$'\t'
     [ -f "$MANIFEST" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -38,13 +38,13 @@ tt_mf_row() {
 #   ④ The 6th field, "conversation home," follows the same rule. The hook is the only
 #      place that knows this value precisely, from the cwd in stdin JSON — because it's
 #      exactly the value claude itself uses to compute its own conversation folder.
-tt_mf_upsert() {
+fmux_mf_upsert() {
     local name="$1" cwd="$2" kind="$3" cmd="$4" conv="$5" chome="${6:-}"
     local t=$'\t' line old="" o row out="" found=0
     [ -n "$name" ] || return 0
     case "$name" in *"$t"*) return 0 ;; esac   # a name containing a tab would break the format — give up on recording it
     case "$cwd$kind$cmd$conv$chome" in *"$t"*) return 0 ;; esac
-    tt_mf_lock || return 0
+    fmux_mf_lock || return 0
     # Pass 1: look at the old line first (to preserve unknown fields we need the old values before building the new line)
     if [ -f "$MANIFEST" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
@@ -69,10 +69,10 @@ tt_mf_upsert() {
     # Conversation id must be a uuid only — if a mistimed value like "claude" gets in here,
     # the integrity check would reject every write after it, freezing the whole manifest
     # solid. Filtering it out at the door is cheap.
-    tt_is_uuid "$conv" || conv="-"
+    fmux_is_uuid "$conv" || conv="-"
     case "$kind" in agent|tool) ;; *) kind="tool" ;; esac
     row="$name$t$cwd$t$kind$t$cmd$t$conv$t$chome"
-    [ "$old" = "$row" ] && { tt_mf_unlock; return 0; }   # unchanged → file untouched
+    [ "$old" = "$row" ] && { fmux_mf_unlock; return 0; }   # unchanged → file untouched
     # Pass 2: replace in place (preserving order — this is a file humans read)
     if [ -f "$MANIFEST" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
@@ -86,18 +86,18 @@ tt_mf_upsert() {
         done < "$MANIFEST"
     fi
     [ "$found" = 1 ] || out="$out$row"$'\n'
-    tt_mf_write "$out" || true      # validation failed = keep the existing file (silently give up on this write only)
-    tt_mf_unlock
+    fmux_mf_write "$out" || true      # validation failed = keep the existing file (silently give up on this write only)
+    fmux_mf_unlock
     return 0
 }
 
 # Follows renames — if a tmux session's name changes, the manifest's key must change with it (otherwise restore resurrects a ghost)
-tt_mf_rename() {
+fmux_mf_rename() {
     local old="$1" new="$2" t=$'\t' line out="" hit=0
     [ -n "$old" ] && [ -n "$new" ] || return 0
     [ -f "$MANIFEST" ] || return 0
     case "$new" in *"$t"*) return 0 ;; esac
-    tt_mf_lock || return 0
+    fmux_mf_lock || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         [ -n "$line" ] || continue
         case "$line" in
@@ -106,29 +106,29 @@ tt_mf_rename() {
             *) out="$out$line"$'\n' ;;
         esac
     done < "$MANIFEST"
-    [ "$hit" = 1 ] && { tt_mf_write "$out" || true; }
-    tt_mf_unlock
+    [ "$hit" = 1 ] && { fmux_mf_write "$out" || true; }
+    fmux_mf_unlock
     return 0
 }
 
 # Explicit delete — we don't auto-remove a line just because the session died (reviving
 #   the dead is this file's whole purpose).
-#   The number of lines removed is returned via the global TT_MF_HITS.
-tt_mf_forget() {
+#   The number of lines removed is returned via the global FMUX_MF_HITS.
+fmux_mf_forget() {
     local name="$1" t=$'\t' line out=""
-    TT_MF_HITS=0
+    FMUX_MF_HITS=0
     [ -n "$name" ] || return 0
     [ -f "$MANIFEST" ] || return 0
-    tt_mf_lock || return 1
+    fmux_mf_lock || return 1
     while IFS= read -r line || [ -n "$line" ]; do
         [ -n "$line" ] || continue
         case "$line" in
-            "$name$t"*) TT_MF_HITS=$((TT_MF_HITS + 1)) ;;
+            "$name$t"*) FMUX_MF_HITS=$((FMUX_MF_HITS + 1)) ;;
             *) out="$out$line"$'\n' ;;
         esac
     done < "$MANIFEST"
-    [ "$TT_MF_HITS" -gt 0 ] && { tt_mf_write "$out" || TT_MF_HITS=0; }
-    tt_mf_unlock
+    [ "$FMUX_MF_HITS" -gt 0 ] && { fmux_mf_write "$out" || FMUX_MF_HITS=0; }
+    fmux_mf_unlock
     return 0
 }
 

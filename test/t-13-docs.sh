@@ -12,7 +12,7 @@
 # touch tmux.
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 cd "$(dirname "$0")/.." || exit 1
 
 README=README.md
@@ -34,13 +34,13 @@ for opt in --dry-run --yes --prefix --preset; do
 done
 
 # ── (1)-b wrong libexec path ────────────────────────────────────────────────
-# The shim lives at ~/.local/libexec/tt/. The old README said libexec/fleetmux, and anyone
+# The shim lives at ~/.local/libexec/fmux/. The old README said libexec/fleetmux, and anyone
 # who set PATH to that path quietly lives with zero hooks firing.
 assert_eq "$(grep -c 'libexec/fleetmux' "$README" || true)" "0" \
     "the old path libexec/fleetmux does not linger in README"
-assert_contains "$RM" '~/.local/libexec/tt/' "README states the real shim path"
-assert_contains "$(cat install.sh)" 'libexec/tt' "install.sh uses the same path"
-assert_contains "$SRC" 'libexec/tt' "the restore-path PATH fixup uses the same path too"
+assert_contains "$RM" '~/.local/libexec/fmux/' "README states the real shim path"
+assert_contains "$(cat install.sh)" 'libexec/fmux' "install.sh uses the same path"
+assert_contains "$SRC" 'libexec/fmux' "the restore-path PATH fixup uses the same path too"
 
 # ── (1)-c does the cron guidance point at a real entry point ───────────────
 for flag in --cron --boot-restore; do
@@ -63,7 +63,7 @@ assert_contains "$SRC" '"${1:-}" = "config"' "the fmux config entry point actual
 WIRED='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_summon key_summon_fast'
 UNWIRED='key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings'
 
-list=$("$TTBIN" config list 2>/dev/null) || list=''
+list=$("$FMUXBIN" config list 2>/dev/null) || list=''
 assert_contains "$list" "KEY" "fmux config list prints a table"
 
 for k in $WIRED; do
@@ -81,7 +81,7 @@ done
 
 # Every known key must be classified in one of README's two lists — adding a key without
 # updating the docs is caught right here.
-keys=$(grep -m1 '^TT_CONF_KEYS=' src/05-config.sh | sed "s/^TT_CONF_KEYS='//; s/'$//")
+keys=$(grep -m1 '^FMUX_CONF_KEYS=' src/05-config.sh | sed "s/^FMUX_CONF_KEYS='//; s/'$//")
 for k in $keys; do
     got=no
     case " $WIRED $UNWIRED " in *" $k "*) got=yes ;; esac
@@ -92,7 +92,7 @@ done
 #        | `key` | `value` | … | — key_summon_fast is the only one written as *(empty)*
 #        because its value is blank.
 for k in $WIRED; do
-    want=$("$TTBIN" config get "$k" 2>/dev/null) || want=''
+    want=$("$FMUXBIN" config get "$k" 2>/dev/null) || want=''
     doc=$(grep "^| \`$k\` |" "$README" | head -1 | awk -F'|' '{print $3}' \
           | sed 's/^ *//; s/ *$//; s/^`//; s/`$//') || doc=''
     case "$doc" in '*(empty)*') doc='' ;; esac
@@ -123,13 +123,13 @@ for cmd in --status --list --preview --do-broadcast; do
 done
 
 # State file paths must be real too — the skill must never cat a file that does not exist.
-assert_contains "$SK"  '~/.cache/tt/hook-' "the skill documents the hook state file"
+assert_contains "$SK"  '~/.cache/fmux/hook-' "the skill documents the hook state file"
 assert_contains "$SRC" 'STATE/hook-'       "the code actually writes the hook state file"
-assert_contains "$SK"  '~/.cache/tt/manifest' "the skill documents the manifest"
-assert_contains "$SRC" 'MANIFEST="${TT_MANIFEST:-$STATE/manifest}"' "the manifest path is unchanged"
-assert_contains "$SK"  '~/.cache/tt/hook.log' "the skill documents the audit log"
+assert_contains "$SK"  '~/.cache/fmux/manifest' "the skill documents the manifest"
+assert_contains "$SRC" 'MANIFEST="${FMUX_MANIFEST:-$STATE/manifest}"' "the manifest path is unchanged"
+assert_contains "$SK"  '~/.cache/fmux/hook.log' "the skill documents the audit log"
 assert_contains "$SRC" 'STATE/hook.log'       "the code actually writes the audit log"
-assert_contains "$SK"  '~/.cache/tt/finished' "the skill documents finished"
+assert_contains "$SK"  '~/.cache/fmux/finished' "the skill documents finished"
 assert_contains "$SRC" 'STATE/finished'       "the code actually writes finished"
 
 # Discipline — drop these sentences and the skill falls back to screen-scraping.
@@ -139,7 +139,7 @@ assert_contains "$SK" "Hook state is the fact" "it states the discipline that th
 # a session," that describes a screen that no longer exists. Measure both the code and the
 # skill together for whether that row is gone.
 assert_eq "$(grep -c -- '--settings--' "$SKILL" || true)" "0" "the skill no longer mentions the removed settings row"
-case "$SRC" in *TT_SETTINGS_ROW*) got=yes ;; *) got=no ;; esac
+case "$SRC" in *FMUX_SETTINGS_ROW*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "the code has no settings-row sentinel either"
 assert_contains "$SK" "row is a real tmux session" "it pins that every row in the list is a real session"
 
@@ -183,7 +183,7 @@ assert_contains "$RM" 'fmux config unset key_summon_fast   # rewrites the snippe
 assert_contains "$RM" 'installing the config file alone steals nothing' \
     "README states the config default is still empty"
 # The screen (fmux --help) must say the same thing — the old key must not be taught only here.
-HELP=$("$TTBIN" --help 2>&1) || HELP=''
+HELP=$("$FMUXBIN" --help 2>&1) || HELP=''
 assert_contains "$HELP" 'S-Left' "fmux --help documents S-Left"
 assert_contains "$HELP" 'takes that key from everything in' "fmux --help also states what it takes away"
 assert_eq "$(printf '%s' "$HELP" | grep -c "key_summon_fast 'C-Left M-Left'" || true)" "0" \
@@ -191,12 +191,12 @@ assert_eq "$(printf '%s' "$HELP" | grep -c "key_summon_fast 'C-Left M-Left'" || 
 
 # The config default must stay split off — the default must not follow the suggestion just
 # because the suggestion changed.
-assert_eq "$("$TTBIN" config get key_summon_fast)" "" "the config default key_summon_fast is still empty"
+assert_eq "$("$FMUXBIN" config get key_summon_fast)" "" "the config default key_summon_fast is still empty"
 
 # The snippet generator must have **no static candidate list** (deploy gate B3). If it did, even
 # the default (safe) preset would unbind those keys — erasing bindings we never made, i.e.
 # someone else's. README promises right next to it that it "steals no key until you say so."
-assert_eq "$(grep -c 'TT_TMUX_UNBIND_CANDIDATES' src/*.sh install.sh | grep -v ':0$' | wc -l | tr -d ' ')" "0" \
+assert_eq "$(grep -c 'FMUX_TMUX_UNBIND_CANDIDATES' src/*.sh install.sh | grep -v ':0$' | wc -l | tr -d ' ')" "0" \
     "no static candidate list of no-prefix keys exists in the code"
 assert_contains "$RM" 'steals no key' "README's promise text is unchanged"
 
@@ -221,8 +221,8 @@ assert_contains "$SRC" 'no /proc (macOS unsupported)' "fmux --rc also states tha
 # stale. The old sentence was disproven.
 assert_eq "$(grep -c 'the manifest stops being updated' "$README" || true)" "0" \
     "the disproven sentence ('manifest stops being updated') is not in README"
-assert_contains "$RM" 'unconditional `tt_mf_upsert`' "README cites the actual behaviour as evidence"
-assert_contains "$SRC" 'tt_mf_upsert "$sname"' "that upsert actually exists on the hook path"
+assert_contains "$RM" 'unconditional `fmux_mf_upsert`' "README cites the actual behaviour as evidence"
+assert_contains "$SRC" 'fmux_mf_upsert "$sname"' "that upsert actually exists on the hook path"
 
 # ── (4)-e can the install section actually be followed (deploy gate B11) ───────────────────
 assert_eq "$(grep -c '<you>' "$README" || true)" "0" "no uncopyable placeholders remain"
@@ -234,7 +234,7 @@ assert_contains "$RM" 'raw.githubusercontent.com/gabury1/fleetmux' "README gives
 assert_contains "$(cat install.sh)" 'gabury1/fleetmux' "install.sh defaults to that same address (README does not point somewhere the installer will not go)"
 assert_eq "$(grep -l 'OWNER/fleetmux' "$README" install.sh 2>/dev/null | grep -c .)" "0" \
     "no placeholder slug survives in README or install.sh"
-assert_contains "$RM" 'export PATH="$HOME/.local/libexec/tt:$HOME/.local/bin:$PATH"' \
+assert_contains "$RM" 'export PATH="$HOME/.local/libexec/fmux:$HOME/.local/bin:$PATH"' \
     "README states the PATH line verbatim"
 assert_contains "$INST_SH" 'export PATH="%s:%s:$PATH"' "install.sh prints the same line"
 assert_contains "$RM" 'command not found' "it states what happens if you don't fix PATH"
@@ -257,7 +257,7 @@ done
 # count sentences — we **render what the snippet actually produces** and match it against the
 # doc. Once someone later wires it in, this same judgment automatically demands the opposite
 # claim — it's not a net that only runs one direction.
-snip=$("$TTBIN" --tmux-conf 2>/dev/null) || snip=''
+snip=$("$FMUXBIN" --tmux-conf 2>/dev/null) || snip=''
 # The snippet no longer names status-right directly — it calls fmux, which does the prepend.
 case "$snip" in *status-right*|*--status-bind*) wired=yes ;; *) wired=no ;; esac
 # 2026-08-06: it got wired (status_badges, on by default), so the judgment flipped — exactly
@@ -270,7 +270,7 @@ if [ "$wired" = no ]; then
     assert_contains "$RM" 'set -g status-interval 5' "README also tells you the refresh-interval line"
     assert_contains "$SK" 'Wiring it into `status-right` is manual' \
         "the skill also assumes someone who has never seen the status bar"
-    assert_contains "$("$TTBIN" --help 2>/dev/null)" 'not wired automatically' \
+    assert_contains "$("$FMUXBIN" --help 2>/dev/null)" 'not wired automatically' \
         "fmux --help says the same thing"
     # The disproven flat claim must not linger.
     assert_eq "$(grep -c 'Status bar carries the fleet tally' "$README" || true)" "0" \
@@ -284,7 +284,7 @@ else
         "once it is wired, the 'does not attach' notice must not linger"
     assert_contains "$RM" 'status_badges' "README documents the switch that controls it"
     assert_contains "$RM" 'fmux config set status_badges off' "README says how to turn it off"
-    assert_eq "$(printf '%s' "$("$TTBIN" --help 2>/dev/null)" | grep -c 'not wired automatically' || true)" "0" \
+    assert_eq "$(printf '%s' "$("$FMUXBIN" --help 2>/dev/null)" | grep -c 'not wired automatically' || true)" "0" \
         "fmux --help no longer claims the status bar is not wired"
 fi
 
@@ -324,8 +324,8 @@ assert_contains "$RM" 'restores nothing' "Q5 — rc / boot restore"
 # The string each answer cites as evidence must actually exist in the code — the FAQ must not
 # teach a file or behaviour that does not exist.
 assert_contains "$SRC" 'STATE/boot.log'  "the boot.log path exists in the code"
-assert_contains "$RM"  '~/.cache/tt/boot.log' "Q5 documents that log"
+assert_contains "$RM"  '~/.cache/fmux/boot.log' "Q5 documents that log"
 assert_contains "$(cat libexec/claude)" 'command -v fmux' "the shim-firing condition Q3 states is real code"
 assert_contains "$RM"  'command -v fmux' "Q3 states that condition verbatim"
 
-tt_test_done
+fmux_test_done

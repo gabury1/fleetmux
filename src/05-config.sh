@@ -5,14 +5,14 @@
 # minute. If it were sourced, a single typo the user adds would silently kill fleet control
 # entirely from that moment on. So it's read only through a whitelist parser — only lines with
 # a known key and a known shape are let through.
-TT_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
-TT_CONF="${TT_CONF_FILE:-$TT_CONF_DIR/config}"
+FMUX_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
+FMUX_CONF="${FMUX_CONF_FILE:-$FMUX_CONF_DIR/config}"
 
 # Known keys. This order is exactly the order `fmux config` lists them in.
-TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
+FMUX_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
 
 # Defaults. Unknown key → rc 1 — this function also doubles as the "is this a known key" check.
-tt_conf_default() {
+fmux_conf_default() {
     case "${1:-}" in
         rc|snapshot|snapshot_on_exit|boot_restore|status_badges) printf 'on' ;;
         recent_hours)    printf '1' ;;
@@ -43,8 +43,8 @@ tt_conf_default() {
 }
 
 # Key → env var name. bash 3.2 has no ${var^^} → uppercase with tr instead.
-tt_conf_envname() {
-    printf 'TT_%s' "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
+fmux_conf_envname() {
+    printf 'FMUX_%s' "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
 }
 
 # Read the config file only once per process — if the whole thing were rescanned on every lookup,
@@ -52,33 +52,33 @@ tt_conf_envname() {
 # would repeat the same warning once per key looked up and keep filling up hook.log (fix round 1
 # finding: 4 key lookups = the same warning 4 times). So from the second call onward it returns
 # immediately — this is a direct implementation of the design doc's "read once at the start of
-# each entry point (tt_conf_load)". ("The file is under ten lines so it isn't cached" means it
+# each entry point (fmux_conf_load)". ("The file is under ten lines so it isn't cached" means it
 # doesn't get written to a cache file on disk — it does NOT mean values shouldn't be remembered
 # within the process.)
 #
-#   Each known key is stored into TT_CONF_V_<key> (the value) and TT_CONF_S_<key> (a marker that
+#   Each known key is stored into FMUX_CONF_V_<key> (the value) and FMUX_CONF_S_<key> (a marker that
 #   it was present in the file, kept separate from the value to distinguish it from an empty
 #   value). bash 3.2 has no associative arrays, so variable names are assembled dynamically
 #   (eval) — which means any key that lands in that variable-name slot must have already passed
-#   the tt_conf_default whitelist (the caller in front of it, tt_conf_file_get, checks this).
+#   the fmux_conf_default whitelist (the caller in front of it, fmux_conf_file_get, checks this).
 #
 #   Caution (important — contract for callers): if this function is called inside a command
 #   substitution (subshell), the cache is only established inside that subshell and never makes
 #   it back out — bash never propagates a subshell's variable changes back to the parent process.
 #   So to guarantee "only one warning per multiple lookups within one process", that process's
-#   entry point must call tt_conf_load once as a bare statement, not wrapped in `v=$(...)` — the
+#   entry point must call fmux_conf_load once as a bare statement, not wrapped in `v=$(...)` — the
 #   `config get/source` entry points below do exactly that.
-#   (Callers that only do a single lookup don't need to worry about this — tt_conf_get/
-#   tt_conf_source already call it once internally.)
-TT_CONF_LOADED=0
-tt_conf_load() {
-    [ "$TT_CONF_LOADED" = 1 ] && return 0
-    TT_CONF_LOADED=1
+#   (Callers that only do a single lookup don't need to worry about this — fmux_conf_get/
+#   fmux_conf_source already call it once internally.)
+FMUX_CONF_LOADED=0
+fmux_conf_load() {
+    [ "$FMUX_CONF_LOADED" = 1 ] && return 0
+    FMUX_CONF_LOADED=1
     # -r, not -f. If the file exists but can't be read (permissions, ACL), the redirect on
-    # `done < "$TT_CONF"` below fails, and set -e catches that and kills the whole process — cron
+    # `done < "$FMUX_CONF"` below fails, and set -e catches that and kills the whole process — cron
     # (every minute) and @reboot boot-restore die instantly with no reason left behind. If it
     # can't be read, just fall through to defaults.
-    [ -r "$TT_CONF" ] || return 0
+    [ -r "$FMUX_CONF" ] || return 0
     local line k v
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|'#'*|' '*'#'*) continue ;; esac
@@ -87,49 +87,49 @@ tt_conf_load() {
         # like every other ignore reason.
         case "$line" in
             *=*) ;;
-            *) printf 'fleetmux: ignoring line in %s — not key=value shape: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            *) printf 'fleetmux: ignoring line in %s — not key=value shape: %s\n' "$FMUX_CONF" "$line" >&2; continue ;;
         esac
         k=${line%%=*}
         v=${line#*=}
         # check key shape
         case "$k" in
-            ''|*[!a-z0-9_]*) printf 'fleetmux: ignoring line in %s — not a valid key shape: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            ''|*[!a-z0-9_]*) printf 'fleetmux: ignoring line in %s — not a valid key shape: %s\n' "$FMUX_CONF" "$line" >&2; continue ;;
         esac
         # is it a known key
-        if ! tt_conf_default "$k" >/dev/null 2>&1; then
-            printf 'fleetmux: ignoring line in %s — unknown key: %s\n' "$TT_CONF" "$k" >&2
+        if ! fmux_conf_default "$k" >/dev/null 2>&1; then
+            printf 'fleetmux: ignoring line in %s — unknown key: %s\n' "$FMUX_CONF" "$k" >&2
             continue
         fi
         # check value charset
         case "$v" in
-            *[!0-9A-Za-z_./:+\ -]*) printf 'fleetmux: ignoring line in %s — disallowed character in value: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            *[!0-9A-Za-z_./:+\ -]*) printf 'fleetmux: ignoring line in %s — disallowed character in value: %s\n' "$FMUX_CONF" "$line" >&2; continue ;;
         esac
-        eval "TT_CONF_V_$k=\$v"   # last line written wins — just overwrite
-        eval "TT_CONF_S_$k=1"
-    done < "$TT_CONF"
+        eval "FMUX_CONF_V_$k=\$v"   # last line written wins — just overwrite
+        eval "FMUX_CONF_S_$k=1"
+    done < "$FMUX_CONF"
     return 0
 }
 
-# Read one key from the cache (tt_conf_load). rc 1 if absent.
-tt_conf_file_get() {
+# Read one key from the cache (fmux_conf_load). rc 1 if absent.
+fmux_conf_file_get() {
     local want="${1:-}" have
-    tt_conf_default "$want" >/dev/null 2>&1 || return 1   # re-check the whitelist before feeding into eval (injection prevention)
-    tt_conf_load
-    eval "have=\${TT_CONF_S_$want+set}"
+    fmux_conf_default "$want" >/dev/null 2>&1 || return 1   # re-check the whitelist before feeding into eval (injection prevention)
+    fmux_conf_load
+    eval "have=\${FMUX_CONF_S_$want+set}"
     [ "${have:-}" = set ] || return 1
-    eval "printf '%s' \"\$TT_CONF_V_$want\""
+    eval "printf '%s' \"\$FMUX_CONF_V_$want\""
     return 0
 }
 
 # Effective value. Unknown key → rc 1.
-tt_conf_get() {
+fmux_conf_get() {
     local k="${1:-}" envn v
-    tt_conf_default "$k" >/dev/null 2>&1 || return 1
-    envn=$(tt_conf_envname "$k")
+    fmux_conf_default "$k" >/dev/null 2>&1 || return 1
+    envn=$(fmux_conf_envname "$k")
     eval "v=\${$envn+set}"
     if [ "${v:-}" = set ]; then eval "printf '%s' \"\$$envn\""; return 0; fi
-    if v=$(tt_conf_file_get "$k"); then printf '%s' "$v"; return 0; fi
-    tt_conf_default "$k"
+    if v=$(fmux_conf_file_get "$k"); then printf '%s' "$v"; return 0; fi
+    fmux_conf_default "$k"
 }
 
 # Reads a numeric key in a form that's safe to feed into arithmetic. Unknown key → rc 1.
@@ -144,34 +144,34 @@ tt_conf_get() {
 #   into an escape sequence.
 #   Falling back to the default is not silent — it says one line (the same discipline as the
 #   parser's ignore warnings).
-tt_conf_num() {
+fmux_conf_num() {
     local k="${1:-}" max="${2:-}" v ok=1
-    v=$(tt_conf_get "$k") || return 1
+    v=$(fmux_conf_get "$k") || return 1
     case "$v" in ''|*[!0-9]*) ok=0 ;; esac
     if [ "$ok" = 1 ] && [ -n "$max" ] && [ "$(( 10#$v ))" -gt "$max" ]; then ok=0; fi
     if [ "$ok" = 0 ]; then
         printf 'fleetmux: cannot use value of %s — falling back to default: %s\n' "$k" "$v" >&2
-        v=$(tt_conf_default "$k")
+        v=$(fmux_conf_default "$k")
     fi
     printf '%s' "$(( 10#$v ))"
     return 0
 }
 
 # Where did the value come from — env | file | default
-tt_conf_source() {
+fmux_conf_source() {
     local k="${1:-}" envn v
-    tt_conf_default "$k" >/dev/null 2>&1 || return 1
-    envn=$(tt_conf_envname "$k")
+    fmux_conf_default "$k" >/dev/null 2>&1 || return 1
+    envn=$(fmux_conf_envname "$k")
     eval "v=\${$envn+set}"
     if [ "${v:-}" = set ]; then printf 'env'; return 0; fi
-    if tt_conf_file_get "$k" >/dev/null 2>&1; then printf 'file'; return 0; fi
+    if fmux_conf_file_get "$k" >/dev/null 2>&1; then printf 'file'; return 0; fi
     printf 'default'
 }
 
 # Is a boolean key on. on/1/true/yes count as on (case-insensitive).
-tt_conf_on() {
+fmux_conf_on() {
     local v
-    v=$(tt_conf_get "${1:-}") || return 1
+    v=$(fmux_conf_get "${1:-}") || return 1
     case "$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')" in
         on|1|true|yes) return 0 ;;
         *) return 1 ;;

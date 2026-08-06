@@ -20,7 +20,7 @@
 # measure exactly "which screen did it go to" precisely.
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")"
@@ -28,25 +28,25 @@ SENT='--settings--'
 TAB=$'\t'
 # sed script that strips ANSI colour. \x1b is a GNU extension that does not work under macOS's
 # stock sed — the shell substitutes a real ESC byte before handing it over.
-TT_DEANSI=$'s/\033\\[[0-9;]*m//g'
+FMUX_DEANSI=$'s/\033\\[[0-9;]*m//g'
 
 # ── ⛔ PATH GUARD — this sits ahead of every other assertion in this file ──────────
 # ③ below calls the real `--list`. If the code that puts a fake tmux ahead on PATH sits after that
 # point, that stretch reaches for the developer machine's **real tmux server**. Today that is
-# harmless because tt_test_sandbox's double isolation (swapping TMUX_TMPDIR + unsetting TMUX) keeps
+# harmless because fmux_test_sandbox's double isolation (swapping TMUX_TMPDIR + unsetting TMUX) keeps
 # it from finding the socket, but that is a defence that collapses the moment one env var leaks —
 # this is the same family of bug that actually caused a kill-server incident in this repo, so the
 # ordering is pinned down here.
 # (No assertion changed here. Only the install site was moved up.)
 #
-# This fake only answers `tmux ls -F` — it hands back TT_FAKE_SESSIONS (a newline-separated list of
+# This fake only answers `tmux ls -F` — it hands back FMUX_FAKE_SESSIONS (a newline-separated list of
 # session names) as the session list, as-is. If it is empty, that is "0 sessions". Every other
 # subcommand is rc 1 — the same answer a machine with no server would give, so it does not weaken
 # any assertion.
-mkdir -p "$TTROOT/bin"
-cat > "$TTROOT/bin/tmux" <<'SHIM'
+mkdir -p "$FMUXROOT/bin"
+cat > "$FMUXROOT/bin/tmux" <<'SHIM'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TT_TMUX_LOG"
+printf '%s\n' "$*" >> "$FMUX_TMUX_LOG"
 case "$1 ${2:-}" in
     "ls -F")
         case "$3" in
@@ -56,22 +56,22 @@ case "$1 ${2:-}" in
                     [ -n "$s" ] || continue
                     i=$((i + 1))
                     printf '$%s\t1700000000\t0\t-\t%s\n' "$i" "$s"
-                done <<< "${TT_FAKE_SESSIONS:-}"
+                done <<< "${FMUX_FAKE_SESSIONS:-}"
                 exit 0 ;;
         esac ;;
 esac
 exit 1
 SHIM
-chmod +x "$TTROOT/bin/tmux"
-export TT_TMUX_LOG="$TTROOT/tmux-calls.log"
-: > "$TT_TMUX_LOG"
+chmod +x "$FMUXROOT/bin/tmux"
+export FMUX_TMUX_LOG="$FMUXROOT/tmux-calls.log"
+: > "$FMUX_TMUX_LOG"
 REALPATH_SAVED="$PATH"
-export PATH="$TTROOT/bin:$PATH"
+export PATH="$FMUXROOT/bin:$PATH"
 
 # ── ① --config-list ────────────────────────────────────────────────────────
 : > "$CONF"
-out=$("$TTBIN" --config-list)
-plain=$(printf '%s\n' "$out" | sed "$TT_DEANSI")
+out=$("$FMUXBIN" --config-list)
+plain=$(printf '%s\n' "$out" | sed "$FMUX_DEANSI")
 
 assert_eq "$(printf '%s\n' "$plain" | grep -c .)" "19" "all 19 known keys come out, one per line"
 assert_contains "$plain" "rc${TAB}rc " "field 1 is the key name"
@@ -83,10 +83,10 @@ assert_eq "$first" "rc" "the tab-prefixed part of the first line is the bare key
 
 # The current value shows up — including a file value winning over the default
 printf 'accent=99\n' > "$CONF"
-plain=$("$TTBIN" --config-list | sed "$TT_DEANSI")
+plain=$("$FMUXBIN" --config-list | sed "$FMUX_DEANSI")
 assert_contains "$plain" "accent             99" "a value written to the file shows up in the list"
 : > "$CONF"
-plain=$("$TTBIN" --config-list | sed "$TT_DEANSI")
+plain=$("$FMUXBIN" --config-list | sed "$FMUX_DEANSI")
 assert_contains "$plain" "rc                 on" "the default shows up when there is no config"
 
 # ── ①-b Is the "not wired" marker honest? ───────────────────────────────────────
@@ -105,7 +105,7 @@ for k in key_new key_settings; do
     case "$row" in *"not wired"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "yes" "$k is not wired yet, so it carries the not-wired marker"
 done
-# The wiring judgment is grounded in the code itself — tt_conf_wired scrapes "lookup calls that
+# The wiring judgment is grounded in the code itself — fmux_conf_wired scrapes "lookup calls that
 # pass a literal key" straight out of the concatenated script. So wiring a new key makes this
 # screen follow along automatically.
 #   This count is the **watchdog** for that automatic judgment: the day key remapping (T7) wires
@@ -115,48 +115,48 @@ assert_eq "$(printf '%s\n' "$plain" | grep -vc "not wired")" "11" "exactly 11 ke
 
 # ── ② --config-toggle ──────────────────────────────────────────────────────
 : > "$CONF"
-assert_rc 0 "$TTBIN" --config-toggle rc
-assert_eq "$("$TTBIN" config get rc)" "off" "the toggle flips the value"
-assert_rc 0 "$TTBIN" --config-toggle rc
-assert_eq "$("$TTBIN" config get rc)" "on" "toggling again flips it back"
+assert_rc 0 "$FMUXBIN" --config-toggle rc
+assert_eq "$("$FMUXBIN" config get rc)" "off" "the toggle flips the value"
+assert_rc 0 "$FMUXBIN" --config-toggle rc
+assert_eq "$("$FMUXBIN" config get rc)" "on" "toggling again flips it back"
 assert_contains "$(cat "$CONF")" "rc=on" "the toggle is persisted to the config file"
 
 # A non-boolean key is rc 2 — the signal "prompt for a value". The value itself is never touched.
-assert_rc 2 "$TTBIN" --config-toggle accent
-assert_eq "$("$TTBIN" config get accent)" "73" "the value does not change on rc 2"
-assert_rc 2 "$TTBIN" --config-toggle key_new
+assert_rc 2 "$FMUXBIN" --config-toggle accent
+assert_eq "$("$FMUXBIN" config get accent)" "73" "the value does not change on rc 2"
+assert_rc 2 "$FMUXBIN" --config-toggle key_new
 case "$(cat "$CONF")" in *accent*|*key_new*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "rc 2 writes nothing to the config file"
 
 # An unknown key or an empty key is rc 1, with a reason given
-assert_rc 1 "$TTBIN" --config-toggle nope
-assert_rc 1 "$TTBIN" --config-toggle
-assert_contains "$("$TTBIN" --config-toggle nope 2>&1)" "unknown key" "an unknown key is reported as such"
+assert_rc 1 "$FMUXBIN" --config-toggle nope
+assert_rc 1 "$FMUXBIN" --config-toggle
+assert_contains "$("$FMUXBIN" --config-toggle nope 2>&1)" "unknown key" "an unknown key is reported as such"
 
 # Toggling a key pinned by an env var only changes the file — the screen's value would not
 # actually change — and that lie is blocked up front.
-out=$(TT_RC=on "$TTBIN" --config-toggle rc 2>&1) || rc=$?
+out=$(FMUX_RC=on "$FMUXBIN" --config-toggle rc 2>&1) || rc=$?
 assert_eq "${rc:-0}" "1" "a key an env var wins over refuses the toggle"
-assert_contains "$out" "TT_RC" "the rejection names that environment variable"
+assert_contains "$out" "FMUX_RC" "the rejection names that environment variable"
 
-# log_max used to **always** hit this rejection — 10-util.sh set its own TT_LOG_MAX global, and
+# log_max used to **always** hit this rejection — 10-util.sh set its own FMUX_LOG_MAX global, and
 # since that name is exactly this key's environment variable name, it always read as "env wins"
 # even with no real environment variable set. Threshold wiring (T5) removed that global. Now it
 # behaves like any other value key — rc 2 (prompt for a value) — and is only rejected when a real
 # environment variable is actually set.
-assert_rc 2 "$TTBIN" --config-toggle log_max
-assert_rc 1 env TT_LOG_MAX=4096 "$TTBIN" --config-toggle log_max
-assert_contains "$(TT_LOG_MAX=4096 "$TTBIN" --config-toggle log_max 2>&1)" "TT_LOG_MAX" \
+assert_rc 2 "$FMUXBIN" --config-toggle log_max
+assert_rc 1 env FMUX_LOG_MAX=4096 "$FMUXBIN" --config-toggle log_max
+assert_contains "$(FMUX_LOG_MAX=4096 "$FMUXBIN" --config-toggle log_max 2>&1)" "FMUX_LOG_MAX" \
     "it only rejects and names the variable when a real environment variable is set"
 
 # The config file is read exactly once per entry point (05-config.sh:53 contract) —
-# --config-list calls tt_conf_get/tt_conf_source in a subshell per key, so breaking that contract
+# --config-list calls fmux_conf_get/fmux_conf_source in a subshell per key, so breaking that contract
 # would print the warning 36 times.
 printf 'rc=on\nunknown_key=1\n' > "$CONF"
-warn=$("$TTBIN" --config-list 2>&1 >/dev/null)
+warn=$("$FMUXBIN" --config-list 2>&1 >/dev/null)
 assert_eq "$(printf '%s\n' "$warn" | grep -c 'unknown key: unknown_key')" "1" \
     "--config-list looks the key up 36 times but warns only once"
-warn=$("$TTBIN" --config-toggle rc 2>&1 >/dev/null)
+warn=$("$FMUXBIN" --config-toggle rc 2>&1 >/dev/null)
 assert_eq "$(printf '%s\n' "$warn" | grep -c 'unknown key: unknown_key')" "1" \
     "--config-toggle also warns only once"
 : > "$CONF"
@@ -164,7 +164,7 @@ assert_eq "$(printf '%s\n' "$warn" | grep -c 'unknown key: unknown_key')" "1" \
 # ── ③ --list carries only sessions ────────────────────────────────────────
 # (a) 0 sessions means an empty list. There used to be a trailing ⚙ row here, which broke the
 #     bootstrap check that asked "is the list empty". Now empty means empty.
-list=$(TT_FAKE_SESSIONS="" "$TTBIN" --list 2>/dev/null) || true
+list=$(FMUX_FAKE_SESSIONS="" "$FMUXBIN" --list 2>/dev/null) || true
 assert_eq "$list" "" "with 0 sessions, --list emits nothing"
 case "$list" in *settings*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "no settings row in the list"
@@ -182,7 +182,7 @@ assert_eq "$got" "no" "no ⚙-painted row either"
 #   resurrected settings row pass the comparison by having the same name as an "injected session".
 #   The regression has to be caught by the name comparison itself.
 FAKE=$'alpha\nbra vo\nzulu'
-list=$(TT_FAKE_SESSIONS="$FAKE" "$TTBIN" --list 2>/dev/null) || true
+list=$(FMUX_FAKE_SESSIONS="$FAKE" "$FMUXBIN" --list 2>/dev/null) || true
 bad=""
 while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -199,7 +199,7 @@ assert_contains "$list" "bra vo" "a name with a space also stays intact as one r
 # (c) A **real session** with the same name as the old sentinel is now just an ordinary row — with
 #     the reserved word gone, there is no special-casing either. It used to collide with the UI
 #     row and become a session tt could neither kill nor rename.
-list=$(TT_FAKE_SESSIONS="$SENT" "$TTBIN" --list 2>/dev/null) || true
+list=$(FMUX_FAKE_SESSIONS="$SENT" "$FMUXBIN" --list 2>/dev/null) || true
 assert_eq "${list%%$'\t'*}" "$SENT" "a session with that name also has field 1 as the plain name"
 assert_eq "$(printf '%s\n' "$list" | grep -c .)" "1" "and it is exactly one row"
 
@@ -207,16 +207,16 @@ assert_eq "$(printf '%s\n' "$list" | grep -c .)" "1" "and it is exactly one row"
 # The old sentinel string must be nowhere in the code. If even one remains, the special case "this
 # is not a session" is still alive somewhere, and wherever that special case sits, a real session
 # could be misjudged.
-assert_eq "$(grep -c "TT_SETTINGS_ROW" "$TTBIN" || true)" "0" "the sentinel constant is gone from the code"
-assert_eq "$(grep -c "tt_name_reserved" "$TTBIN" || true)" "0" "the reserved-name judgment function is gone too"
+assert_eq "$(grep -c "FMUX_SETTINGS_ROW" "$FMUXBIN" || true)" "0" "the sentinel constant is gone from the code"
+assert_eq "$(grep -c "fmux_name_reserved" "$FMUXBIN" || true)" "0" "the reserved-name judgment function is gone too"
 
 # Preview: this name used to draw a settings table instead of tmux. Now it is just a session name
 # and goes out via capture-pane — measured with the fake tmux, proving the special case is gone.
-: > "$TT_TMUX_LOG"
-out=$("$TTBIN" --preview "$SENT" 2>/dev/null) || true
+: > "$FMUX_TMUX_LOG"
+out=$("$FMUXBIN" --preview "$SENT" 2>/dev/null) || true
 case "$out" in *KEY*SOURCE*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "the preview no longer draws the settings table"
-assert_contains "$(cat "$TT_TMUX_LOG")" "capture-pane" "it just goes to capture the pane of that session name"
+assert_contains "$(cat "$FMUX_TMUX_LOG")" "capture-pane" "it just goes to capture the pane of that session name"
 
 # ── ④ Bootstrap — onboarding with 0 sessions, the picker with at least one ─────────
 # This judgment was the most destructive regression site (the `grep -v` that filtered out the
@@ -224,51 +224,51 @@ assert_contains "$(cat "$TT_TMUX_LOG")" "capture-pane" "it just goes to capture 
 # leaked into the picker; if not, it went to bootstrap. Bootstrap's read opens /dev/tty, and
 # detaching the controlling terminal with setsid makes that fail and exit quietly — so this does
 # not hang even when a human runs make check.
-cat > "$TTROOT/bin/fzf" <<'SHIM'
+cat > "$FMUXROOT/bin/fzf" <<'SHIM'
 #!/usr/bin/env bash
-n=$(cat "$TT_FZF_DIR/count" 2>/dev/null || echo 0); n=$((n + 1))
-printf '%s' "$n" > "$TT_FZF_DIR/count"
-printf '%s\n' "$@" > "$TT_FZF_DIR/argv.$n"   # also records bindings·footer (evidence the screen is wired)
-cat > "$TT_FZF_DIR/in.$n"
+n=$(cat "$FMUX_FZF_DIR/count" 2>/dev/null || echo 0); n=$((n + 1))
+printf '%s' "$n" > "$FMUX_FZF_DIR/count"
+printf '%s\n' "$@" > "$FMUX_FZF_DIR/argv.$n"   # also records bindings·footer (evidence the screen is wired)
+cat > "$FMUX_FZF_DIR/in.$n"
 # Pretends to pick only on the 1st call — so the flow makes exactly one loop and stops (no infinite reentry)
 if [ "$n" = 1 ]; then
-    case "${TT_FZF_PICK:-}" in
-        multi) cat "$TT_FZF_DIR/in.$n" && exit 0 ;;   # pretend Tab picked everything
+    case "${FMUX_FZF_PICK:-}" in
+        multi) cat "$FMUX_FZF_DIR/in.$n" && exit 0 ;;   # pretend Tab picked everything
     esac
 fi
 exit 130
 SHIM
-chmod +x "$TTROOT/bin/fzf"
-export TT_FZF_DIR="$TTROOT/fzf"
-mkdir -p "$TT_FZF_DIR"
+chmod +x "$FMUXROOT/bin/fzf"
+export FMUX_FZF_DIR="$FMUXROOT/fzf"
+mkdir -p "$FMUX_FZF_DIR"
 printf 'snapshot=off\n' > "$CONF"     # quiets the snapshot the popup fires off in the background
 
 if command -v setsid >/dev/null 2>&1; then
     # (a) 0 sessions — the list is entirely empty. Must go to bootstrap, must not leak to fzf.
-    rm -f "$TT_FZF_DIR/count"
-    TT_FAKE_SESSIONS="" setsid "$TTBIN" --from "" </dev/null >/dev/null 2>&1 || true
-    assert_eq "$(cat "$TT_FZF_DIR/count" 2>/dev/null || echo 0)" "0" \
+    rm -f "$FMUX_FZF_DIR/count"
+    FMUX_FAKE_SESSIONS="" setsid "$FMUXBIN" --from "" </dev/null >/dev/null 2>&1 || true
+    assert_eq "$(cat "$FMUX_FZF_DIR/count" 2>/dev/null || echo 0)" "0" \
         "with 0 sessions it goes to bootstrap"
 
     # (b) 1 session — the picker must come up now (the judgment did not over-filter)
-    rm -f "$TT_FZF_DIR/count"
-    TT_FAKE_SESSIONS="fmuxcv1" setsid "$TTBIN" --from "" </dev/null >/dev/null 2>&1 || true
-    assert_eq "$(cat "$TT_FZF_DIR/count" 2>/dev/null || echo 0)" "1" \
+    rm -f "$FMUX_FZF_DIR/count"
+    FMUX_FAKE_SESSIONS="fmuxcv1" setsid "$FMUXBIN" --from "" </dev/null >/dev/null 2>&1 || true
+    assert_eq "$(cat "$FMUX_FZF_DIR/count" 2>/dev/null || echo 0)" "1" \
         "the picker comes up as soon as there is at least one session"
-    assert_contains "$(cat "$TT_FZF_DIR/in.1" 2>/dev/null || true)" "fmuxcv1" "that picker contains the session"
-    case "$(cat "$TT_FZF_DIR/in.1" 2>/dev/null || true)" in *"$SENT"*) got=yes ;; *) got=no ;; esac
+    assert_contains "$(cat "$FMUX_FZF_DIR/in.1" 2>/dev/null || true)" "fmuxcv1" "that picker contains the session"
+    case "$(cat "$FMUX_FZF_DIR/in.1" 2>/dev/null || true)" in *"$SENT"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "no" "no settings row in that picker — only sessions go in"
 
     # (c) ★M2 — exactly one live session, and it is **the one currently attached**.
-    #   80-view.sh excludes TT_CUR from the list, so --list comes back empty. Judging by "is there
+    #   80-view.sh excludes FMUX_CUR from the list, so --list comes back empty. Judging by "is there
     #   a row in the list" would leak to bootstrap here and show "no sessions yet" onboarding —
     #   while a session plainly exists. The real test is "is there at least one session at all":
     #   if CUR exists, there is at least one session, so the picker should come up.
     #   (There used to be a `grep -v` filtering out the settings row right here, and that is what
     #   broke this judgment.)
-    rm -f "$TT_FZF_DIR/count" "$TT_FZF_DIR"/in.*    # also clear in.* — must not pass on leftovers from the prior case
-    TT_FAKE_SESSIONS="" setsid "$TTBIN" --from "cur1" </dev/null >/dev/null 2>&1 || true
-    assert_eq "$(cat "$TT_FZF_DIR/count" 2>/dev/null || echo 0)" "1" \
+    rm -f "$FMUX_FZF_DIR/count" "$FMUX_FZF_DIR"/in.*    # also clear in.* — must not pass on leftovers from the prior case
+    FMUX_FAKE_SESSIONS="" setsid "$FMUXBIN" --from "cur1" </dev/null >/dev/null 2>&1 || true
+    assert_eq "$(cat "$FMUX_FZF_DIR/count" 2>/dev/null || echo 0)" "1" \
         "★the picker comes up even when the only session is the attached one and the list is empty (does not leak to bootstrap)"
 else
     printf '  --   no setsid — skipping the bootstrap judgment\n'
@@ -278,17 +278,17 @@ fi
 # With the ⚙ row gone from the list, discoverability is the footer's job. Measures that the
 # binding and the footer text come from the same value (if they drift apart, the screen teaches a
 # key that does not exist), and that the key actually opens the settings screen.
-rm -f "$TT_FZF_DIR/count" "$TT_FZF_DIR"/in.* "$TT_FZF_DIR"/argv.*
-TT_FAKE_SESSIONS="fmuxcv1" "$TTBIN" --from "" </dev/null >/dev/null 2>&1 || true
-argv=$(cat "$TT_FZF_DIR/argv.1" 2>/dev/null || true)
+rm -f "$FMUX_FZF_DIR/count" "$FMUX_FZF_DIR"/in.* "$FMUX_FZF_DIR"/argv.*
+FMUX_FAKE_SESSIONS="fmuxcv1" "$FMUXBIN" --from "" </dev/null >/dev/null 2>&1 || true
+argv=$(cat "$FMUX_FZF_DIR/argv.1" 2>/dev/null || true)
 assert_contains "$argv" "ctrl-o:execute" "^O is actually bound in the popup"
 assert_contains "$argv" "--config-view" "that binding opens the settings screen"
 assert_contains "$argv" "? help · ^O settings" "the footer prints that key at the bottom of the screen"
 
 # And --config-view still draws the settings list (fewer doors in, but the same screen).
-rm -f "$TT_FZF_DIR/count" "$TT_FZF_DIR"/in.*
-"$TTBIN" --config-view </dev/null >/dev/null 2>&1 || true
-in1=$(cat "$TT_FZF_DIR/in.1" 2>/dev/null || true)
+rm -f "$FMUX_FZF_DIR/count" "$FMUX_FZF_DIR"/in.*
+"$FMUXBIN" --config-view </dev/null >/dev/null 2>&1 || true
+in1=$(cat "$FMUX_FZF_DIR/in.1" 2>/dev/null || true)
 assert_contains "$in1" "not wired" "^O calls up the settings list"
 assert_contains "$in1" "accent" "the settings list has the keys in it"
 case "$in1" in *fmuxcv1*) got=yes ;; *) got=no ;; esac
@@ -301,9 +301,9 @@ assert_eq "$got" "no" "the settings screen is never mixed with the session list"
 #   Faking fzf to pretend it picked the whole list means 2 sessions → count=2 → the broadcast path.
 #   The targets line comes out on stdout first, and then it stops at the prompt.
 if command -v setsid >/dev/null 2>&1; then
-    rm -f "$TT_FZF_DIR/count" "$TT_FZF_DIR"/in.*
-    out=$(TT_FAKE_SESSIONS=$'fmuxcv1\nfmuxcv2' TT_FZF_PICK=multi \
-        setsid "$TTBIN" --from "" </dev/null 2>/dev/null) || true
+    rm -f "$FMUX_FZF_DIR/count" "$FMUX_FZF_DIR"/in.*
+    out=$(FMUX_FAKE_SESSIONS=$'fmuxcv1\nfmuxcv2' FMUX_FZF_PICK=multi \
+        setsid "$FMUXBIN" --from "" </dev/null 2>/dev/null) || true
     assert_contains "$out" "targets: fmuxcv1 fmuxcv2" "the picked sessions are exactly the broadcast targets"
     case "$out" in *"$SENT"*|*settings*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "no" "nothing non-session sneaks into the targets line"
@@ -318,78 +318,78 @@ fi
 # not deleted, they are flipped: the three doors that take a name (^N·^E·the empty-list bootstrap)
 # must now accept this name as a **plain, ordinary name**.
 #
-# All three of these doors read from /dev/tty (tt_prompt·read -rp) — a pipe cannot drive them. A
+# All three of these doors read from /dev/tty (fmux_prompt·read -rp) — a pipe cannot drive them. A
 # real pty is attached to fake it. script's syntax differs between Linux (util-linux) and macOS
 # (BSD), so both are tried, and if neither works this is skipped (same discipline as setsid).
 #   If the guard is broken and the prompt keeps waiting for more input, the pty never closes and
 #   this hangs forever. A regression stalling all of make check is worse than just failing — so
 #   ① enough input is fed to run all the way through even when the guard is absent, and ② timeout
 #   wraps the run if it is available.
-tt_pty() {                      # tt_pty <input-to-feed> <command-string>
+fmux_pty() {                      # fmux_pty <input-to-feed> <command-string>
     local run="$2"
     command -v timeout >/dev/null 2>&1 && run="timeout 10 $run"
-    if [ "${TT_PTY:-}" = util-linux ]; then
+    if [ "${FMUX_PTY:-}" = util-linux ]; then
         printf '%s' "$1" | script -qec "$run" /dev/null 2>&1
     else
         printf '%s' "$1" | script -q /dev/null /usr/bin/env bash -c "$run" 2>&1
     fi
 }
-TT_PTY=""
+FMUX_PTY=""
 if command -v script >/dev/null 2>&1; then
     if printf 'x\n' | script -qec 'read -r c </dev/tty' /dev/null >/dev/null 2>&1; then
-        TT_PTY=util-linux
+        FMUX_PTY=util-linux
     elif printf 'x\n' | script -q /dev/null /usr/bin/env bash -c 'read -r c </dev/tty' >/dev/null 2>&1; then
-        TT_PTY=bsd
+        FMUX_PTY=bsd
     fi
 fi
 
-if [ -n "$TT_PTY" ]; then
-    TTQ="'${TTBIN//\'/\'\\\'\'}'"
+if [ -n "$FMUX_PTY" ]; then
+    FMUXQ="'${FMUXBIN//\'/\'\\\'\'}'"
 
     # (a) Giving that name via ^N just creates it, no rejection — feeds two lines (name, start command).
-    : > "$TT_TMUX_LOG"
-    out=$(tt_pty "$SENT"$'\n\n' "$TTQ --do-new") || true
+    : > "$FMUX_TMUX_LOG"
+    out=$(fmux_pty "$SENT"$'\n\n' "$FMUXQ --do-new") || true
     case "$out" in *"reserved name"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "no" "^N no longer rejects this name as a reserved word"
-    case "$(cat "$TT_TMUX_LOG")" in *"new-session -d -s $SENT"*) got=yes ;; *) got=no ;; esac
+    case "$(cat "$FMUX_TMUX_LOG")" in *"new-session -d -s $SENT"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "yes" "it just creates a session with that name"
 
     # (b) A normal name naturally still works too — the other side of the measurement
-    : > "$TT_TMUX_LOG"
-    tt_pty $'fmuxok1\n\n' "$TTQ --do-new" >/dev/null 2>&1 || true
-    case "$(cat "$TT_TMUX_LOG")" in *"new-session -d -s fmuxok1"*) got=yes ;; *) got=no ;; esac
+    : > "$FMUX_TMUX_LOG"
+    fmux_pty $'fmuxok1\n\n' "$FMUXQ --do-new" >/dev/null 2>&1 || true
+    case "$(cat "$FMUX_TMUX_LOG")" in *"new-session -d -s fmuxok1"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "yes" "a normal name is also created as-is"
 
     # (c) ^E rename goes through the same way — no rejection, all the way to tmux
-    : > "$TT_TMUX_LOG"
-    out=$(tt_pty "$SENT"$'\n' "$TTQ --do-rename fmuxcv1") || true
+    : > "$FMUX_TMUX_LOG"
+    out=$(fmux_pty "$SENT"$'\n' "$FMUXQ --do-rename fmuxcv1") || true
     case "$out" in *"reserved name"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "no" "^E does not reject this name either"
-    case "$(cat "$TT_TMUX_LOG")" in *"rename-session -t =fmuxcv1 $SENT"*) got=yes ;; *) got=no ;; esac
+    case "$(cat "$FMUX_TMUX_LOG")" in *"rename-session -t =fmuxcv1 $SENT"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "yes" "the rename goes all the way to tmux"
 
     # (d) Picking a session with that name via ^X gets the usual confirm prompt, not "not a
     #     session". Answers n so it never reaches the real kill — just being asked proves the
     #     special case is gone.
-    : > "$TT_TMUX_LOG"
-    out=$(tt_pty $'n\n' "$TTQ --do-kill $SENT") || true
+    : > "$FMUX_TMUX_LOG"
+    out=$(fmux_pty $'n\n' "$FMUXQ --do-kill $SENT") || true
     assert_contains "$out" "kill $SENT?" "^X treats that name as an ordinary session and asks to confirm"
     case "$out" in *"not a session"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "no" "the special-case 'not a session' message is gone"
-    case "$(cat "$TT_TMUX_LOG")" in *kill-session*) got=yes ;; *) got=no ;; esac
+    case "$(cat "$FMUX_TMUX_LOG")" in *kill-session*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "no" "answering n means it never reaches kill"
 
     # (e) The empty-list bootstrap is the same door — the first session's name is taken here too
-    : > "$TT_TMUX_LOG"
-    export TT_FAKE_SESSIONS=""      # an assignment before a function call may not propagate to the child — export it explicitly
-    out=$(tt_pty "$SENT"$'\n' "$TTQ --from ''") || true
+    : > "$FMUX_TMUX_LOG"
+    export FMUX_FAKE_SESSIONS=""      # an assignment before a function call may not propagate to the child — export it explicitly
+    out=$(fmux_pty "$SENT"$'\n' "$FMUXQ --from ''") || true
     case "$out" in *"reserved name"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "no" "bootstrap does not reject it either"
-    case "$(cat "$TT_TMUX_LOG")" in *"new-session -s $SENT"*) got=yes ;; *) got=no ;; esac
+    case "$(cat "$FMUX_TMUX_LOG")" in *"new-session -s $SENT"*) got=yes ;; *) got=no ;; esac
     assert_eq "$got" "yes" "the first session is created with exactly the name given"
 else
     printf '  --   no script available to attach a pty — skipping this section\n'
 fi
 
 export PATH="$REALPATH_SAVED"
-tt_test_done
+fmux_test_done

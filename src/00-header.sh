@@ -15,7 +15,15 @@ export LC_ALL=en_US.UTF-8   # cron has no locale — prevents unicode glyph rege
 #   the policy once, here, is what keeps that from drifting per file.
 umask 077
 
-STATE=~/.cache/tt
+# State directory. The name is fmux; ~/.cache/tt is what installs made before 2026-08-06 used.
+#   **Nothing is moved.** An existing install keeps running on the directory it already has, and a
+#   fresh one is created under the new name. A rename that moves files can fail halfway and leave a
+#   fleet without its manifest; a rename that only chooses a path cannot fail at all.
+#   Two builtin tests, no fork — this runs on every hook event.
+if [ -d ~/.cache/fmux ]; then STATE=~/.cache/fmux
+elif [ -d ~/.cache/tt ]; then STATE=~/.cache/tt
+else STATE=~/.cache/fmux
+fi
 
 # ── Own absolute path (SELF) ─────────────────────────────────────────────────
 # There are more than 20 places internally that call itself again (fzf --bind, preview, snapshot,
@@ -25,7 +33,7 @@ STATE=~/.cache/tt
 # `readlink -f` is a GNU extension and doesn't exist on old macOS → resolve it manually with a
 # POSIX loop that follows the link one step at a time.
 #   readlink (the no-flag form) and `cd -P`/`pwd -P` are POSIX, so they exist on both Linux and BSD.
-tt_self() {
+fmux_self() {
     local p="${BASH_SOURCE[0]:-$0}" d l n=0
     case "$p" in */*) ;; *) p=$(command -v -- "$p" 2>/dev/null || printf '%s' "$p") ;; esac
     while [ -L "$p" ] && [ "$n" -lt 20 ]; do
@@ -40,7 +48,7 @@ tt_self() {
     d=$(cd "$d" 2>/dev/null && pwd -P) || d="."
     printf '%s/%s' "$d" "${p##*/}"
 }
-SELF=$(tt_self)
+SELF=$(fmux_self)
 [ -x "$SELF" ] || SELF="fmux"      # last-resort fallback: if it still can't be found, defer to PATH as before
 # A safely quoted form to embed in shell strings (fzf --bind, hook commands) — doesn't break even if the path has spaces or quotes
 SELFQ="'${SELF//\'/\'\\\'\'}'"

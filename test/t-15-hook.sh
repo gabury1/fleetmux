@@ -16,33 +16,33 @@
 # ⛔ tmux is fully intercepted by the fake at the front of PATH. The real binary is never reached.
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
-STATE="$HOME/.cache/tt"
+STATE="$HOME/.cache/fmux"
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")" "$STATE"
 TAB=$'\t'
 
 # ── ⛔ PATH guard — stands before any assertion ─────────────────────────────
-mkdir -p "$TTROOT/bin"
-cat > "$TTROOT/bin/tmux" <<'SHIM'
+mkdir -p "$FMUXROOT/bin"
+cat > "$FMUXROOT/bin/tmux" <<'SHIM'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TT_TMUX_LOG"
+printf '%s\n' "$*" >> "$FMUX_TMUX_LOG"
 case "${1:-}" in
-    display-message) printf '%s\n' "$TT_FAKE_DISP" ;;
+    display-message) printf '%s\n' "$FMUX_FAKE_DISP" ;;
 esac
 exit 0
 SHIM
-chmod +x "$TTROOT/bin/tmux"
-export TT_TMUX_LOG="$TTROOT/tmux-calls.log"
-: > "$TT_TMUX_LOG"
-export PATH="$TTROOT/bin:$PATH"
+chmod +x "$FMUXROOT/bin/tmux"
+export FMUX_TMUX_LOG="$FMUXROOT/tmux-calls.log"
+: > "$FMUX_TMUX_LOG"
+export PATH="$FMUXROOT/bin:$PATH"
 export TMUX_PANE='%9'
-export TT_FAKE_DISP="\$9${TAB}zzhooktest${TAB}$HOME${TAB}claude${TAB}1"
+export FMUX_FAKE_DISP="\$9${TAB}zzhooktest${TAB}$HOME${TAB}claude${TAB}1"
 HF="$STATE/hook-9"
 
 hook() {   # $1=state  $2=payload (empty stdin if omitted)
-    printf '%s' "${2:-}" | "$TTBIN" --hook "$1" >/dev/null 2>&1 || true
+    printf '%s' "${2:-}" | "$FMUXBIN" --hook "$1" >/dev/null 2>&1 || true
 }
 state_of() { cut -d' ' -f1 "$HF" 2>/dev/null || true; }
 
@@ -84,7 +84,7 @@ assert_eq "$(state_of)" "idle" "the idle hook writes the state"
 # ── ③ the hook keeps updating the manifest even with snapshot=off (gate B9) ────
 printf 'snapshot=off\n' > "$CONF"
 rm -f "$STATE/manifest"
-out=$("$TTBIN" --snapshot 2>&1) || true
+out=$("$FMUXBIN" --snapshot 2>&1) || true
 assert_contains "$out" "snapshot=off" "the switch is off — --snapshot actually refuses"
 assert_rc 1 test -f "$STATE/manifest"
 
@@ -97,7 +97,7 @@ assert_contains "$(cat "$STATE/manifest")" "7f3b1c22-0000-4000-8000-0123456789ab
 
 # And that update keeps happening (it is not a one-time thing) — change cwd and hook again
 before=$(cat "$STATE/manifest")
-export TT_FAKE_DISP="\$9${TAB}zzhooktest${TAB}$HOME/moved${TAB}claude${TAB}1"
+export FMUX_FAKE_DISP="\$9${TAB}zzhooktest${TAB}$HOME/moved${TAB}claude${TAB}1"
 mkdir -p "$HOME/moved"
 hook working '{"session_id":"7f3b1c22-0000-4000-8000-0123456789ab","cwd":"'"$HOME"'"}'
 assert_contains "$(cat "$STATE/manifest")" "$HOME/moved" "it is rewritten on every hook call"
@@ -105,4 +105,4 @@ assert_eq "$(printf '%s' "$before" | grep -c '/moved' || true)" "0" "that value 
 
 assert_no_tmux_mutation "the hook path did not touch a live server"
 
-tt_test_done
+fmux_test_done

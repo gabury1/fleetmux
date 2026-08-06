@@ -2,7 +2,7 @@
 # We used to use the hook-<sid> record timestamp as "last conversation time". We measured that
 #   this was wrong:
 #   2026-07-25 12:41 boot → 13:10 --restore → hook-3/5/8 all updated to 13:10 → the whole fleet went bold.
-#   On reboot, tmux reissues session ids starting from 0, so tt_sweep_hooks treats old hook files
+#   On reboot, tmux reissues session ids starting from 0, so fmux_sweep_hooks treats old hook files
 #   as ghosts and deletes them, then the boot hook creates new ones — correct as "belongs to this
 #   session" but completely wrong as "last conversation".
 #
@@ -27,10 +27,10 @@
 #   directly in awk (timestamps are always UTC 'Z'). We avoid mktime because mawk doesn't have it
 #   (the Pi's default is mawk 1.3.4).
 #   We also avoid regex {n} repetition — interval support differs by implementation (same reason as
-#   TT_MF_CHECK_AWK).
+#   FMUX_MF_CHECK_AWK).
 # Output = one "<path>\t<epoch>" line per file. 0 if no timestamp is found — the caller falls back
 #   to the hook timestamp.
-TT_ACT_AWK='
+FMUX_ACT_AWK='
     function iso2epoch(s,   y, mo, d, h, mi, se, yy, era, yoe, doy, doe, days) {
         y  = substr(s, 1, 4) + 0;  mo = substr(s, 6, 2) + 0;  d  = substr(s, 9, 2) + 0
         h  = substr(s, 12, 2) + 0; mi = substr(s, 15, 2) + 0; se = substr(s, 18, 2) + 0
@@ -78,9 +78,9 @@ if [ "${1:-}" = "--list" ]; then
     #   The two values below are pulled out before the loop — asking again per session would add
     #   a fork per session. Also the display loop runs inside a pipeline (subshell), so reading it
     #   there can't escape outward.
-    tt_conf_load
-    acc=$(tt_conf_num accent 255)              # accent colour, 256-colour number (goes inside the escape sequence)
-    recent_s=$(( $(tt_conf_num recent_hours) * 3600 ))   # bold the name if there was a conversation within this window
+    fmux_conf_load
+    acc=$(fmux_conf_num accent 255)              # accent colour, 256-colour number (goes inside the escape sequence)
+    recent_s=$(( $(fmux_conf_num recent_hours) * 3600 ))   # bold the name if there was a conversation within this window
     # rc display cache — the judgment is done by --cron (every minute), here we just read one line (0 forks)
     # If the cache is stale by more than 5 minutes = cron isn't running → quietly turn it off instead of scaring with a stale ⊘
     rcoff=""; rcts=0
@@ -90,7 +90,7 @@ if [ "${1:-}" = "--list" ]; then
     # Re-reading the manifest per session would be O(session count × manifest lines) — read it once
     # and carry it as a table.
     # We don't use associative arrays (bash 4 only, breaks on the Mac's default 3.2 — same call as
-    # tt_sweep_hooks).
+    # fmux_sweep_hooks).
     # Instead: a "\n<name>\t<value>" line table + case-glob lookup: safe even when names have
     # spaces, and 0 forks.
     # (the manifest forbids tabs in names, so tab is safe as a field separator)
@@ -99,7 +99,7 @@ if [ "${1:-}" = "--list" ]; then
         while IFS=$'\t' read -r mname _ mkind _ mconv _ || [ -n "$mname" ]; do
             [ -n "$mname" ] || continue
             [ "$mkind" = agent ] || continue         # tool sessions get ts=0 anyway
-            tt_is_uuid "${mconv:-}" || continue      # if we don't know the conversation id, leave it to the fallback
+            fmux_is_uuid "${mconv:-}" || continue      # if we don't know the conversation id, leave it to the fallback
             for tf in "$HOME"/.claude/projects/*/"$mconv".jsonl; do
                 [ -f "$tf" ] || continue             # a glob miss leaves the pattern itself unchanged
                 actn+=("$mname"); actp+=("$tf")
@@ -110,7 +110,7 @@ if [ "${1:-}" = "--list" ]; then
     if [ "${#actp[@]}" -gt 0 ]; then
         # Why we append /dev/null: tail doesn't print the "==> …<==" header when there's only one file.
         # We always force multi-file mode to remove the parsing branch (an empty file, so 0 cost).
-        actraw=$'\n'$(tail -c 65536 -- "${actp[@]}" /dev/null 2>/dev/null | awk "$TT_ACT_AWK") || actraw=""
+        actraw=$'\n'$(tail -c 65536 -- "${actp[@]}" /dev/null 2>/dev/null | awk "$FMUX_ACT_AWK") || actraw=""
         i=0
         while [ "$i" -lt "${#actp[@]}" ]; do
             # Look it back up by path (don't rely on output order — if a file disappears in
@@ -137,8 +137,8 @@ if [ "${1:-}" = "--list" ]; then
             grp=0
             # We pass created along too: it's the basis for filtering out inherited stale hook
             # files, and since we already have the value in hand, it doesn't add a tmux call.
-            # The judgment lives in exactly one place: tt_is_agent.
-            tt_is_agent "$sid" "$created" && grp=1
+            # The judgment lives in exactly one place: fmux_is_agent.
+            fmux_is_agent "$sid" "$created" && grp=1
             # Activity time: for agents = the timestamp of the last turn in the transcript (the
             #   pre-survey table above) — not the hook timestamp.
             #   Fallback ladder: transcript → hook record timestamp → creation time of a fresh
@@ -184,8 +184,8 @@ if [ "${1:-}" = "--list" ]; then
             #   accepting an "exact" match
             unread=0
             if [ -s "$STATE/finished" ]; then
-                fts=$(TT_FIN_NAME="$name" awk '
-                    BEGIN { want = ENVIRON["TT_FIN_NAME"]; r = 0 }
+                fts=$(FMUX_FIN_NAME="$name" awk '
+                    BEGIN { want = ENVIRON["FMUX_FIN_NAME"]; r = 0 }
                     {
                         if ($1 ~ /^[0-9]+$/)                  { t = $1;  s = $0; sub(/^[0-9]+[ \t]+/, "", s) }
                         else if (NF > 1 && $NF ~ /^[0-9]+$/)  { t = $NF; s = $0; sub(/[ \t]+[0-9]+[ \t]*$/, "", s) }
@@ -198,7 +198,7 @@ if [ "${1:-}" = "--list" ]; then
             printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$grp" "$unread" "${ts:-0}" "${sid#\$}" "$attached" "$name"
         done | sort -t$'\t' -k1,1rn -k2,2rn -k3,3rn -k6,6 \
         | while IFS=$'\t' read -r grp unread ts sid attached name; do
-            [ "$name" = "${TT_CUR:-}" ] && continue
+            [ "$name" = "${FMUX_CUR:-}" ] && continue
             [ "$attached" = - ] && attached=""    # release the sentinel — from here on it's an empty display string
             if [ "$grp" = 0 ]; then   # tool session: teal, bottom group, no state decoration
                 printf '%s\t\033[38;5;%sm%s\033[0m \033[36m%s\033[0m\t%s\n' "$name" "$acc" "$name" "$attached" "$sid"
@@ -231,17 +231,17 @@ if [ "${1:-}" = "--list" ]; then
                     if [ $(( now - ${_hts:-0} )) -le 20 ]; then
                         mark=$'\033[33m✻\033[0m'
                     else
-                        cbusy=0; tt_cpu_busy "$sid" "${hpid:-0}" "$now" || cbusy=$?
+                        cbusy=0; fmux_cpu_busy "$sid" "${hpid:-0}" "$now" || cbusy=$?
                         if [ "$cbusy" = 0 ]; then
                             mark=$'\033[33m✻\033[0m'
-                        elif tmux capture-pane -p -t "=$name:" 2>/dev/null | tt_working; then
+                        elif tmux capture-pane -p -t "=$name:" 2>/dev/null | fmux_working; then
                             mark=$'\033[33m✻\033[0m'
                         else
                             mark=""
                         fi
                     fi
                     # Leave a sample for the next call regardless of the judgment result (untouched if within ROTATE)
-                    tt_cpu_sample "$sid" "${hpid:-0}" "$now" ;;
+                    fmux_cpu_sample "$sid" "${hpid:-0}" "$now" ;;
                 waiting)
                     # Anti-"stuck" guard: if approval is denied, codex doesn't fire Stop —
                     # if there's been no update for over 60s and the screen shows no approval
@@ -257,7 +257,7 @@ if [ "${1:-}" = "--list" ]; then
                         mark=$'\033[38;5;215m⏸\033[0m'
                     fi ;;
                 idle) ;;
-                *) if tmux capture-pane -p -t "=$name:" 2>/dev/null | tt_working; then mark=$'\033[33m✻\033[0m'; fi ;;
+                *) if tmux capture-pane -p -t "=$name:" 2>/dev/null | fmux_working; then mark=$'\033[33m✻\033[0m'; fi ;;
             esac
             # Unread ✓: a session that finished while away and hasn't been visited yet (disappears once visited)
             umark=""

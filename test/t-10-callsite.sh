@@ -24,65 +24,65 @@
 #
 # ⛔ Never calls tmux. No real agent process either:
 #    · tmux is intercepted by a shell script placed ahead on PATH (never touches the real binary).
-#    · /proc is injected as a fake directory via TT_PROC. The ps fallback is blocked too, with a
+#    · /proc is injected as a fake directory via FMUX_PROC. The ps fallback is blocked too, with a
 #      shim.
 #    · The role of "a live agent's pid" is played by this test process itself ($$) — it never
 #      spawns a new process or sends a signal to anyone (the code only does a kill -0 existence
 #      check).
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
-STATE="$HOME/.cache/tt"; mkdir -p "$STATE"
-PROC="$TTROOT/proc"; export TT_PROC="$PROC"
+STATE="$HOME/.cache/fmux"; mkdir -p "$STATE"
+PROC="$FMUXROOT/proc"; export FMUX_PROC="$PROC"
 SELFPID=$$                     # a real pid that will pass the code's kill -0 liveness check
 SID=1                          # the session_id '$1' the fake tmux hands back → state files are hook-1 / cpu-1
 SNAME=w1
 
 # ── ⛔ PATH guard — stands before any assertion ─────────────────────────────
-mkdir -p "$TTROOT/bin"
-cat > "$TTROOT/bin/tmux" <<'SHIM'
+mkdir -p "$FMUXROOT/bin"
+cat > "$FMUXROOT/bin/tmux" <<'SHIM'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TT_TMUX_LOG"
+printf '%s\n' "$*" >> "$FMUX_TMUX_LOG"
 case "$1 ${2:-}" in
     "ls -F")
         # --list's session listing. Fields = id / created / last_attached / attached / name
-        printf '$1\t1700000000\t0\t-\t%s\n' "${TT_FAKE_NAME:-w1}"; exit 0 ;;
+        printf '$1\t1700000000\t0\t-\t%s\n' "${FMUX_FAKE_NAME:-w1}"; exit 0 ;;
     "capture-pane -p")
-        [ -n "${TT_SCREEN:-}" ] && [ -f "${TT_SCREEN:-}" ] && cat "$TT_SCREEN"
+        [ -n "${FMUX_SCREEN:-}" ] && [ -f "${FMUX_SCREEN:-}" ] && cat "$FMUX_SCREEN"
         exit 0 ;;
     "list-panes -s")
-        # tt_is_agent's 2nd-priority verdict — only reached when there is no hook file
-        printf '%s\n' "${TT_FAKE_PANE_CMD:-claude}"; exit 0 ;;
+        # fmux_is_agent's 2nd-priority verdict — only reached when there is no hook file
+        printf '%s\n' "${FMUX_FAKE_PANE_CMD:-claude}"; exit 0 ;;
 esac
 exit 1
 SHIM
-chmod +x "$TTROOT/bin/tmux"
+chmod +x "$FMUXROOT/bin/tmux"
 # Block the ps fallback too — without this, when the fake /proc is empty it reads this test
 # process's **real** CPU time, making the test's answer waver with machine load.
-cat > "$TTROOT/bin/ps" <<'SHIM'
+cat > "$FMUXROOT/bin/ps" <<'SHIM'
 #!/usr/bin/env bash
-printf 'ps %s\n' "$*" >> "$TT_TMUX_LOG"
+printf 'ps %s\n' "$*" >> "$FMUX_TMUX_LOG"
 exit 1
 SHIM
-chmod +x "$TTROOT/bin/ps"
-export TT_TMUX_LOG="$TTROOT/tmux-calls.log"
-: > "$TT_TMUX_LOG"
-export PATH="$TTROOT/bin:$PATH"
+chmod +x "$FMUXROOT/bin/ps"
+export FMUX_TMUX_LOG="$FMUXROOT/tmux-calls.log"
+: > "$FMUX_TMUX_LOG"
+export PATH="$FMUXROOT/bin:$PATH"
 
 # ── three fake screens ───────────────────────────────────────────────────────
-# tt_working's awk only looks at "the line above ❯, skipping the divider, skipping blank lines" —
+# fmux_working's awk only looks at "the line above ❯, skipping the divider, skipping blank lines" —
 # build it in exactly that shape.
-mkscreen() { printf '%s\n────────────────\n❯ \n' "$2" > "$TTROOT/$1.screen"; }
+mkscreen() { printf '%s\n────────────────\n❯ \n' "$2" > "$FMUXROOT/$1.screen"; }
 mkscreen match   '✻ Choreographing… (43s · ↓ 1.9k tokens)'   # the real selected line from a WORKING capture
 mkscreen idle    '✻ Baked for 11m 42s'                       # the real selected line from the device-refactor capture
 mkscreen done1h  '✻ Baked for 1h 5m 3s'                      # the completion line of a turn that ran over an hour
-SC_MATCH="$TTROOT/match.screen"
-SC_IDLE="$TTROOT/idle.screen"
-SC_DONE1H="$TTROOT/done1h.screen"
+SC_MATCH="$FMUXROOT/match.screen"
+SC_IDLE="$FMUXROOT/idle.screen"
+SC_DONE1H="$FMUXROOT/done1h.screen"
 
 # ── planting state ───────────────────────────────────────────────────────────
-# Each call site rotates the snapshot via tt_cpu_sample after judging → the file changes on every
+# Each call site rotates the snapshot via fmux_cpu_sample after judging → the file changes on every
 # call. So **we replant before every single call**. now is re-read each time too (so a long test
 # run does not drift).
 fake_proc() {                  # fake_proc <pid> <utime> <stime>
@@ -115,12 +115,12 @@ plant() {                      # plant <fresh|stale> <rc0|rc1|rc2|nohook>
 # ── actually run the two call sites ─────────────────────────────────────────
 list_mark() {                  # did --list attach ✻ to that session → yes/no
     local out
-    out=$("$TTBIN" --list 2>/dev/null) || true
+    out=$("$FMUXBIN" --list 2>/dev/null) || true
     case "$out" in *'✻'*) printf 'yes' ;; *) printf 'no' ;; esac
 }
 status_count() {               # --status's ✻n → n
     local out n
-    out=$("$TTBIN" --status 2>/dev/null) || true
+    out=$("$FMUXBIN" --status 2>/dev/null) || true
     case "$out" in
         *'✻'*) n=${out#*✻}; n=${n%% *} ;;
         *)     n=0 ;;
@@ -134,7 +134,7 @@ status_count() {               # --status's ✻n → n
 # want_status: --status's ✻n (0/1)
 cell() {                       # cell <fresh|stale> <rc0|rc1|rc2> <screen> <want_list> <want_status> <description>
     local hook="$1" cpu="$2" screen="$3" wl="$4" ws="$5" why="$6" gl gs
-    export TT_SCREEN="$screen"
+    export FMUX_SCREEN="$screen"
     plant "$hook" "$cpu"; gl=$(list_mark)
     plant "$hook" "$cpu"; gs=$(status_count)
     assert_eq "$gl" "$wl" "[--list  ] hook=$hook × CPU=$cpu × screen=$( [ "$screen" = "$SC_MATCH" ] && echo match || echo mismatch) — $why"
@@ -145,11 +145,11 @@ cell() {                       # cell <fresh|stale> <rc0|rc1|rc2> <screen> <want
     #   popup, which is the exact reversal of this incident's starting point ("status bar shows
     #   ✻4, list shows no mark").
     local lnum=0; [ "$gl" = yes ] && lnum=1
-    TT_RUN=$((TT_RUN + 1))
+    FMUX_RUN=$((FMUX_RUN + 1))
     if [ "$gs" -ge "$lnum" ]; then
         printf '  ok   invariant status-bar(%s) >= popup(%s)\n' "$gs" "$lnum"
     else
-        TT_FAIL=$((TT_FAIL + 1))
+        FMUX_FAIL=$((FMUX_FAIL + 1))
         printf '  FAIL invariant violated: status-bar(%s) < popup(%s) — %s\n' "$gs" "$lnum" "$why"
     fi
 }
@@ -179,7 +179,7 @@ cell stale rc2 "$SC_IDLE"  no  1 'indeterminate + screen idle → --list erases,
 # Here we pin down, with the reason, that those two cells are **intentional**: the status bar
 # does not know session names and cannot capture-pane the whole fleet every 5 seconds, so it has
 # no 3rd-priority witness at all.
-export TT_SCREEN="$SC_IDLE"
+export FMUX_SCREEN="$SC_IDLE"
 plant stale rc1; assert_eq "$(list_mark)"    "no" 'designed mismatch 1/2 — --list looks at all three witnesses and erases'
 plant stale rc1; assert_eq "$(status_count)" "1"  'designed mismatch 1/2 — the status bar has only two witnesses, so it does not erase'
 
@@ -189,7 +189,7 @@ plant stale rc1; assert_eq "$(status_count)" "1"  'designed mismatch 1/2 — the
 # rc1 would make a genuinely working session's ✻n flicker.
 # Measures whether the count stays steady even when three ticks in a row are all rc1 (the spot
 # solved with 'always count' instead of hysteresis).
-export TT_SCREEN="$SC_MATCH"
+export FMUX_SCREEN="$SC_MATCH"
 n1=0; n2=0; n3=0
 plant stale rc1; n1=$(status_count)
 plant stale rc1; n2=$(status_count)
@@ -201,7 +201,7 @@ assert_eq "$n1$n2$n3" "111" '★status-bar ✻n does not flicker even when CPU i
 # That line means "the turn that ran over an hour has **ended**," and a completion line stays on
 # screen until the next turn, so ✻ never turns itself off — the stuck-prevention guard is disabled
 # entirely. Blocked at both the part (t-08) and the call site.
-export TT_SCREEN="$SC_DONE1H"
+export FMUX_SCREEN="$SC_DONE1H"
 plant stale rc1
 assert_eq "$(list_mark)" "no" \
     '★the completion line of a turn that ran over an hour cannot revive ✻ (this comes out yes if alternative ⑤ is still alive)'
@@ -209,7 +209,7 @@ plant stale rc2
 assert_eq "$(list_mark)" "no" \
     '★the completion line is not a witness even when CPU is indeterminate — this is exactly where real stuck cases used to happen'
 # And a real spinner still rescues it under the same conditions (evidence that removing ⑤ did not create a false negative)
-export TT_SCREEN="$SC_MATCH"
+export FMUX_SCREEN="$SC_MATCH"
 plant stale rc2
 assert_eq "$(list_mark)" "yes" 'even with ⑤ removed, a real spinner screen still keeps ✻ up'
 
@@ -218,18 +218,18 @@ assert_eq "$(list_mark)" "yes" 'even with ⑤ removed, a real spinner screen sti
 # sees it through the screen. This is not a mismatch, it is a **difference in observation scope**.
 # Explicitly pins down the fact that the invariant above (status bar >= popup) does not apply
 # here — trusting the inequality globally without knowing this leads to fixing the wrong place.
-export TT_SCREEN="$SC_MATCH"
+export FMUX_SCREEN="$SC_MATCH"
 plant stale nohook
 assert_eq "$(list_mark)"    "yes" 'for a hookless session, --list judges by the screen alone'
 assert_eq "$(status_count)" "0"   'a hookless session is outside the field of view of --status (a difference in observation scope, not a rule mismatch)'
-export TT_SCREEN="$SC_IDLE"
+export FMUX_SCREEN="$SC_IDLE"
 plant stale nohook
 assert_eq "$(list_mark)" "no" 'no hook and an idle screen too → no mark'
 
 # ── ⑥ --status is a sampler ─────────────────────────────────────────────────
 # The axis of the C (CPU delta) design: the status bar runs every 5 seconds, rotating the sample,
-# so that whenever the popup opens it gets a fresh window with sleep 0. If the tt_cpu_sample call
-# is missing here, the popup side's tt_cpu_busy permanently returns rc2 and CPU judging dies
+# so that whenever the popup opens it gets a fresh window with sleep 0. If the fmux_cpu_sample call
+# is missing here, the popup side's fmux_cpu_busy permanently returns rc2 and CPU judging dies
 # entirely — if the screen breaks too, ✻ disappears again. Pins down that call.
 rm -f "$STATE/cpu-$SID"
 now=$(date +%s)
@@ -245,15 +245,15 @@ status_count >/dev/null
 assert_eq "$(awk '{ print ($4 > 0 && $5 > 0) ? "yes" : "no" }' < "$STATE/cpu-$SID")" "yes" \
     '★on the second tick, the slot for the previous sample gets filled — with two samples, the popup gets a window at any timing'
 # And with that sample alone, the popup side's judgment actually stands (without a screen)
-export TT_SCREEN=""
+export FMUX_SCREEN=""
 assert_eq "$(list_mark)" "yes" \
-    '★the popup judges working purely from the sample the status bar left behind — it comes up without looking at the screen at all (TT_SCREEN empty)'
+    '★the popup judges working purely from the sample the status bar left behind — it comes up without looking at the screen at all (FMUX_SCREEN empty)'
 
 # ── ⑦ never touched the real tmux or the real ps ────────────────────────────
-assert_eq "$(grep -c '^ps ' "$TT_TMUX_LOG" || true)" "0" \
+assert_eq "$(grep -c '^ps ' "$FMUX_TMUX_LOG" || true)" "0" \
     'never hit the ps fallback once = CPU judging was decided entirely by the fake /proc (independent of machine load)'
-stray=$(grep -vE '^(ps |ls -F|capture-pane -p|list-panes -s|display-message -p)' "$TT_TMUX_LOG" | sort -u || true)
+stray=$(grep -vE '^(ps |ls -F|capture-pane -p|list-panes -s|display-message -p)' "$FMUX_TMUX_LOG" | sort -u || true)
 assert_eq "$stray" "" \
     '★the commands the fake tmux received are read-only only — no kill-session, new-session, send-keys, or the like leaked through'
 
-tt_test_done
+fmux_test_done

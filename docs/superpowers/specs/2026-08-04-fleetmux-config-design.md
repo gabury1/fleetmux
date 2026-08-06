@@ -30,9 +30,9 @@ the first time to install something they can't turn that off in.
 
 ## Why env vars alone aren't enough
 
-The code already has conventions like `${TT_LOG_MAX:-…}`. But the two features people
+The code already has conventions like `${FMUX_LOG_MAX:-…}`. But the two features people
 actually want to turn off (rc auto-recovery, snapshots) **run from cron.** Cron doesn't
-go through a login shell, so it never sees `export TT_RC=0` in `~/.bashrc`. Hooks are
+go through a login shell, so it never sees `export FMUX_RC=0` in `~/.bashrc`. Hooks are
 the same — they only inherit the agent process's environment.
 
 → Config has to be a **file**. Env vars stay as a one-off override layered on top.
@@ -60,7 +60,7 @@ key_new=ctrl-t
   Reason: this file is read by hooks on every event and by cron every minute. If it
   were `source`d, one typo'd line would silently kill fleet command entirely. The
   trust boundary is narrowed to a single parser.
-- Read once at the start of every entry point (`tt_conf_load`). The file is under ten
+- Read once at the start of every entry point (`fmux_conf_load`). The file is under ten
   lines, so it isn't cached.
 
 ### 2. Priority
@@ -69,21 +69,21 @@ key_new=ctrl-t
 env var  >  config file  >  code default
 ```
 
-Env vars are for one-off experiments (`TT_RC=0 tt --cron`). The existing
-`TT_LOG_MAX`, `TT_BOOT_NETWAIT`, `TT_MANIFEST` are kept as-is (backward compatible).
+Env vars are for one-off experiments (`FMUX_RC=0 tt --cron`). The existing
+`FMUX_LOG_MAX`, `FMUX_BOOT_NETWAIT`, `FMUX_MANIFEST` are kept as-is (backward compatible).
 
 ### 3. Key list v1
 
 | Key | Default | env | When off/changed |
 |---|---|---|---|
-| `rc` | `on` | `TT_RC` | Skips the rc auto-recovery step entirely. The `⊘` badge is not computed either |
-| `snapshot` | `on` | `TT_SNAPSHOT` | `--cron` stops writing the manifest |
-| `snapshot_on_exit` | `on` | `TT_SNAPSHOT_ON_EXIT` | No record on exit (detach / session close) |
-| `boot_restore` | `on` | `TT_BOOT_RESTORE` | `--boot-restore` returns immediately |
-| `recent_hours` | `6` | `TT_RECENT_HOURS` | Time window for bolding a session name |
-| `unseen_minutes` | `10` | `TT_UNSEEN_MINUTES` | How long the status bar keeps showing `✓name` |
-| `accent` | `73` | `TT_ACCENT` | 256-color number (tool session / header highlight) |
-| `log_max` | `1048576` | `TT_LOG_MAX` | hook.log rotation threshold (absorbs the existing variable) |
+| `rc` | `on` | `FMUX_RC` | Skips the rc auto-recovery step entirely. The `⊘` badge is not computed either |
+| `snapshot` | `on` | `FMUX_SNAPSHOT` | `--cron` stops writing the manifest |
+| `snapshot_on_exit` | `on` | `FMUX_SNAPSHOT_ON_EXIT` | No record on exit (detach / session close) |
+| `boot_restore` | `on` | `FMUX_BOOT_RESTORE` | `--boot-restore` returns immediately |
+| `recent_hours` | `6` | `FMUX_RECENT_HOURS` | Time window for bolding a session name |
+| `unseen_minutes` | `10` | `FMUX_UNSEEN_MINUTES` | How long the status bar keeps showing `✓name` |
+| `accent` | `73` | `FMUX_ACCENT` | 256-color number (tool session / header highlight) |
+| `log_max` | `1048576` | `FMUX_LOG_MAX` | hook.log rotation threshold (absorbs the existing variable) |
 
 `on`/`off` also accept `1`/`0` and `true`/`false`. Any other value is rejected by
 `set`.

@@ -15,7 +15,15 @@ export LC_ALL=en_US.UTF-8   # cron has no locale — prevents unicode glyph rege
 #   the policy once, here, is what keeps that from drifting per file.
 umask 077
 
-STATE=~/.cache/tt
+# State directory. The name is fmux; ~/.cache/tt is what installs made before 2026-08-06 used.
+#   **Nothing is moved.** An existing install keeps running on the directory it already has, and a
+#   fresh one is created under the new name. A rename that moves files can fail halfway and leave a
+#   fleet without its manifest; a rename that only chooses a path cannot fail at all.
+#   Two builtin tests, no fork — this runs on every hook event.
+if [ -d ~/.cache/fmux ]; then STATE=~/.cache/fmux
+elif [ -d ~/.cache/tt ]; then STATE=~/.cache/tt
+else STATE=~/.cache/fmux
+fi
 
 # ── Own absolute path (SELF) ─────────────────────────────────────────────────
 # There are more than 20 places internally that call itself again (fzf --bind, preview, snapshot,
@@ -25,7 +33,7 @@ STATE=~/.cache/tt
 # `readlink -f` is a GNU extension and doesn't exist on old macOS → resolve it manually with a
 # POSIX loop that follows the link one step at a time.
 #   readlink (the no-flag form) and `cd -P`/`pwd -P` are POSIX, so they exist on both Linux and BSD.
-tt_self() {
+fmux_self() {
     local p="${BASH_SOURCE[0]:-$0}" d l n=0
     case "$p" in */*) ;; *) p=$(command -v -- "$p" 2>/dev/null || printf '%s' "$p") ;; esac
     while [ -L "$p" ] && [ "$n" -lt 20 ]; do
@@ -40,7 +48,7 @@ tt_self() {
     d=$(cd "$d" 2>/dev/null && pwd -P) || d="."
     printf '%s/%s' "$d" "${p##*/}"
 }
-SELF=$(tt_self)
+SELF=$(fmux_self)
 [ -x "$SELF" ] || SELF="fmux"      # last-resort fallback: if it still can't be found, defer to PATH as before
 # A safely quoted form to embed in shell strings (fzf --bind, hook commands) — doesn't break even if the path has spaces or quotes
 SELFQ="'${SELF//\'/\'\\\'\'}'"
@@ -52,14 +60,14 @@ SELFQ="'${SELF//\'/\'\\\'\'}'"
 # minute. If it were sourced, a single typo the user adds would silently kill fleet control
 # entirely from that moment on. So it's read only through a whitelist parser — only lines with
 # a known key and a known shape are let through.
-TT_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
-TT_CONF="${TT_CONF_FILE:-$TT_CONF_DIR/config}"
+FMUX_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
+FMUX_CONF="${FMUX_CONF_FILE:-$FMUX_CONF_DIR/config}"
 
 # Known keys. This order is exactly the order `fmux config` lists them in.
-TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
+FMUX_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
 
 # Defaults. Unknown key → rc 1 — this function also doubles as the "is this a known key" check.
-tt_conf_default() {
+fmux_conf_default() {
     case "${1:-}" in
         rc|snapshot|snapshot_on_exit|boot_restore|status_badges) printf 'on' ;;
         recent_hours)    printf '1' ;;
@@ -90,8 +98,8 @@ tt_conf_default() {
 }
 
 # Key → env var name. bash 3.2 has no ${var^^} → uppercase with tr instead.
-tt_conf_envname() {
-    printf 'TT_%s' "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
+fmux_conf_envname() {
+    printf 'FMUX_%s' "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
 }
 
 # Read the config file only once per process — if the whole thing were rescanned on every lookup,
@@ -99,33 +107,33 @@ tt_conf_envname() {
 # would repeat the same warning once per key looked up and keep filling up hook.log (fix round 1
 # finding: 4 key lookups = the same warning 4 times). So from the second call onward it returns
 # immediately — this is a direct implementation of the design doc's "read once at the start of
-# each entry point (tt_conf_load)". ("The file is under ten lines so it isn't cached" means it
+# each entry point (fmux_conf_load)". ("The file is under ten lines so it isn't cached" means it
 # doesn't get written to a cache file on disk — it does NOT mean values shouldn't be remembered
 # within the process.)
 #
-#   Each known key is stored into TT_CONF_V_<key> (the value) and TT_CONF_S_<key> (a marker that
+#   Each known key is stored into FMUX_CONF_V_<key> (the value) and FMUX_CONF_S_<key> (a marker that
 #   it was present in the file, kept separate from the value to distinguish it from an empty
 #   value). bash 3.2 has no associative arrays, so variable names are assembled dynamically
 #   (eval) — which means any key that lands in that variable-name slot must have already passed
-#   the tt_conf_default whitelist (the caller in front of it, tt_conf_file_get, checks this).
+#   the fmux_conf_default whitelist (the caller in front of it, fmux_conf_file_get, checks this).
 #
 #   Caution (important — contract for callers): if this function is called inside a command
 #   substitution (subshell), the cache is only established inside that subshell and never makes
 #   it back out — bash never propagates a subshell's variable changes back to the parent process.
 #   So to guarantee "only one warning per multiple lookups within one process", that process's
-#   entry point must call tt_conf_load once as a bare statement, not wrapped in `v=$(...)` — the
+#   entry point must call fmux_conf_load once as a bare statement, not wrapped in `v=$(...)` — the
 #   `config get/source` entry points below do exactly that.
-#   (Callers that only do a single lookup don't need to worry about this — tt_conf_get/
-#   tt_conf_source already call it once internally.)
-TT_CONF_LOADED=0
-tt_conf_load() {
-    [ "$TT_CONF_LOADED" = 1 ] && return 0
-    TT_CONF_LOADED=1
+#   (Callers that only do a single lookup don't need to worry about this — fmux_conf_get/
+#   fmux_conf_source already call it once internally.)
+FMUX_CONF_LOADED=0
+fmux_conf_load() {
+    [ "$FMUX_CONF_LOADED" = 1 ] && return 0
+    FMUX_CONF_LOADED=1
     # -r, not -f. If the file exists but can't be read (permissions, ACL), the redirect on
-    # `done < "$TT_CONF"` below fails, and set -e catches that and kills the whole process — cron
+    # `done < "$FMUX_CONF"` below fails, and set -e catches that and kills the whole process — cron
     # (every minute) and @reboot boot-restore die instantly with no reason left behind. If it
     # can't be read, just fall through to defaults.
-    [ -r "$TT_CONF" ] || return 0
+    [ -r "$FMUX_CONF" ] || return 0
     local line k v
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|'#'*|' '*'#'*) continue ;; esac
@@ -134,49 +142,49 @@ tt_conf_load() {
         # like every other ignore reason.
         case "$line" in
             *=*) ;;
-            *) printf 'fleetmux: ignoring line in %s — not key=value shape: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            *) printf 'fleetmux: ignoring line in %s — not key=value shape: %s\n' "$FMUX_CONF" "$line" >&2; continue ;;
         esac
         k=${line%%=*}
         v=${line#*=}
         # check key shape
         case "$k" in
-            ''|*[!a-z0-9_]*) printf 'fleetmux: ignoring line in %s — not a valid key shape: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            ''|*[!a-z0-9_]*) printf 'fleetmux: ignoring line in %s — not a valid key shape: %s\n' "$FMUX_CONF" "$line" >&2; continue ;;
         esac
         # is it a known key
-        if ! tt_conf_default "$k" >/dev/null 2>&1; then
-            printf 'fleetmux: ignoring line in %s — unknown key: %s\n' "$TT_CONF" "$k" >&2
+        if ! fmux_conf_default "$k" >/dev/null 2>&1; then
+            printf 'fleetmux: ignoring line in %s — unknown key: %s\n' "$FMUX_CONF" "$k" >&2
             continue
         fi
         # check value charset
         case "$v" in
-            *[!0-9A-Za-z_./:+\ -]*) printf 'fleetmux: ignoring line in %s — disallowed character in value: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            *[!0-9A-Za-z_./:+\ -]*) printf 'fleetmux: ignoring line in %s — disallowed character in value: %s\n' "$FMUX_CONF" "$line" >&2; continue ;;
         esac
-        eval "TT_CONF_V_$k=\$v"   # last line written wins — just overwrite
-        eval "TT_CONF_S_$k=1"
-    done < "$TT_CONF"
+        eval "FMUX_CONF_V_$k=\$v"   # last line written wins — just overwrite
+        eval "FMUX_CONF_S_$k=1"
+    done < "$FMUX_CONF"
     return 0
 }
 
-# Read one key from the cache (tt_conf_load). rc 1 if absent.
-tt_conf_file_get() {
+# Read one key from the cache (fmux_conf_load). rc 1 if absent.
+fmux_conf_file_get() {
     local want="${1:-}" have
-    tt_conf_default "$want" >/dev/null 2>&1 || return 1   # re-check the whitelist before feeding into eval (injection prevention)
-    tt_conf_load
-    eval "have=\${TT_CONF_S_$want+set}"
+    fmux_conf_default "$want" >/dev/null 2>&1 || return 1   # re-check the whitelist before feeding into eval (injection prevention)
+    fmux_conf_load
+    eval "have=\${FMUX_CONF_S_$want+set}"
     [ "${have:-}" = set ] || return 1
-    eval "printf '%s' \"\$TT_CONF_V_$want\""
+    eval "printf '%s' \"\$FMUX_CONF_V_$want\""
     return 0
 }
 
 # Effective value. Unknown key → rc 1.
-tt_conf_get() {
+fmux_conf_get() {
     local k="${1:-}" envn v
-    tt_conf_default "$k" >/dev/null 2>&1 || return 1
-    envn=$(tt_conf_envname "$k")
+    fmux_conf_default "$k" >/dev/null 2>&1 || return 1
+    envn=$(fmux_conf_envname "$k")
     eval "v=\${$envn+set}"
     if [ "${v:-}" = set ]; then eval "printf '%s' \"\$$envn\""; return 0; fi
-    if v=$(tt_conf_file_get "$k"); then printf '%s' "$v"; return 0; fi
-    tt_conf_default "$k"
+    if v=$(fmux_conf_file_get "$k"); then printf '%s' "$v"; return 0; fi
+    fmux_conf_default "$k"
 }
 
 # Reads a numeric key in a form that's safe to feed into arithmetic. Unknown key → rc 1.
@@ -191,34 +199,34 @@ tt_conf_get() {
 #   into an escape sequence.
 #   Falling back to the default is not silent — it says one line (the same discipline as the
 #   parser's ignore warnings).
-tt_conf_num() {
+fmux_conf_num() {
     local k="${1:-}" max="${2:-}" v ok=1
-    v=$(tt_conf_get "$k") || return 1
+    v=$(fmux_conf_get "$k") || return 1
     case "$v" in ''|*[!0-9]*) ok=0 ;; esac
     if [ "$ok" = 1 ] && [ -n "$max" ] && [ "$(( 10#$v ))" -gt "$max" ]; then ok=0; fi
     if [ "$ok" = 0 ]; then
         printf 'fleetmux: cannot use value of %s — falling back to default: %s\n' "$k" "$v" >&2
-        v=$(tt_conf_default "$k")
+        v=$(fmux_conf_default "$k")
     fi
     printf '%s' "$(( 10#$v ))"
     return 0
 }
 
 # Where did the value come from — env | file | default
-tt_conf_source() {
+fmux_conf_source() {
     local k="${1:-}" envn v
-    tt_conf_default "$k" >/dev/null 2>&1 || return 1
-    envn=$(tt_conf_envname "$k")
+    fmux_conf_default "$k" >/dev/null 2>&1 || return 1
+    envn=$(fmux_conf_envname "$k")
     eval "v=\${$envn+set}"
     if [ "${v:-}" = set ]; then printf 'env'; return 0; fi
-    if tt_conf_file_get "$k" >/dev/null 2>&1; then printf 'file'; return 0; fi
+    if fmux_conf_file_get "$k" >/dev/null 2>&1; then printf 'file'; return 0; fi
     printf 'default'
 }
 
 # Is a boolean key on. on/1/true/yes count as on (case-insensitive).
-tt_conf_on() {
+fmux_conf_on() {
     local v
-    v=$(tt_conf_get "${1:-}") || return 1
+    v=$(fmux_conf_get "${1:-}") || return 1
     case "$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')" in
         on|1|true|yes) return 0 ;;
         *) return 1 ;;
@@ -228,7 +236,7 @@ tt_conf_on() {
 # One process-name field. On macOS, ps gives comm the executable's 'absolute path' (Linux gives
 # just the basename) → only the last path segment must be kept so both sides compare equally as
 # "claude". -p/-o comm= itself is POSIX.
-tt_comm() {
+fmux_comm() {
     local c
     c=$(ps -p "${1:-0}" -o comm= 2>/dev/null) || return 1
     c=${c##*/}
@@ -238,35 +246,35 @@ tt_comm() {
 # bash 3.2's (macOS's default /bin/bash) read rejects a fractional timeout ("invalid timeout
 # specification"). Every place that needs a fractional wait branches in this one spot — absorb it
 # on 4.x, give up on 3.2 (to avoid a 1-second stall).
-if [ "${BASH_VERSINFO[0]:-3}" -ge 4 ]; then TT_TINY_READ=1; else TT_TINY_READ=0; fi
+if [ "${BASH_VERSINFO[0]:-3}" -ge 4 ]; then FMUX_TINY_READ=1; else FMUX_TINY_READ=0; fi
 
 # Log rotation — hook.log gets ~1600 lines appended to the SD card per day, constantly. Once it
 # crosses the threshold, truncate it to keep only the tail.
 #   Size is measured with `wc -c <file` (POSIX) — stat has -c on GNU and -f on BSD, opposite flags.
 #   Called only from --cron (every minute), the boot hook, and --boot-restore — calling it on
 #   every event would add one more fork to the hook path.
-#   The file to rotate is swapped in via TT_LOG_FILE (--boot-restore's boot.log). The default
+#   The file to rotate is swapped in via FMUX_LOG_FILE (--boot-restore's boot.log). The default
 #   stays hook.log as before, so existing call sites don't change a single character — there's no
 #   reason to split the rotation policy into two.
 #   Passed as an env var prefix rather than an argument, following the same convention as
-#   tt_fin_norm's TT_FIN_SKIP.
+#   fmux_fin_norm's FMUX_FIN_SKIP.
 #
 #   The threshold in bytes is the config key log_max. This used to set a global here with
-#   `TT_LOG_MAX=${TT_LOG_MAX:-1048576}`, and that one line broke two things:
+#   `FMUX_LOG_MAX=${FMUX_LOG_MAX:-1048576}`, and that one line broke two things:
 #     ① Even if log_max was set in the config file, this global was already established, so it
 #        had no effect.
-#     ② That global's name happened to be log_max's env var name (TT_LOG_MAX), so every lookup
+#     ② That global's name happened to be log_max's env var name (FMUX_LOG_MAX), so every lookup
 #        afterward was judged as "env wins" — the config screen rejected the log_max toggle
 #        outright.
 #   So the global is gone, and it's only read at the moment rotation actually needs it. Env var
-#   priority is already honored by the lookup function (TT_LOG_MAX=… still wins). If the file
+#   priority is already honored by the lookup function (FMUX_LOG_MAX=… still wins). If the file
 #   doesn't exist, there isn't even a lookup, so the fork count on the hook path stays 0 as before.
 #   ⚠ The entry point that calls rotation must first establish the config cache as a bare
 #      statement, not inside a subshell (the contract in 05-config.sh) — the lookup below is
 #      inside $(...), so the cache doesn't escape this function.
-TT_LOG_KEEP=${TT_LOG_KEEP:-2000}
-tt_log_rotate() {
-    local f="${TT_LOG_FILE:-$STATE/hook.log}" sz max
+FMUX_LOG_KEEP=${FMUX_LOG_KEEP:-2000}
+fmux_log_rotate() {
+    local f="${FMUX_LOG_FILE:-$STATE/hook.log}" sz max
     [ -f "$f" ] || return 0
     # Repair a log written before the umask policy existed. Only reached from --cron and the boot
     # path, so this is not on the hook hot path. A log that has caught a prompt in its stderr must
@@ -274,9 +282,9 @@ tt_log_rotate() {
     chmod 600 "$f" 2>/dev/null || true
     sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ') || return 0
     case "$sz" in ''|*[!0-9]*) return 0 ;; esac
-    max=$(tt_conf_num log_max)
+    max=$(fmux_conf_num log_max)
     [ "$sz" -gt "$max" ] || return 0
-    if tail -n "$TT_LOG_KEEP" "$f" > "$f.tmp" 2>/dev/null; then
+    if tail -n "$FMUX_LOG_KEEP" "$f" > "$f.tmp" 2>/dev/null; then
         mv -f "$f.tmp" "$f" 2>/dev/null || { rm -f "$f.tmp"; return 0; }
         echo "$(date '+%F %T') - ${f##*/} rotated (was $sz bytes)" >> "$f"
     else
@@ -305,16 +313,16 @@ tt_log_rotate() {
 #   transcript is under ~/.claude/projects/-home-user/). Restoring with only the session cwd drops
 #   you into the shell with "No conversation found". So the two are recorded separately — restore
 #   creates the session at the session cwd, but runs the resume itself from the conversation home.
-# TT_MANIFEST lets the path be swapped: an escape hatch so tests don't overwrite the real fleet
+# FMUX_MANIFEST lets the path be swapped: an escape hatch so tests don't overwrite the real fleet
 # record.
-MANIFEST="${TT_MANIFEST:-$STATE/manifest}"
+MANIFEST="${FMUX_MANIFEST:-$STATE/manifest}"
 
 # A conversation id is a uuid. Not "something uuid-like" — only an exact uuid is let through.
 #   There was a real incident (2026-07-25) where a field shifted by one slot and a string like
 #   "claude" or "agent" sat in the conversation-id slot, propagating through every snapshot after
 #   that. --resume on that line makes the conversation look like it vanished entirely.
 #   Why case glob instead of [[ =~ ]]: no forks, no regex engine, no shell-implementation gap.
-tt_is_uuid() {
+fmux_is_uuid() {
     case "${1:-}" in
         [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) return 0 ;;
     esac
@@ -337,7 +345,7 @@ tt_is_uuid() {
 #   Why `|| s=''` is attached: this file is under `set -euo pipefail`. A pipeline with a
 #   nonexistent command is rc 127, and pipefail propagates that out of the assignment — without
 #   this, the function would die silently depending on the calling context.
-tt_login_shell() {
+fmux_login_shell() {
     local s u
     u=$(id -un 2>/dev/null) || u=''
     s=$(getent passwd "$u" 2>/dev/null | cut -d: -f7) || s=''
@@ -349,8 +357,8 @@ tt_login_shell() {
 }
 
 # Is an agent actually running in the pane — for restore verification. Same criteria as the
-# second clause of tt_is_agent.
-tt_pane_has_agent() {
+# second clause of fmux_is_agent.
+fmux_pane_has_agent() {
     tmux list-panes -s -t "=${1:-}:" -F '#{pane_current_command}' 2>/dev/null \
         | grep -qxE 'claude|codex'
 }
@@ -363,7 +371,7 @@ tt_pane_has_agent() {
 #   Checks: field count is 5 or 6 / no empty fields / kind is agent|tool / conv is '-' or a uuid.
 #   Why uuid detection doesn't use regex {n} repetition: interval support differs across awk
 #   implementations (BSD awk).
-TT_MF_CHECK_AWK='
+FMUX_MF_CHECK_AWK='
     function isuuid(s,   i, c) {
         if (length(s) != 36) return 0
         for (i = 1; i <= 36; i++) {
@@ -379,14 +387,14 @@ TT_MF_CHECK_AWK='
     $3 != "agent" && $3 != "tool" { bad = 1; exit }
     $5 != "-" && !isuuid($5) { bad = 1; exit }
     END { exit (bad ? 1 : 0) }'
-tt_mf_check() { printf '%s' "${1:-}" | awk -F'\t' "$TT_MF_CHECK_AWK"; }
+fmux_mf_check() { printf '%s' "${1:-}" | awk -F'\t' "$FMUX_MF_CHECK_AWK"; }
 
 # Atomic manifest replace — only content that passed validation lands. On failure the existing
 # file is left untouched.
 #   Warnings go to stderr: the hook path is 2>/dev/null so it stays quiet, while a human-run
 #   --snapshot will notice it.
-tt_mf_write() {
-    if ! tt_mf_check "${1:-}"; then
+fmux_mf_write() {
+    if ! fmux_mf_check "${1:-}"; then
         printf 'fmux: manifest write refused — malformed rows; %s left untouched\n' "$MANIFEST" >&2
         return 1
     fi
@@ -403,7 +411,7 @@ tt_mf_write() {
 #   Back when there was only 1 generation, since --snapshot runs on a 1-minute cron, the window to
 #   catch an "oops" and recover was 60 seconds — one more bad snapshot and even the one backup
 #   gets overwritten with bad content. With 3 generations, there's at least 3 minutes.
-tt_mf_backup() {
+fmux_mf_backup() {
     [ -f "$MANIFEST" ] || return 0
     [ -f "$MANIFEST.bak2" ] && cp -f "$MANIFEST.bak2" "$MANIFEST.bak3" 2>/dev/null
     [ -f "$MANIFEST.bak" ]  && cp -f "$MANIFEST.bak"  "$MANIFEST.bak2" 2>/dev/null
@@ -511,7 +519,7 @@ WAITING_PAT='Do you want to|Would you like to|Enter to select|Esc to cancel|Pres
 # input box (❯)" — check only that one line.
 # (Checking a chunk of the bottom N lines gets false positives/negatives from leftover
 # conversation text on screen — got burned twice.)
-tt_working() {
+fmux_working() {
     awk '
         { L[NR] = $0 }
         /^❯/ { p = NR }
@@ -532,7 +540,7 @@ tt_working() {
 #
 # ⚠️ This signal is used **only as grounds to turn ✻ on**. Never as grounds to turn it off.
 #    Since this bug was "wrongly clearing the ✻ of a session that was actually working," only a
-#    placement that adds zero new deletion paths is safe. So tt_cpu_busy's rc has 3 values:
+#    placement that adds zero new deletion paths is safe. So fmux_cpu_busy's rc has 3 values:
 #    0=working / 1=not / **2=undecidable**.
 #    The moment "don't know" collapses into "no," ✻ disappears again — the caller decides how to
 #    collapse it, in its own context.
@@ -575,20 +583,20 @@ tt_working() {
 #   (25×10 + 1.5×290)/300 = 9.8 cs/s, crossing the threshold, so **the CPU signal becomes a
 #   weapon that revives a stuck state**. Capping it at 60s means that window never forms in the
 #   first place.
-# Only overridable via environment variable, and deliberately not in the TT_CONF_KEYS whitelist —
+# Only overridable via environment variable, and deliberately not in the FMUX_CONF_KEYS whitelist —
 #   this isn't a user setting, it's a tuning knob (if the TUI render cost changes in the future,
 #   only this gets touched).
 #   ⚠ A value that has become a config key must not be left as a `${VAR:-default}` global like
 #   this: that global's name becomes exactly the env variable name for that key, so the
 #   precedence rule permanently becomes "env wins," which kills the config file (this actually
 #   happened to log_max — see the retrospective in 10-util.sh).
-TT_CPU_BUSY=${TT_CPU_BUSY:-6}              # cs/s. 6% of one core
-TT_CPU_MINWIN=${TT_CPU_MINWIN:-3}          # seconds. A window shorter than this is undecidable (1~2s overlaps with idle)
-TT_CPU_MINWIN_COARSE=${TT_CPU_MINWIN_COARSE:-20}  # seconds. The floor when counter resolution is 1 second (=100cs)
-TT_CPU_MAXWIN=${TT_CPU_MAXWIN:-60}         # seconds. A window longer than this is diluted and untrustworthy → undecidable
-TT_CPU_ROTATE=${TT_CPU_ROTATE:-3}          # seconds. Sample rotation interval (if called earlier than this, the file isn't touched)
+FMUX_CPU_BUSY=${FMUX_CPU_BUSY:-6}              # cs/s. 6% of one core
+FMUX_CPU_MINWIN=${FMUX_CPU_MINWIN:-3}          # seconds. A window shorter than this is undecidable (1~2s overlaps with idle)
+FMUX_CPU_MINWIN_COARSE=${FMUX_CPU_MINWIN_COARSE:-20}  # seconds. The floor when counter resolution is 1 second (=100cs)
+FMUX_CPU_MAXWIN=${FMUX_CPU_MAXWIN:-60}         # seconds. A window longer than this is diluted and untrustworthy → undecidable
+FMUX_CPU_ROTATE=${FMUX_CPU_ROTATE:-3}          # seconds. Sample rotation interval (if called earlier than this, the file isn't touched)
 
-# macOS/BSD fallback: `ps -p <pid> -o time=` → centiseconds. Sets TT_CPU_CS and TT_CPU_Q.
+# macOS/BSD fallback: `ps -p <pid> -o time=` → centiseconds. Sets FMUX_CPU_CS and FMUX_CPU_Q.
 #   `ps -o %cpu=` is not used — on Linux it's a **lifetime average** (measured: a session that
 #   worked for 36 minutes still read 17.8% after going idle), so it can't distinguish "is it
 #   working right now" at all, and BSD's decaying average has an undocumented constant. Above
@@ -600,13 +608,13 @@ TT_CPU_ROTATE=${TT_CPU_ROTATE:-3}          # seconds. Sample rotation interval (
 #   resolution is 1cs (Mac), if not it's 100cs (second-granularity ps) → the caller widens the
 #   minimum window to 20s to block quantization false positives. Built to not break even without
 #   checking on real Mac hardware.
-tt_cpu_cs_ps() {
-    TT_CPU_CS=""; TT_CPU_Q=100
+fmux_cpu_cs_ps() {
+    FMUX_CPU_CS=""; FMUX_CPU_Q=100
     local t d=0 h=0 m=0 s=0 frac=0
     t=$(ps -p "${1:-0}" -o time= 2>/dev/null | tr -d ' ') || return 1
     [ -n "$t" ] || return 1
     case "$t" in *-*) d=${t%%-*}; t=${t#*-} ;; esac
-    case "$t" in *.*) frac=${t##*.}; t=${t%.*}; TT_CPU_Q=1 ;; esac
+    case "$t" in *.*) frac=${t##*.}; t=${t%.*}; FMUX_CPU_Q=1 ;; esac
     case "$t" in
         *:*:*) h=${t%%:*}; t=${t#*:}; m=${t%%:*}; s=${t##*:} ;;
         *:*)   m=${t%%:*}; s=${t##*:} ;;
@@ -618,11 +626,11 @@ tt_cpu_cs_ps() {
     for t in "$d" "$h" "$m" "$s" "$frac"; do
         case "$t" in ''|*[!0-9]*) return 1 ;; esac
     done
-    TT_CPU_CS=$(( ((10#$d * 24 + 10#$h) * 3600 + 10#$m * 60 + 10#$s) * 100 + 10#$frac ))
+    FMUX_CPU_CS=$(( ((10#$d * 24 + 10#$h) * 3600 + 10#$m * 60 + 10#$s) * 100 + 10#$frac ))
     return 0
 }
 
-# utime+stime centiseconds → global TT_CPU_CS, resolution → TT_CPU_Q. rc 1 = couldn't read
+# utime+stime centiseconds → global FMUX_CPU_CS, resolution → FMUX_CPU_Q. rc 1 = couldn't read
 #   (permission / process gone).
 #   Linux reads /proc directly, so it's **zero forks** (measured at 0.5ms per call). The screen
 #   check forks 3 times per session — the CPU check is an order of magnitude cheaper. So putting
@@ -637,14 +645,14 @@ tt_cpu_cs_ps() {
 #      this way makes both platforms measure exactly the same thing.
 #   USER_HZ is hardcoded to 100 (confirmed getconf CLK_TCK=100 on this Pi). Calling getconf would
 #   add one more fork, and alpha/ia64, where it's 1024, aren't fmux targets.
-#   TT_PROC is for test injection — feed it a fake /proc to exercise the whole path with no real
+#   FMUX_PROC is for test injection — feed it a fake /proc to exercise the whole path with no real
 #   process.
-tt_cpu_read() {
-    TT_CPU_CS=""; TT_CPU_Q=1
+fmux_cpu_read() {
+    FMUX_CPU_CS=""; FMUX_CPU_Q=1
     local pid="${1:-0}" f line rest u s g
     case "$pid" in ''|*[!0-9]*) return 1 ;; esac
     [ "$pid" -gt 0 ] || return 1
-    f="${TT_PROC:-/proc}/$pid/stat"
+    f="${FMUX_PROC:-/proc}/$pid/stat"
     if [ -r "$f" ]; then
         line=""
         read -r line < "$f" 2>/dev/null || return 1
@@ -658,11 +666,11 @@ tt_cpu_read() {
         u="${arr[11]:-}"; s="${arr[12]:-}"
         case "$u" in ''|*[!0-9]*) return 1 ;; esac
         case "$s" in ''|*[!0-9]*) return 1 ;; esac
-        TT_CPU_CS=$(( u + s ))
-        TT_CPU_Q=1                                # 1 tick = 1cs
+        FMUX_CPU_CS=$(( u + s ))
+        FMUX_CPU_Q=1                                # 1 tick = 1cs
         return 0
     fi
-    tt_cpu_cs_ps "$pid"
+    fmux_cpu_cs_ps "$pid"
 }
 
 # Snapshot file rotation. Format is one line, 5 fields: "<pid> <ts1> <cs1> <ts2> <cs2>" (same
@@ -677,7 +685,7 @@ tt_cpu_read() {
 #   doesn't collapse the window to 0 seconds, nor does it pile up writes to the SD card.
 #   Why now is taken as an argument: the caller (--list / --status) has already called date once.
 #   If not passed in, it's called here.
-tt_cpu_sample() {
+fmux_cpu_sample() {
     local sid="${1:-}" pid="${2:-0}" now="${3:-}" f cpid ts1 cs1 ts2 cs2 tmp d
     [ -n "$sid" ] || return 0
     case "$pid" in ''|*[!0-9]*) return 0 ;; esac
@@ -695,26 +703,26 @@ tt_cpu_sample() {
         if [ "$cpid" = "$pid" ] && [ "$ts1" -gt 0 ]; then
             # ⛔ Reject a negative delta first. If now < ts1 (= a future timestamp got baked into
             #    the file), `-lt ROTATE` is **permanently true**, so it returns immediately every
-            #    time here, and the file never gets updated again → tt_cpu_busy keeps returning
+            #    time here, and the file never gets updated again → fmux_cpu_busy keeps returning
             #    rc 2 because the window is negative → the CPU-delta check dies entirely.
             #    This actually happens from NTP correction, manual clock changes, or suspend.
             #    Since it's a freeze with no recovery path, this is the one spot where
             #    "it self-heals on the next tick" does not hold.
             d=$(( now - ts1 ))
             if [ "$d" -ge 0 ]; then
-                if [ "$d" -lt "$TT_CPU_ROTATE" ]; then return 0; fi
+                if [ "$d" -lt "$FMUX_CPU_ROTATE" ]; then return 0; fi
                 ts2=$ts1; cs2=$cs1          # normal rotation
             fi
             # if d < 0, don't carry the old sample forward (keep ts2=0) and let it be overwritten
             # below with the new sample
         fi
     fi
-    tt_cpu_read "$pid" || return 0
+    fmux_cpu_read "$pid" || return 0
     mkdir -p "$STATE" 2>/dev/null || return 0
     # tmp+mv — so the reader never encounters a half-written line. Split by $$ so it's safe even
     # if --status and --list overlap.
     tmp="$f.$$"
-    if printf '%s %s %s %s %s\n' "$pid" "$now" "$TT_CPU_CS" "$ts2" "$cs2" > "$tmp" 2>/dev/null; then
+    if printf '%s %s %s %s %s\n' "$pid" "$now" "$FMUX_CPU_CS" "$ts2" "$cs2" > "$tmp" 2>/dev/null; then
         mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp"
     else
         rm -f "$tmp"
@@ -732,10 +740,10 @@ tt_cpu_sample() {
 #   The window is wall-clock (date) while the counter is CPU time → NTP jumps and suspend distort
 #   the window.
 #   Both a negative window and exceeding MAXWIN are blocked, dropping that case to undecidable.
-#   The reason it "self-heals on the next tick" is that tt_cpu_sample overwrites the file on a
+#   The reason it "self-heals on the next tick" is that fmux_cpu_sample overwrites the file on a
 #   negative delta — without that guard, it's the sampler (not here) that freezes, permanently
 #   locking in rc 2 (which is why the two are a pair).
-tt_cpu_busy() {
+fmux_cpu_busy() {
     local sid="${1:-}" pid="${2:-0}" now="${3:-}" f cpid ts1 cs1 ts2 cs2 win minwin oldcs d
     [ -n "$sid" ] || return 2
     case "$pid" in ''|*[!0-9]*) return 2 ;; esac
@@ -751,26 +759,26 @@ tt_cpu_busy() {
     case "${ts2:-}" in ''|*[!0-9]*) ts2=0 ;; esac
     case "${cs2:-}" in ''|*[!0-9]*) cs2=0 ;; esac
     case "$now" in ''|*[!0-9]*) now=$(date +%s) ;; esac
-    tt_cpu_read "$pid" || return 2
+    fmux_cpu_read "$pid" || return 2
     # minimum window = max(MINWIN, resolution/threshold). If resolution is 1 second (ps), the
     # moment an idle process crosses one tick it reads as 33 cs/s in a 3-second window, causing a
     # false positive → only then is the window widened to 20 seconds.
-    minwin=$TT_CPU_MINWIN
-    if [ "${TT_CPU_Q:-1}" -gt 1 ] && [ "$TT_CPU_MINWIN_COARSE" -gt "$minwin" ]; then
-        minwin=$TT_CPU_MINWIN_COARSE
+    minwin=$FMUX_CPU_MINWIN
+    if [ "${FMUX_CPU_Q:-1}" -gt 1 ] && [ "$FMUX_CPU_MINWIN_COARSE" -gt "$minwin" ]; then
+        minwin=$FMUX_CPU_MINWIN_COARSE
     fi
     oldcs=""
     win=$(( now - ts1 ))
-    if [ "$win" -ge "$minwin" ] && [ "$win" -le "$TT_CPU_MAXWIN" ]; then
+    if [ "$win" -ge "$minwin" ] && [ "$win" -le "$FMUX_CPU_MAXWIN" ]; then
         oldcs=$cs1                                  # the newest sample forms a sufficiently long window
     elif [ "$ts2" -gt 0 ]; then
         win=$(( now - ts2 ))                        # the newest sample is too young → widen the window using the previous sample
-        if [ "$win" -ge "$minwin" ] && [ "$win" -le "$TT_CPU_MAXWIN" ]; then oldcs=$cs2; fi
+        if [ "$win" -ge "$minwin" ] && [ "$win" -le "$FMUX_CPU_MAXWIN" ]; then oldcs=$cs2; fi
     fi
     [ -n "$oldcs" ] || return 2
-    d=$(( TT_CPU_CS - oldcs ))
+    d=$(( FMUX_CPU_CS - oldcs ))
     [ "$d" -ge 0 ] || return 2                      # the counter went backward = pid reuse/reset
-    if [ "$d" -ge $(( TT_CPU_BUSY * win )) ]; then return 0; fi
+    if [ "$d" -ge $(( FMUX_CPU_BUSY * win )) ]; then return 0; fi
     return 1
 }
 
@@ -794,14 +802,14 @@ tt_cpu_busy() {
 # notification silently disappears (lost update, deterministically reproducible).
 # Same flock pattern as rc-check. fd 9 releases automatically if the process dies, so keep the
 # critical section short.
-tt_finished_lock() {
+fmux_finished_lock() {
     mkdir -p "$STATE"
     command -v flock >/dev/null 2>&1 || return 0
     exec 9>"$STATE/finished.lock" 2>/dev/null || return 0
     flock 9 2>/dev/null || true
     return 0
 }
-tt_finished_unlock() { exec 9>&- 2>/dev/null || true; return 0; }
+fmux_finished_unlock() { exec 9>&- 2>/dev/null || true; return 0; }
 
 # The finished format is "<ts> <name>" — ts comes first, name is the last field.
 #   The old format ("<name> <ts>") had `read -r name ts` split "my proj 1784…" into name=my/ts=proj,
@@ -811,13 +819,13 @@ tt_finished_unlock() { exec 9>&- 2>/dev/null || true; return 0; }
 #   has.
 #   Normalized here in one pass so the reader still accepts the old format too, and lines with no
 #   numeric ts are dropped.
-#   Giving TT_FIN_SKIP (an env var) a name also erases that session's old records — this used to
+#   Giving FMUX_FIN_SKIP (an env var) a name also erases that session's old records — this used to
 #   be done with a sed regex, but if the name contained a `/`, a parse error (exit 4) got
 #   swallowed by `|| true` and duplicates piled up.
 #   Why ENVIRON is used instead of an awk variable: -v interprets backslashes in the value as
 #   escapes, mangling the name.
-TT_FIN_NORM='
-    BEGIN { skip = ENVIRON["TT_FIN_SKIP"] }
+FMUX_FIN_NORM='
+    BEGIN { skip = ENVIRON["FMUX_FIN_SKIP"] }
     {
         if ($1 ~ /^[0-9]+$/)                  { t = $1;  s = $0; sub(/^[0-9]+[ \t]+/, "", s) }
         else if (NF > 1 && $NF ~ /^[0-9]+$/)  { t = $NF; s = $0; sub(/[ \t]+[0-9]+[ \t]*$/, "", s) }
@@ -826,10 +834,10 @@ TT_FIN_NORM='
     }'
 
 # Normalize (+ optionally remove) then replace in place. Only call this while holding the lock.
-tt_finished_rewrite() {
+fmux_finished_rewrite() {
     local f="$STATE/finished"
     [ -s "$f" ] || return 0
-    if TT_FIN_SKIP="${1:-}" awk "$TT_FIN_NORM" "$f" > "$f.tmp" 2>/dev/null; then
+    if FMUX_FIN_SKIP="${1:-}" awk "$FMUX_FIN_NORM" "$f" > "$f.tmp" 2>/dev/null; then
         mv -f "$f.tmp" "$f"
     else
         rm -f "$f.tmp"
@@ -851,7 +859,7 @@ tt_finished_rewrite() {
 #        session came into being, so it wasn't inherited.
 #   If the session's creation time can't be obtained, it's folded to 0 and passed leniently like
 #   before (no basis to judge → the harmless side).
-tt_hook_valid() {
+fmux_hook_valid() {
     local hf="$1" created="${2:-0}" hts hpid
     [ -f "$hf" ] || return 1
     hts=0; hpid=0
@@ -883,7 +891,7 @@ tt_hook_valid() {
 #   same criterion as the --list grouping check.
 #   If the same check is scattered across multiple places, you get accidents like "listed as a
 #   tool session but the broadcast keys still fly in."
-tt_is_agent() {
+fmux_is_agent() {
     local t="${1:-}" created="${2:-}" sid c2
     [ -n "$t" ] || return 1
     case "$t" in
@@ -895,7 +903,7 @@ tt_is_agent() {
             [ -n "$created" ] || created="$c2" ;;
     esac
     [ -n "$sid" ] || return 1
-    tt_hook_valid "$STATE/hook-${sid#\$}" "${created:-0}" && return 0
+    fmux_hook_valid "$STATE/hook-${sid#\$}" "${created:-0}" && return 0
     tmux list-panes -s -t "$sid" -F '#{pane_current_command}' 2>/dev/null | grep -qxE 'claude|codex'
 }
 
@@ -903,14 +911,14 @@ tt_is_agent() {
 #   Typing a prompt into a tool session (yazi · lazydocker · a bare shell) either executes the
 #   sentence as a shell command or gets eaten as a TUI shortcut (r=restart in lazydocker). Since
 #   it's a safety-incident path, don't skip it silently — show that it was skipped.
-tt_broadcast() {
+fmux_broadcast() {
     local msg="$1" s sent=0 skipped=0 names=""
     shift
     for s in "$@"; do
         [ -n "$s" ] || continue
         # a separator line isn't a session — this is the last line of defense, so it's filtered here too.
         case "$s" in ─*) continue ;; esac
-        if ! tt_is_agent "$s"; then
+        if ! fmux_is_agent "$s"; then
             skipped=$((skipped + 1)); names="$names $s"; continue
         fi
         tmux send-keys -t "=$s:" -l "$msg"
@@ -928,12 +936,12 @@ tt_broadcast() {
 #      After a reboot tmux reissues session ids starting from $0 → a new session inherits a dead
 #      session's state file as-is. Back when only ① was cleaned up, this survived wholesale and a
 #      tool session got misclassified as an agent (measured). The check uses the single
-#      tt_hook_valid, the same one tt_is_agent uses — if "the criterion for deleting" and "the
+#      fmux_hook_valid, the same one fmux_is_agent uses — if "the criterion for deleting" and "the
 #      criterion for trusting" diverge, you get the contradiction of deleting it and then
 #      trusting it again.
 #   If the list of live ids can't be obtained, the sweep is skipped (safe). Shared by the boot
 #   hook and --restore.
-tt_sweep_hooks() {
+fmux_sweep_hooks() {
     local live lsout sid created hf id
     lsout=$(tmux ls -F $'#{session_id}\t#{session_created}' 2>/dev/null) || return 0
     [ -n "$lsout" ] || return 0
@@ -952,7 +960,7 @@ tt_sweep_hooks() {
         case "$live" in
             *" $id="*)
                 created=${live#*" $id="}; created=${created%% *}
-                tt_hook_valid "$hf" "${created:-0}" || rm -f "$hf" "$STATE/cpu-$id" ;;   # ② ghost
+                fmux_hook_valid "$hf" "${created:-0}" || rm -f "$hf" "$STATE/cpu-$id" ;;   # ② ghost
             *) rm -f "$hf" "$STATE/cpu-$id" ;;                                           # ① orphan
         esac
     done
@@ -969,7 +977,7 @@ tt_sweep_hooks() {
         case "$live" in
             *" $id="*)
                 created=${live#*" $id="}; created=${created%% *}
-                tt_hook_valid "$STATE/hook-$id" "${created:-0}" || rm -f "$hf" ;;
+                fmux_hook_valid "$STATE/hook-$id" "${created:-0}" || rm -f "$hf" ;;
             *) rm -f "$hf" ;;
         esac
     done
@@ -989,15 +997,15 @@ tt_sweep_hooks() {
     return 0
 }
 
-# JSON shallow string value → global TT_JV (same rule as rc_val, but zero forks).
+# JSON shallow string value → global FMUX_JV (same rule as rc_val, but zero forks).
 #   Calling $(rc_val …) on the hook path spins up an extra subshell per event — since the hook is
 #   called several times a second, only here does it return via a global instead of stdout. (The
 #   rc-checking code still uses rc_val as-is.)
-tt_jv() {
-    TT_JV=""
+fmux_jv() {
+    FMUX_JV=""
     local re="\"$2\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
     [[ "$1" =~ $re ]] || return 1
-    TT_JV="${BASH_REMATCH[1]}"
+    FMUX_JV="${BASH_REMATCH[1]}"
     return 0
 }
 # ── Last prompt (last-<sid>) ────────────────────────────────────────────
@@ -1010,8 +1018,8 @@ tt_jv() {
 # status judgment, or manifest. So the function below returns 0 on every path, and
 # the render side just falls back to the old preview if it can't build a header.
 #
-# ── Why not tt_jv (measured) ─────────────────────────────────────────────
-# tt_jv's regex assumes "no quotes inside the value." That holds for session_id/cwd
+# ── Why not fmux_jv (measured) ─────────────────────────────────────────────
+# fmux_jv's regex assumes "no quotes inside the value." That holds for session_id/cwd
 # but breaks four ways for prompts. All four reproduced:
 #   ① {"prompt":"the \"dependencies\" section of the README"} → the extracted value is
 #      just the fragment `the \` before it. The character class [^"]* stops at the "
@@ -1027,7 +1035,7 @@ tt_jv() {
 #      `--hook working`**, and --codex-hooks likewise bundles UserPromptSubmit/PreToolUse/
 #      PostToolUse under working. Looking at $2 alone can't tell you whether this is a
 #      prompt submission, so every tool call becomes a false positive.
-# We leave tt_jv itself untouched — it's fine for its own purpose and keeps the hook
+# We leave fmux_jv itself untouched — it's fine for its own purpose and keeps the hook
 # path's zero-fork rule. Prompts get pulled by a dedicated scanner instead.
 #
 # ── Why awk instead of jq ────────────────────────────────────────────────
@@ -1038,13 +1046,13 @@ tt_jv() {
 #
 # ── awk syntax constraints ──────────────────────────────────────────────────
 # The Pi's default is mawk 1.3.4; the Mac uses BSD awk. No gensub, no multi-character RS,
-# no match() array argument, no mktime, no hex literals (same rule as TT_ACT_AWK/TT_MF_CHECK_AWK).
+# no match() array argument, no mktime, no hex literals (same rule as FMUX_ACT_AWK/FMUX_MF_CHECK_AWK).
 # Called with LC_ALL=C — every structural character the scanner deals with is ASCII, and
 # non-ASCII text can just pass through as raw bytes. That keeps length/substr behaving
 # identically **byte-wise** across every awk, and keeps the 4096-"byte" cap independent
 # of the implementation.
 
-TT_LASTP_MAX=4096      # Storage cap (bytes). Keeps a huge pasted instruction from eating disk and preview.
+FMUX_LASTP_MAX=4096      # Storage cap (bytes). Keeps a huge pasted instruction from eating disk and preview.
 # Cap (bytes) for truncating the payload before handing it to awk.
 #   ⚠ Without this line the hook stalls outright. mawk's character-by-character
 #     accumulation is O(n²) — measured: 36KB=0.04s, 140KB=0.54s, 420KB=10.3s,
@@ -1054,14 +1062,14 @@ TT_LASTP_MAX=4096      # Storage cap (bytes). Keeps a huge pasted instruction fr
 #   storage cap is 4096 bytes, so nothing is gained by going past 16KB. If truncation cuts
 #   the value off before it closes, the scanner records that as 'truncated' (the cut flag
 #   below) — it doesn't give up silently.
-TT_LASTP_SCAN=16384
+FMUX_LASTP_SCAN=16384
 
 # Extracts just the depth-1 prompt key, unescapes it, and strips control characters.
 #   rc 0 = extracted intact / rc 2 = extracted but truncated / rc 1 = absent (writes nothing)
 # Tracks in/out-of-string state, escape state, and brace depth by hand, so it
 #   · isn't fooled by tool_input.prompt (depth 2)
 #   · isn't fooled by a fake {"prompt":"fake"} the user pasted inside the actual prompt value
-TT_LASTP_AWK='
+FMUX_LASTP_AWK='
     BEGIN { for (i = 1; i < 256; i++) ORD[sprintf("%c", i)] = i }
     { if (length(buf) < lim) buf = buf $0 "\n" }
     END {
@@ -1193,7 +1201,7 @@ TT_LASTP_AWK='
 #     with rc 1. Example: a session editing this repo has PostToolUse carry this very
 #     source text wholesale inside tool_input, but that's inside a string value, so it
 #     never bumps the depth.
-tt_last_prompt_save() {
+fmux_last_prompt_save() {
     local sid="$1" payload="$2" now="$3" body rc=0 id f t
     case "$payload" in
         *'"hook_event_name"'*'"UserPromptSubmit"'*) ;;
@@ -1203,8 +1211,8 @@ tt_last_prompt_save() {
     #   as-is costs 0.4s on that write alone. We shrink it here first. ${v:0:n} counts
     #   **characters** under a UTF-8 locale, so at least n bytes always remain →
     #   awk's byte cap (lim) never trims anything out of the leading part it sees.
-    body=$(LC_ALL=C awk -v lim="$TT_LASTP_SCAN" -v maxb="$TT_LASTP_MAX" \
-            "$TT_LASTP_AWK" <<< "${payload:0:TT_LASTP_SCAN}" 2>/dev/null) || rc=$?
+    body=$(LC_ALL=C awk -v lim="$FMUX_LASTP_SCAN" -v maxb="$FMUX_LASTP_MAX" \
+            "$FMUX_LASTP_AWK" <<< "${payload:0:FMUX_LASTP_SCAN}" 2>/dev/null) || rc=$?
     case "$rc" in 0|2) ;; *) return 0 ;; esac
     [ -n "$body" ] || return 0
     id=${sid#\$}
@@ -1216,7 +1224,7 @@ tt_last_prompt_save() {
     #   Line 1 = write timestamp (+ trunc if truncated) / line 2 onward = body
     # ── 0600 ───────────────────────────────────────────────────────────────
     # ⚠ This file holds **the user's prompt text verbatim**. This is the first time
-    #   conversation content lands in ~/.cache/tt — the equivalent, ~/.claude/projects,
+    #   conversation content lands in ~/.cache/fmux — the equivalent, ~/.claude/projects,
     #   is 0700. Leaving it to umask gives different results per machine: 022 yields
     #   -rw-r--r--, 002 yields -rw-rw-r--. Either way **a different uid on the same
     #   machine can read it** (even this one Pi has both uid 1000 and 1001). So we set
@@ -1285,7 +1293,7 @@ tt_last_prompt_save() {
 #     already filters, but the render side **doesn't trust the file**: hand-crafted files,
 #     files left by an older build, files another uid dropped in — all of these arrive as-is.
 #     If one header line breaks, the whole popup looks broken to the user's eye.
-TT_LASTP_VIEW_AWK='
+FMUX_LASTP_VIEW_AWK='
     BEGIN {
         for (i = 1; i < 256; i++) ORD[sprintf("%c", i)] = i
         E = sprintf("%c", 27); DIM = E "[2m"; RST = E "[0m"
@@ -1463,7 +1471,7 @@ TT_LASTP_VIEW_AWK='
 #   This is also called from the hook path, so the wait stays short. If we can't get the
 #   lock, we just give up on this one write — if the manifest delayed the hook's actual
 #   job (status updates, completion notifications), that would be the tail wagging the dog.
-tt_mf_lock() {
+fmux_mf_lock() {
     local d="${MANIFEST%/*}"
     [ -d "$d" ] || mkdir -p "$d" 2>/dev/null || return 1
     command -v flock >/dev/null 2>&1 || return 0
@@ -1471,10 +1479,10 @@ tt_mf_lock() {
     flock -w 2 8 2>/dev/null || return 1
     return 0
 }
-tt_mf_unlock() { exec 8>&- 2>/dev/null || true; return 0; }
+fmux_mf_unlock() { exec 8>&- 2>/dev/null || true; return 0; }
 
 # Prints that session's manifest line verbatim (empty output if none)
-tt_mf_row() {
+fmux_mf_row() {
     local line t=$'\t'
     [ -f "$MANIFEST" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -1497,13 +1505,13 @@ tt_mf_row() {
 #   ④ The 6th field, "conversation home," follows the same rule. The hook is the only
 #      place that knows this value precisely, from the cwd in stdin JSON — because it's
 #      exactly the value claude itself uses to compute its own conversation folder.
-tt_mf_upsert() {
+fmux_mf_upsert() {
     local name="$1" cwd="$2" kind="$3" cmd="$4" conv="$5" chome="${6:-}"
     local t=$'\t' line old="" o row out="" found=0
     [ -n "$name" ] || return 0
     case "$name" in *"$t"*) return 0 ;; esac   # a name containing a tab would break the format — give up on recording it
     case "$cwd$kind$cmd$conv$chome" in *"$t"*) return 0 ;; esac
-    tt_mf_lock || return 0
+    fmux_mf_lock || return 0
     # Pass 1: look at the old line first (to preserve unknown fields we need the old values before building the new line)
     if [ -f "$MANIFEST" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
@@ -1528,10 +1536,10 @@ tt_mf_upsert() {
     # Conversation id must be a uuid only — if a mistimed value like "claude" gets in here,
     # the integrity check would reject every write after it, freezing the whole manifest
     # solid. Filtering it out at the door is cheap.
-    tt_is_uuid "$conv" || conv="-"
+    fmux_is_uuid "$conv" || conv="-"
     case "$kind" in agent|tool) ;; *) kind="tool" ;; esac
     row="$name$t$cwd$t$kind$t$cmd$t$conv$t$chome"
-    [ "$old" = "$row" ] && { tt_mf_unlock; return 0; }   # unchanged → file untouched
+    [ "$old" = "$row" ] && { fmux_mf_unlock; return 0; }   # unchanged → file untouched
     # Pass 2: replace in place (preserving order — this is a file humans read)
     if [ -f "$MANIFEST" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
@@ -1545,18 +1553,18 @@ tt_mf_upsert() {
         done < "$MANIFEST"
     fi
     [ "$found" = 1 ] || out="$out$row"$'\n'
-    tt_mf_write "$out" || true      # validation failed = keep the existing file (silently give up on this write only)
-    tt_mf_unlock
+    fmux_mf_write "$out" || true      # validation failed = keep the existing file (silently give up on this write only)
+    fmux_mf_unlock
     return 0
 }
 
 # Follows renames — if a tmux session's name changes, the manifest's key must change with it (otherwise restore resurrects a ghost)
-tt_mf_rename() {
+fmux_mf_rename() {
     local old="$1" new="$2" t=$'\t' line out="" hit=0
     [ -n "$old" ] && [ -n "$new" ] || return 0
     [ -f "$MANIFEST" ] || return 0
     case "$new" in *"$t"*) return 0 ;; esac
-    tt_mf_lock || return 0
+    fmux_mf_lock || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         [ -n "$line" ] || continue
         case "$line" in
@@ -1565,29 +1573,29 @@ tt_mf_rename() {
             *) out="$out$line"$'\n' ;;
         esac
     done < "$MANIFEST"
-    [ "$hit" = 1 ] && { tt_mf_write "$out" || true; }
-    tt_mf_unlock
+    [ "$hit" = 1 ] && { fmux_mf_write "$out" || true; }
+    fmux_mf_unlock
     return 0
 }
 
 # Explicit delete — we don't auto-remove a line just because the session died (reviving
 #   the dead is this file's whole purpose).
-#   The number of lines removed is returned via the global TT_MF_HITS.
-tt_mf_forget() {
+#   The number of lines removed is returned via the global FMUX_MF_HITS.
+fmux_mf_forget() {
     local name="$1" t=$'\t' line out=""
-    TT_MF_HITS=0
+    FMUX_MF_HITS=0
     [ -n "$name" ] || return 0
     [ -f "$MANIFEST" ] || return 0
-    tt_mf_lock || return 1
+    fmux_mf_lock || return 1
     while IFS= read -r line || [ -n "$line" ]; do
         [ -n "$line" ] || continue
         case "$line" in
-            "$name$t"*) TT_MF_HITS=$((TT_MF_HITS + 1)) ;;
+            "$name$t"*) FMUX_MF_HITS=$((FMUX_MF_HITS + 1)) ;;
             *) out="$out$line"$'\n' ;;
         esac
     done < "$MANIFEST"
-    [ "$TT_MF_HITS" -gt 0 ] && { tt_mf_write "$out" || TT_MF_HITS=0; }
-    tt_mf_unlock
+    [ "$FMUX_MF_HITS" -gt 0 ] && { fmux_mf_write "$out" || FMUX_MF_HITS=0; }
+    fmux_mf_unlock
     return 0
 }
 
@@ -1622,7 +1630,7 @@ tt_mf_forget() {
 #   Only the background is new, and it is **one colour for all three** (a dark chip). Recolouring
 #   the glyphs would have thrown away the meaning they already carry; the background is the part
 #   that was missing.
-tt_fleet_agg() {
+fmux_fleet_agg() {
     local f st ts pid w=0 k=0 out="" now sid wids="" wnames="" wshown=0 nm line
     now=$(date +%s)
     for f in "$STATE"/hook-*; do
@@ -1658,8 +1666,8 @@ tt_fleet_agg() {
                 # *The sampler must stay here* — the status bar rotating the sample here every
                 #   5 seconds is the axis of the CPU delta design. Without this line, there
                 #   would be no sample at all for the popup (--list) to use when opened,
-                #   tt_cpu_busy would be permanently rc2, and criterion C would die entirely.
-                tt_cpu_sample "$sid" "$pid" "$now" ;;
+                #   fmux_cpu_busy would be permanently rc2, and criterion C would die entirely.
+                fmux_cpu_sample "$sid" "$pid" "$now" ;;
         esac
     done
     # Attach names to ⏸. Query tmux **exactly once** — this function is called by the status
@@ -1726,15 +1734,15 @@ if [ "${1:-}" = "--hook" ]; then
     echo "$(date '+%F %T') $sid $st" >> "$STATE/hook.log"   # event audit log (for tracing false positives)
     # Walk up the parent chain to find the agent's real PID ($PPID may be a throwaway shell)
     #   — used for detecting dead sessions.
-    #   Why tt_comm: macOS ps gives an absolute path in comm — a raw comparison would never
+    #   Why fmux_comm: macOS ps gives an absolute path in comm — a raw comparison would never
     #   match on Mac.
     cpid=$PPID
     while [ "$cpid" -gt 1 ]; do
-        case "$(tt_comm "$cpid" || true)" in claude|codex) break ;; esac
+        case "$(fmux_comm "$cpid" || true)" in claude|codex) break ;; esac
         cpid=$(ps -p "$cpid" -o ppid= 2>/dev/null | tr -d ' ') || { cpid=0; break; }
         [ -n "$cpid" ] || { cpid=0; break; }
     done
-    case "$(tt_comm "${cpid:-0}" || true)" in claude|codex) ;; *) cpid=0 ;; esac
+    case "$(fmux_comm "${cpid:-0}" || true)" in claude|codex) ;; *) cpid=0 ;; esac
     case "$st" in
         waiting)
             # Notification payloads fall broadly into two branches:
@@ -1756,7 +1764,7 @@ if [ "${1:-}" = "--hook" ]; then
             # stock /bin/bash is 3.2. It parses fine and dies **only at expansion time**, so the
             # symptom is a silent one: "install works, the list shows up, but ⏸ just never
             # appears" (team deploy gate B6).
-            # tt_conf_envname in 05-config.sh avoids ${var^^} for the same reason — it's this
+            # fmux_conf_envname in 05-config.sh avoids ${var^^} for the same reason — it's this
             # repo's convention.
             # t-14 catches bash4-only syntax across all of src/*.sh (regression guard).
             case "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" in
@@ -1777,7 +1785,7 @@ if [ "${1:-}" = "--hook" ]; then
             #   hook_event_name. If it's not a prompt submission, it returns immediately with
             #   zero forks. Fails silently if it fails — the state file has already been
             #   written above (this is a side-effect-only addition).
-            tt_last_prompt_save "$sid" "$payload" "$now" ;;
+            fmux_last_prompt_save "$sid" "$payload" "$now" ;;
         idle)
             prev=$(cut -d' ' -f1 "$hf" 2>/dev/null || true)
             echo "idle $(date +%s) $cpid" > "$hf"
@@ -1788,10 +1796,10 @@ if [ "${1:-}" = "--hook" ]; then
                 if [ "$att" = 0 ]; then
                     # Locking is mandatory: the status bar rewrites this same file wholesale
                     # every 5 seconds — without a lock, this notification would be lost.
-                    tt_finished_lock
-                    tt_finished_rewrite "$name"   # normalize + drop old entries for the same session (sed replacement)
+                    fmux_finished_lock
+                    fmux_finished_rewrite "$name"   # normalize + drop old entries for the same session (sed replacement)
                     echo "$(date +%s) $name" >> "$STATE/finished"   # status bar badge + list unread marker
-                    tt_finished_unlock
+                    fmux_finished_unlock
                     tmux list-clients -F '#{client_name}' 2>/dev/null | while read -r c; do
                         tmux display-message -c "$c" -d 8000 "✓ $name done"
                     done
@@ -1801,7 +1809,7 @@ if [ "${1:-}" = "--hook" ]; then
             # The CPU snapshot's lifetime is entirely tied to the hook file's lifetime — if we
             # split the cleanup rule into two separate sets, we get the contradiction of
             # "deleted it, but still trust it" (same reasoning as the existing judgment in the
-            # tt_sweep_hooks comment).
+            # fmux_sweep_hooks comment).
             #   The last prompt is removed here too, in the same place — the session is over,
             #   and "what did I ask it to do" shouldn't linger and show up in the next
             #   session's preview (same judgment as sweep).
@@ -1817,15 +1825,15 @@ if [ "${1:-}" = "--hook" ]; then
             #   inherited ghost file, we'd inherit someone else's state as-is.
             #   Sweep first, then create if missing = either way, a file with this session's
             #   pid is left behind.
-            tt_sweep_hooks
+            fmux_sweep_hooks
             [ -f "$hf" ] || echo "idle $(date +%s) $cpid" > "$hf"
             # The rotation threshold (log_max) is read from config, so load the cache first —
             # as a bare statement, not inside a subshell (the contract in 05-config.sh). This
             # is the only place in the hook path that reads config, so it's placed right before
             # the rotation call rather than at the very top of the entry point: the
             # working/idle path, which runs on every event, reads zero bytes of config.
-            tt_conf_load
-            tt_log_rotate   # so the audit log doesn't grow unbounded on environments without cron installed
+            fmux_conf_load
+            fmux_log_rotate   # so the audit log doesn't grow unbounded on environments without cron installed
             name="$sname"                          # already asked above (fork savings)
             [ -n "$name" ] || exit 0
             pr="$STATE/pending-rename-$name"
@@ -1850,7 +1858,7 @@ if [ "${1:-}" = "--hook" ]; then
     # conversation" (stdin's session_id) at the same time — the conversation id falls into our
     # lap for free. If we pick it up here, the restore table stays current even if the user
     # never runs --snapshot even once (zero user intervention required).
-    # Cost: zero forks (a global-return tt_jv + string ops) + no file touch if the content is
+    # Cost: zero forks (a global-return fmux_jv + string ops) + no file touch if the content is
     # unchanged. Fails silently on failure.
     # The conversation home (6th field) is also only accurate here: stdin's cwd is claude's own
     # cwd, and claude uses exactly that value to compute
@@ -1860,7 +1868,7 @@ if [ "${1:-}" = "--hook" ]; then
     if [ -n "$sname" ]; then
         mconv=""; mhome=""
         if [ -n "$payload" ]; then
-            tt_jv "$payload" session_id && mconv="$TT_JV" || true   # conversation id from the claude hook
+            fmux_jv "$payload" session_id && mconv="$FMUX_JV" || true   # conversation id from the claude hook
             # Conversation home: don't just trust cwd as-is. The hook **also fires for
             # subagents**, and that payload's cwd is the directory the subagent was working in.
             # If we record that as the home, restore would run
@@ -1876,10 +1884,10 @@ if [ "${1:-}" = "--hook" ]; then
             # decode — if a directory name contains '-', the encoding can't be reversed:
             # _myproject -> -home-...-_myproject).
             mhome=""
-            if tt_jv "$payload" cwd; then
-                _hcwd="$TT_JV"
-                if tt_jv "$payload" transcript_path; then
-                    _hdir=${TT_JV%/*}; _hdir=${_hdir##*/}          # encoded folder name
+            if fmux_jv "$payload" cwd; then
+                _hcwd="$FMUX_JV"
+                if fmux_jv "$payload" transcript_path; then
+                    _hdir=${FMUX_JV%/*}; _hdir=${_hdir##*/}          # encoded folder name
                     case "$(printf '%s' "$_hcwd" | tr '/' '-')" in
                         "$_hdir") mhome="$_hcwd" ;;                 # match -> this cwd is the real home
                     esac
@@ -1890,7 +1898,7 @@ if [ "${1:-}" = "--hook" ]; then
         # the tty foreground) -> only record it when certain, otherwise pass an empty value to
         # preserve the existing record.
         case "$scmd" in claude|codex) mcmd="$scmd" ;; *) mcmd="" ;; esac
-        tt_mf_upsert "$sname" "$spath" agent "$mcmd" "$mconv" "$mhome" || true
+        fmux_mf_upsert "$sname" "$spath" agent "$mcmd" "$mconv" "$mhome" || true
     fi
     exit 0
 fi
@@ -1905,13 +1913,13 @@ if [ "${1:-}" = "--status" ]; then
     # Load config once at the top of the entry point, as a bare statement, not a subshell
     # (the contract in 05-config.sh). This path is called by the status bar every 5 seconds —
     # a single broken line must not spew warnings once per call.
-    tt_conf_load
-    unseen_s=$(( $(tt_conf_num unseen_minutes) * 60 ))
-    agg=$(tt_fleet_agg)     # unrelated to finished, so compute it first, outside the lock
+    fmux_conf_load
+    unseen_s=$(( $(fmux_conf_num unseen_minutes) * 60 ))
+    agg=$(fmux_fleet_agg)     # unrelated to finished, so compute it first, outside the lock
     out=""
     if [ -s "$f" ]; then
-        tt_finished_lock
-        tt_finished_rewrite     # migrate old format + strip poison lines
+        fmux_finished_lock
+        fmux_finished_rewrite     # migrate old format + strip poison lines
         keep=""
         while read -r ts name; do
             case "$ts" in ''|*[!0-9]*) continue ;; esac   # discard non-numeric lines (prevents permanent lingering)
@@ -1932,7 +1940,7 @@ if [ "${1:-}" = "--status" ]; then
             [ $(( now - ts )) -le "$unseen_s" ] && out="$out ✓$name"   # status bar shows it only for unseen_minutes; the file keeps it until viewed
         done < "$f"
         printf '%s' "$keep" > "$f"
-        tt_finished_unlock
+        fmux_finished_unlock
     fi
     badge=""
     [ -n "$out" ] && badge="#[fg=#7fae6e,bg=colour235,bold]$out #[default] "
@@ -1990,7 +1998,7 @@ rc_claude_pid() {
     while [ -n "${level// /}" ] && [ "$d" -lt 4 ]; do
         hits=""; next=""; n=0
         for p in $level; do
-            if [ -f "$SESSD/$p.json" ] && [ "$(tt_comm "$p" || true)" = claude ]; then
+            if [ -f "$SESSD/$p.json" ] && [ "$(fmux_comm "$p" || true)" = claude ]; then
                 pst=$(rc_procstart "$p" || true)
                 j=$(rc_read "$SESSD/$p.json") || j=""
                 if [ -n "$j" ] && [ -n "$pst" ] && [ "$pst" = "$(rc_val "$j" procStart)" ]; then
@@ -2034,20 +2042,20 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
     # (the contract in 05-config.sh:53). Calling it inside $(...) would let the cache die with
     # that subshell, and the loop below would re-parse the file per session and fire the
     # broken-line warning that many times, every minute, duplicated.
-    tt_conf_load
+    fmux_conf_load
     # rc switch. Exiting here would also kill the --snapshot at the end of this block (line
     # 142) — since rc and snapshot are separate switches, we only "skip without exiting."
-    tt_rc_enabled=1
-    tt_conf_on rc || tt_rc_enabled=0
+    fmux_rc_enabled=1
+    fmux_conf_on rc || fmux_rc_enabled=0
     # cron runs every minute -> stay silent where output is swallowed by a redirect (otherwise
     # cron mail piles up every minute), and only tell the reason on a terminal a human typed
     # into directly.
-    if [ "$tt_rc_enabled" = 0 ] && [ -t 1 ]; then
+    if [ "$fmux_rc_enabled" = 0 ] && [ -t 1 ]; then
         printf 'rc=off — skipping auto-recovery (fmux config set rc on)\n'
     fi
     only="${2:-}"; off=""
     mkdir -p "$STATE"
-    tt_log_rotate                              # so the audit log doesn't eat away at the SD card (once per minute)
+    fmux_log_rotate                              # so the audit log doesn't eat away at the SD card (once per minute)
     # In case a round runs long (~11s per recovered session), don't overlap with the next cron
     # tick and fire twice.
     if command -v flock >/dev/null 2>&1; then
@@ -2059,7 +2067,7 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
     # the moment we enter it, process substitution has already forked tmux. The inner
     # indentation is left as-is on purpose (re-indenting all 53 lines would bury the real
     # change in the diff).
-    if [ "$tt_rc_enabled" = 1 ]; then
+    if [ "$fmux_rc_enabled" = 1 ]; then
     while read -r sid name; do
         [ -z "$only" ] || [ "$name" = "$only" ] || continue
         t=$(rc_target "$sid") || continue          # no claude / ambiguous / suspected PID reuse -> silently skip
@@ -2133,17 +2141,17 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
     # survives even a sudden reboot.
     #   If snapshot=off, the child would also return early on its own, but we block it here
     #   too, to save the once-a-minute fork itself.
-    tt_conf_on snapshot && { [ -n "$only" ] || "$SELF" --snapshot >/dev/null 2>&1 || true; }
+    fmux_conf_on snapshot && { [ -n "$only" ] || "$SELF" --snapshot >/dev/null 2>&1 || true; }
     exit 0
 fi
 
 # rc status table (read-only, for debugging): session / rc / URL
 if [ "${1:-}" = "--rc" ]; then
-    tt_conf_load                               # bare statement, not a subshell (the contract in 05-config.sh:53)
+    fmux_conf_load                               # bare statement, not a subshell (the contract in 05-config.sh:53)
     # Bail out before the first tmux call that draws the table (the while below) — for someone
     # who has turned off auto-recovery, the rc status table would just be a table asking "why
     # is everything OFF" right back at them.
-    tt_conf_on rc || { printf 'rc=off — auto-recovery is disabled (fmux config set rc on)\n'; exit 0; }
+    fmux_conf_on rc || { printf 'rc=off — auto-recovery is disabled (fmux config set rc on)\n'; exit 0; }
     # The entire rc verdict hangs on /proc/<pid>/stat (rc_procstart). On a machine without
     # /proc (macOS), rc_target always fails and the table below becomes **'?' in every row** —
     # that's unsupported, not broken, but looking at the table alone you can't tell the
@@ -2180,7 +2188,7 @@ fi
 #   The process cwd's correct answer is the /proc/<pid>/cwd symlink (Linux). macOS has no /proc,
 #   so home becomes '-' — in that case the hook's old value, already filled in from the stdin
 #   JSON's cwd, is preserved (upsert rule ②).
-tt_conv_of() {
+fmux_conv_of() {
     local t pid j v home=""
     t=$(rc_target "$1") || return 1
     pid=${t##* }
@@ -2199,26 +2207,26 @@ tt_conv_of() {
 #   --snapshot right after a reboot, the restore table would evaporate right then (at the moment
 #   it's needed most).
 if [ "${1:-}" = "--snapshot" ]; then
-    tt_conf_load                               # bare statement, not a subshell (05-config.sh:53 contract)
+    fmux_conf_load                               # bare statement, not a subshell (05-config.sh:53 contract)
     # The instant we enter the while loop below, process substitution forks tmux, and inside the
     # loop display-message gets called again per session — we must bail before that to block
     # 'everything'. No lock is held yet.
-    tt_conf_on snapshot || { printf 'snapshot=off — not recording (fmux config set snapshot on)\n'; exit 0; }
+    fmux_conf_on snapshot || { printf 'snapshot=off — not recording (fmux config set snapshot on)\n'; exit 0; }
     mkdir -p "$STATE"
     rows=""; n=0
     while IFS=$'\t' read -r sid name; do
         [ -n "$name" ] || continue
         # The zz prefix is our test-session convention — never entered into the real fleet manifest.
-        #   But if TT_MANIFEST has redirected the manifest elsewhere (a test path), that rule would
+        #   But if FMUX_MANIFEST has redirected the manifest elsewhere (a test path), that rule would
         #   block the test itself, so it doesn't apply there. What we're protecting was only ever
         #   the real manifest to begin with.
-        if [ -z "${TT_MANIFEST:-}" ]; then
+        if [ -z "${FMUX_MANIFEST:-}" ]; then
             case "$name" in zz*) printf '  skip %s — test session\n' "$name"; continue ;; esac
         fi
         info=$(tmux display-message -p -t "=$name:" $'#{pane_current_path}\t#{pane_current_command}' 2>/dev/null) || info=""
         cwd=${info%%$'\t'*}; pcmd=${info#*$'\t'}
         [ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$HOME"
-        old=$(tt_mf_row "$name")
+        old=$(fmux_mf_row "$name")
         oldcmd=""; oldconv=""; oldhome=""; oldkind=""
         if [ -n "$old" ]; then
             # Field order: name·cwd·kind·cmd·conv[·chome] — reaching cmd means stripping 3 tabs.
@@ -2232,7 +2240,7 @@ if [ "${1:-}" = "--snapshot" ]; then
             case "$o" in *$'\t'*) o=${o#*$'\t'}; oldhome=${o%%$'\t'*} ;; esac
         fi
         chome=""
-        if tt_is_agent "$sid"; then
+        if fmux_is_agent "$sid"; then
             kind=agent
             # For the start command, look at whatever claude|codex is actually running in the pane
             # (scans across windows even if there are several). If not found (the agent died and
@@ -2241,7 +2249,7 @@ if [ "${1:-}" = "--snapshot" ]; then
             cmd=$(tmux list-panes -s -t "$sid" -F '#{pane_current_command}' 2>/dev/null | grep -m1 -xE 'claude|codex' || true)
             [ -n "$cmd" ] || cmd="$oldcmd"
             case "$cmd" in ''|-) cmd=claude ;; esac
-            ci=$(tt_conv_of "$sid" || true)
+            ci=$(fmux_conv_of "$sid" || true)
             conv=${ci%%$'\t'*}
             case "$ci" in *$'\t'*) chome=${ci##*$'\t'} ;; esac
             # Not being able to figure it out right now doesn't mean we throw away the old value —
@@ -2256,7 +2264,7 @@ if [ "${1:-}" = "--snapshot" ]; then
             # (accurate for yazi/lazydocker). If it's a bare shell, record no command — restore
             # will just launch a shell.
             case "$pcmd" in ''|bash|-bash|zsh|-zsh|sh|fish|tmux) cmd="-" ;; *) cmd="$pcmd" ;; esac
-            # Being classified as a tool doesn't mean we drop the conversation id — if tt_is_agent
+            # Being classified as a tool doesn't mean we drop the conversation id — if fmux_is_agent
             # is false even once (e.g. the moment the hook file gets cleared), the conversation would
             # be lost for good. If kind is tool, restore doesn't use conv anyway, so keeping it
             # around is the safe choice.
@@ -2264,7 +2272,7 @@ if [ "${1:-}" = "--snapshot" ]; then
             [ -n "$conv" ] || conv="-"
             chome="$oldhome"
             # ★ Don't demote a dead agent to a tool — secondary damage from the 2026-07-26 incident.
-            #   When an agent dies, only a bare shell is left in the pane → tt_is_agent is false →
+            #   When an agent dies, only a bare shell is left in the pane → fmux_is_agent is false →
             #   recorded as kind=tool → restore branches on kind, so it ignores conv and just
             #   launches a bare shell. In other words, exactly when "restore is needed most," the
             #   manifest erases its own ability to restore. --snapshot runs every minute via cron,
@@ -2274,14 +2282,14 @@ if [ "${1:-}" = "--snapshot" ]; then
             #   bare shell (no replacement tool came up) → treat it as a dead agent. If a human
             #   launched yazi in that session, cmd wouldn't be a bare shell, so it's filtered out by
             #   the case above and correctly falls through to tool.
-            if [ "$oldkind" = agent ] && [ "$cmd" = "-" ] && tt_is_uuid "$conv"; then
+            if [ "$oldkind" = agent ] && [ "$cmd" = "-" ] && fmux_is_uuid "$conv"; then
                 kind=agent
                 cmd="$oldcmd"; case "$cmd" in ''|-) cmd=claude ;; esac
             fi
         fi
         # Only a uuid-shaped string is accepted as the conversation id — letting a string like
         # "claude" pass through is what let the incident grow
-        tt_is_uuid "$conv" || conv="-"
+        fmux_is_uuid "$conv" || conv="-"
         # Only record the conversation home when it's a directory that actually exists (recording
         # a vanished path makes restore try to cd there and fail)
         [ -n "$chome" ] && [ -d "$chome" ] || chome="-"
@@ -2300,25 +2308,25 @@ if [ "${1:-}" = "--snapshot" ]; then
     # Integrity check before writing — any broken line not caught here becomes the "old value" of
     #   the next snapshot and spreads. On rejection, we don't touch the existing file at all: a
     #   stale manifest is always better than a corrupt one.
-    if ! tt_mf_check "$rows"; then
+    if ! fmux_mf_check "$rows"; then
         printf 'snapshot ABORTED — generated rows failed the integrity check; %s left untouched\n' "$MANIFEST" >&2
         exit 1
     fi
-    tt_mf_lock || { echo "manifest busy — try again"; exit 1; }
+    fmux_mf_lock || { echo "manifest busy — try again"; exit 1; }
     # A vanished session's line disappears only here (hooks/listings are never deleted — the
     #   whole point is reviving the dead)
     if [ -f "$MANIFEST" ]; then
         # Rotates three backup generations. --snapshot runs every minute via cron, so with only one
         # generation the window to notice and revert a bad snapshot is 60 seconds — the next tick
         # overwrites the only backup too. Three generations = at least 3 minutes.
-        tt_mf_backup
+        fmux_mf_backup
         while IFS=$'\t' read -r on _rest || [ -n "$on" ]; do
             [ -n "$on" ] || continue
             case $'\n'"$rows" in *$'\n'"$on"$'\t'*) ;; *) printf '  dropped %s — no longer running\n' "$on" ;; esac
         done < "$MANIFEST.bak"
     fi
-    tt_mf_write "$rows" || { tt_mf_unlock; exit 1; }
-    tt_mf_unlock
+    fmux_mf_write "$rows" || { fmux_mf_unlock; exit 1; }
+    fmux_mf_unlock
     printf 'snapshot: %d sessions → %s\n' "$n" "$MANIFEST"
     exit 0
 fi
@@ -2328,8 +2336,8 @@ fi
 if [ "${1:-}" = "--forget" ]; then
     n="${2:-}"
     [ -n "$n" ] || { echo "usage: fmux --forget <session name>"; exit 1; }
-    tt_mf_forget "$n" || { echo "manifest busy — try again"; exit 1; }
-    if [ "${TT_MF_HITS:-0}" -gt 0 ]; then
+    fmux_mf_forget "$n" || { echo "manifest busy — try again"; exit 1; }
+    if [ "${FMUX_MF_HITS:-0}" -gt 0 ]; then
         printf 'forgot %s\n' "$n"
     else
         printf 'no manifest entry named %s\n' "$n"
@@ -2357,10 +2365,10 @@ if [ "${1:-}" = "--restore" ]; then
     if [ "$dry" = 1 ]; then
         echo "[dry] would sweep orphan hook files"
     else
-        tt_sweep_hooks
+        fmux_sweep_hooks
     fi
     made=0; skipped=0; used=""; livec=""; verify=""
-    TT_SH=$(tt_login_shell)
+    FMUX_SH=$(fmux_login_shell)
     # First gather the list of conversations that currently-live claude processes are holding.
     #   Judging "dead" by name alone isn't enough — if a session gets renamed (a human uses ^E, or
     #   claude renames itself), the manifest's old name looks like a dead session, and a perfectly
@@ -2374,7 +2382,7 @@ if [ "${1:-}" = "--restore" ]; then
         [ -f "$sf" ] || continue
         spid=${sf##*/}; spid=${spid%.json}
         case "$spid" in ''|*[!0-9]*) continue ;; esac
-        [ "$(tt_comm "$spid" || true)" = claude ] || continue
+        [ "$(fmux_comm "$spid" || true)" = claude ] || continue
         sj=$(rc_read "$sf") || continue
         sv=$(rc_val "$sj" sessionId)
         [ -n "$sv" ] && livec="$livec $sv"
@@ -2384,7 +2392,7 @@ if [ "${1:-}" = "--restore" ]; then
     while IFS=$'\t' read -r name cwd kind cmd conv chome || [ -n "$name" ]; do
         [ -n "$name" ] || continue
         case "$name" in \#*) continue ;; esac
-        tt_is_uuid "${conv:-}" || conv="-"      # so a corrupted line can't leak into a command line
+        fmux_is_uuid "${conv:-}" || conv="-"      # so a corrupted line can't leak into a command line
         case "${chome:-}" in ''|-) chome="" ;; esac
         # Even a live session records its own conversation as "claimed" and gets skipped —
         # there's a real case of an already-running tt-worker and the manifest's worker2 both
@@ -2466,7 +2474,7 @@ if [ "${1:-}" = "--restore" ]; then
         # Explicitly specify the shell — even if the server-wide default-shell got stuck at
         # /bin/sh from cron, our session still comes up as a login bash (server option untouched).
         # Primary cause of the 2026-07-26 incident.
-        if ! tmux new-session -d -s "$name" -c "$cwd" "$TT_SH" -l 2>/dev/null; then
+        if ! tmux new-session -d -s "$name" -c "$cwd" "$FMUX_SH" -l 2>/dev/null; then
             printf 'FAIL   %-16s could not create session\n' "$name"
             continue
         fi
@@ -2493,7 +2501,7 @@ if [ "${1:-}" = "--restore" ]; then
         vbad=""
         while IFS=$'\t' read -r vn vrun || [ -n "$vn" ]; do
             [ -n "$vn" ] || continue
-            tt_pane_has_agent "$vn" && continue
+            fmux_pane_has_agent "$vn" && continue
             printf '  warn  %-16s agent did not come up — retrying once\n' "$vn"
             tmux send-keys -t "=$vn:" -l "$vrun" 2>/dev/null
             tmux send-keys -t "=$vn:" Enter 2>/dev/null
@@ -2503,7 +2511,7 @@ if [ "${1:-}" = "--restore" ]; then
             sleep 12
             vfail=""
             for vn in $vbad; do
-                tt_pane_has_agent "$vn" || vfail="$vfail $vn"
+                fmux_pane_has_agent "$vn" || vfail="$vfail $vn"
             done
             if [ -n "$vfail" ]; then
                 printf 'RESTORE INCOMPLETE — agents still down after retry:%s\n' "$vfail"
@@ -2559,8 +2567,8 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #   Rotation (log_max) reads config before the boot_restore switch below, so the load must come
     #   before that too — if it's first read inside a $(...) during rotation, the cache dies along
     #   with that subshell, and one broken line ends up printing the warning twice per boot.
-    tt_conf_load
-    TT_LOG_FILE="$BOOTLOG" tt_log_rotate
+    fmux_conf_load
+    FMUX_LOG_FILE="$BOOTLOG" fmux_log_rotate
     blog "=== boot-restore start (dry=$dry, pid $$)"
 
     # ⓪ Config switch. Means the same thing as the ① kill switch, just a different handle (a
@@ -2569,7 +2577,7 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #    where this entry point first calls tmux) below at all.
     #    (The config cache was already set up before the log rotation above — because rotation
     #    reads log_max.)
-    if ! tt_conf_on boot_restore; then
+    if ! fmux_conf_on boot_restore; then
         blog "boot_restore=off in config — nothing done"
         printf 'boot_restore=off — skipping boot restore (fmux config set boot_restore on)\n'
         exit 0
@@ -2600,7 +2608,9 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #    Order matters: since we prepend, the list below is in *reverse* priority order. libexec/tt
     #    must end up first — if it lands behind the others, a bare claude that skips the
     #    hook-injection wrapper comes up, and the fleet status board (hook-*) dies entirely.
-    for d in "$HOME/.npm-global/bin" "$HOME/.local/bin" "$HOME/.local/libexec/tt"; do
+    #    Both shim directory names are listed: fmux is the current one, tt is what installs made
+    #    before 2026-08-06 used and is never moved (the path lives in the user's shell rc).
+    for d in "$HOME/.npm-global/bin" "$HOME/.local/bin" "$HOME/.local/libexec/tt" "$HOME/.local/libexec/fmux"; do
         [ -d "$d" ] || continue
         case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
     done
@@ -2615,7 +2625,7 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #   and the status board stayed green for 40 minutes. Why the PATH loop above can't stop this —
     #   it fixes our own process's PATH, but the pane's login shell re-reads /etc/profile and
     #   overwrites PATH wholesale anyway.
-    SHELL=$(tt_login_shell); export SHELL
+    SHELL=$(fmux_login_shell); export SHELL
 
     # ③ Duplicate-run prevention. Same approach as --cron's rc.lock (flock -n, fd 9).
     #    --restore's "skip if already alive" check is only true *after* the session has been
@@ -2678,8 +2688,8 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #    To cover the gap DNS alone can't (name resolves, but routing isn't up yet), we also probe
     #    TCP 443 once more. /dev/tcp is a bash builtin, so it doesn't pull in a curl dependency
     #    (measured 42ms).
-    NETHOST=${TT_BOOT_NETHOST:-api.anthropic.com}
-    NETWAIT=${TT_BOOT_NETWAIT:-120}
+    NETHOST=${FMUX_BOOT_NETHOST:-api.anthropic.com}
+    NETWAIT=${FMUX_BOOT_NETWAIT:-120}
     t0=$(date +%s); netok=0
     while :; do
         # Pass the hostname as $1 instead of concatenating it into the command string (this keeps
@@ -2725,7 +2735,7 @@ if [ "${1:-}" = "--boot-restore" ]; then
     # existence, checking cwd existence). The reason for 7 days: anything shorter would fire a
     # warning every time in the perfectly normal case of the Pi being off for a few days due to
     # travel or a power outage.
-    # The reason we don't use stat for the age comparison is the same as tt_log_rotate — GNU and BSD
+    # The reason we don't use stat for the age comparison is the same as fmux_log_rotate — GNU and BSD
     # options are exact opposites. `find -mtime +7` is POSIX, so it behaves identically on both.
     if [ -n "$(find "$MANIFEST" -mtime +7 2>/dev/null)" ]; then
         blog "warn: $MANIFEST is older than 7 days — restoring it anyway"
@@ -2755,7 +2765,7 @@ fi
 # We used to use the hook-<sid> record timestamp as "last conversation time". We measured that
 #   this was wrong:
 #   2026-07-25 12:41 boot → 13:10 --restore → hook-3/5/8 all updated to 13:10 → the whole fleet went bold.
-#   On reboot, tmux reissues session ids starting from 0, so tt_sweep_hooks treats old hook files
+#   On reboot, tmux reissues session ids starting from 0, so fmux_sweep_hooks treats old hook files
 #   as ghosts and deletes them, then the boot hook creates new ones — correct as "belongs to this
 #   session" but completely wrong as "last conversation".
 #
@@ -2780,10 +2790,10 @@ fi
 #   directly in awk (timestamps are always UTC 'Z'). We avoid mktime because mawk doesn't have it
 #   (the Pi's default is mawk 1.3.4).
 #   We also avoid regex {n} repetition — interval support differs by implementation (same reason as
-#   TT_MF_CHECK_AWK).
+#   FMUX_MF_CHECK_AWK).
 # Output = one "<path>\t<epoch>" line per file. 0 if no timestamp is found — the caller falls back
 #   to the hook timestamp.
-TT_ACT_AWK='
+FMUX_ACT_AWK='
     function iso2epoch(s,   y, mo, d, h, mi, se, yy, era, yoe, doy, doe, days) {
         y  = substr(s, 1, 4) + 0;  mo = substr(s, 6, 2) + 0;  d  = substr(s, 9, 2) + 0
         h  = substr(s, 12, 2) + 0; mi = substr(s, 15, 2) + 0; se = substr(s, 18, 2) + 0
@@ -2831,9 +2841,9 @@ if [ "${1:-}" = "--list" ]; then
     #   The two values below are pulled out before the loop — asking again per session would add
     #   a fork per session. Also the display loop runs inside a pipeline (subshell), so reading it
     #   there can't escape outward.
-    tt_conf_load
-    acc=$(tt_conf_num accent 255)              # accent colour, 256-colour number (goes inside the escape sequence)
-    recent_s=$(( $(tt_conf_num recent_hours) * 3600 ))   # bold the name if there was a conversation within this window
+    fmux_conf_load
+    acc=$(fmux_conf_num accent 255)              # accent colour, 256-colour number (goes inside the escape sequence)
+    recent_s=$(( $(fmux_conf_num recent_hours) * 3600 ))   # bold the name if there was a conversation within this window
     # rc display cache — the judgment is done by --cron (every minute), here we just read one line (0 forks)
     # If the cache is stale by more than 5 minutes = cron isn't running → quietly turn it off instead of scaring with a stale ⊘
     rcoff=""; rcts=0
@@ -2843,7 +2853,7 @@ if [ "${1:-}" = "--list" ]; then
     # Re-reading the manifest per session would be O(session count × manifest lines) — read it once
     # and carry it as a table.
     # We don't use associative arrays (bash 4 only, breaks on the Mac's default 3.2 — same call as
-    # tt_sweep_hooks).
+    # fmux_sweep_hooks).
     # Instead: a "\n<name>\t<value>" line table + case-glob lookup: safe even when names have
     # spaces, and 0 forks.
     # (the manifest forbids tabs in names, so tab is safe as a field separator)
@@ -2852,7 +2862,7 @@ if [ "${1:-}" = "--list" ]; then
         while IFS=$'\t' read -r mname _ mkind _ mconv _ || [ -n "$mname" ]; do
             [ -n "$mname" ] || continue
             [ "$mkind" = agent ] || continue         # tool sessions get ts=0 anyway
-            tt_is_uuid "${mconv:-}" || continue      # if we don't know the conversation id, leave it to the fallback
+            fmux_is_uuid "${mconv:-}" || continue      # if we don't know the conversation id, leave it to the fallback
             for tf in "$HOME"/.claude/projects/*/"$mconv".jsonl; do
                 [ -f "$tf" ] || continue             # a glob miss leaves the pattern itself unchanged
                 actn+=("$mname"); actp+=("$tf")
@@ -2863,7 +2873,7 @@ if [ "${1:-}" = "--list" ]; then
     if [ "${#actp[@]}" -gt 0 ]; then
         # Why we append /dev/null: tail doesn't print the "==> …<==" header when there's only one file.
         # We always force multi-file mode to remove the parsing branch (an empty file, so 0 cost).
-        actraw=$'\n'$(tail -c 65536 -- "${actp[@]}" /dev/null 2>/dev/null | awk "$TT_ACT_AWK") || actraw=""
+        actraw=$'\n'$(tail -c 65536 -- "${actp[@]}" /dev/null 2>/dev/null | awk "$FMUX_ACT_AWK") || actraw=""
         i=0
         while [ "$i" -lt "${#actp[@]}" ]; do
             # Look it back up by path (don't rely on output order — if a file disappears in
@@ -2890,8 +2900,8 @@ if [ "${1:-}" = "--list" ]; then
             grp=0
             # We pass created along too: it's the basis for filtering out inherited stale hook
             # files, and since we already have the value in hand, it doesn't add a tmux call.
-            # The judgment lives in exactly one place: tt_is_agent.
-            tt_is_agent "$sid" "$created" && grp=1
+            # The judgment lives in exactly one place: fmux_is_agent.
+            fmux_is_agent "$sid" "$created" && grp=1
             # Activity time: for agents = the timestamp of the last turn in the transcript (the
             #   pre-survey table above) — not the hook timestamp.
             #   Fallback ladder: transcript → hook record timestamp → creation time of a fresh
@@ -2937,8 +2947,8 @@ if [ "${1:-}" = "--list" ]; then
             #   accepting an "exact" match
             unread=0
             if [ -s "$STATE/finished" ]; then
-                fts=$(TT_FIN_NAME="$name" awk '
-                    BEGIN { want = ENVIRON["TT_FIN_NAME"]; r = 0 }
+                fts=$(FMUX_FIN_NAME="$name" awk '
+                    BEGIN { want = ENVIRON["FMUX_FIN_NAME"]; r = 0 }
                     {
                         if ($1 ~ /^[0-9]+$/)                  { t = $1;  s = $0; sub(/^[0-9]+[ \t]+/, "", s) }
                         else if (NF > 1 && $NF ~ /^[0-9]+$/)  { t = $NF; s = $0; sub(/[ \t]+[0-9]+[ \t]*$/, "", s) }
@@ -2951,7 +2961,7 @@ if [ "${1:-}" = "--list" ]; then
             printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$grp" "$unread" "${ts:-0}" "${sid#\$}" "$attached" "$name"
         done | sort -t$'\t' -k1,1rn -k2,2rn -k3,3rn -k6,6 \
         | while IFS=$'\t' read -r grp unread ts sid attached name; do
-            [ "$name" = "${TT_CUR:-}" ] && continue
+            [ "$name" = "${FMUX_CUR:-}" ] && continue
             [ "$attached" = - ] && attached=""    # release the sentinel — from here on it's an empty display string
             if [ "$grp" = 0 ]; then   # tool session: teal, bottom group, no state decoration
                 printf '%s\t\033[38;5;%sm%s\033[0m \033[36m%s\033[0m\t%s\n' "$name" "$acc" "$name" "$attached" "$sid"
@@ -2984,17 +2994,17 @@ if [ "${1:-}" = "--list" ]; then
                     if [ $(( now - ${_hts:-0} )) -le 20 ]; then
                         mark=$'\033[33m✻\033[0m'
                     else
-                        cbusy=0; tt_cpu_busy "$sid" "${hpid:-0}" "$now" || cbusy=$?
+                        cbusy=0; fmux_cpu_busy "$sid" "${hpid:-0}" "$now" || cbusy=$?
                         if [ "$cbusy" = 0 ]; then
                             mark=$'\033[33m✻\033[0m'
-                        elif tmux capture-pane -p -t "=$name:" 2>/dev/null | tt_working; then
+                        elif tmux capture-pane -p -t "=$name:" 2>/dev/null | fmux_working; then
                             mark=$'\033[33m✻\033[0m'
                         else
                             mark=""
                         fi
                     fi
                     # Leave a sample for the next call regardless of the judgment result (untouched if within ROTATE)
-                    tt_cpu_sample "$sid" "${hpid:-0}" "$now" ;;
+                    fmux_cpu_sample "$sid" "${hpid:-0}" "$now" ;;
                 waiting)
                     # Anti-"stuck" guard: if approval is denied, codex doesn't fire Stop —
                     # if there's been no update for over 60s and the screen shows no approval
@@ -3010,7 +3020,7 @@ if [ "${1:-}" = "--list" ]; then
                         mark=$'\033[38;5;215m⏸\033[0m'
                     fi ;;
                 idle) ;;
-                *) if tmux capture-pane -p -t "=$name:" 2>/dev/null | tt_working; then mark=$'\033[33m✻\033[0m'; fi ;;
+                *) if tmux capture-pane -p -t "=$name:" 2>/dev/null | fmux_working; then mark=$'\033[33m✻\033[0m'; fi ;;
             esac
             # Unread ✓: a session that finished while away and hasn't been visited yet (disappears once visited)
             umark=""
@@ -3041,7 +3051,7 @@ fi
 
 # ── Config CLI ──────────────────────────────────────────────────────────────
 # Keys that remapping can't touch. One door out always stays open even if you fumble.
-TT_CONF_RESERVED='esc enter left'
+FMUX_CONF_RESERVED='esc enter left'
 
 # ── "Is this key actually wired to a real action?" — pulled from code, not hand-written ──────
 # A key whose value is saved but that nobody reads is a **lying toggle**. The user believes the
@@ -3064,40 +3074,40 @@ TT_CONF_RESERVED='esc enter left'
 #   that key will look wired. When writing an example, use a placeholder like <key> for the key
 #   slot. Whether this judgment matches the real wiring is pinned down by test/t-07-config-view.sh
 #   via key names and count.
-TT_CONF_WIRED_AWK='
+FMUX_CONF_WIRED_AWK='
     {
         s = $0
-        while (match(s, /tt_conf_(get|on|num)[ \t]+[a-z][a-z0-9_]*/)) {
+        while (match(s, /fmux_conf_(get|on|num)[ \t]+[a-z][a-z0-9_]*/)) {
             t = substr(s, RSTART, RLENGTH)
             sub(/^[a-z_]+[ \t]+/, "", t)
             if (!(t in seen)) { seen[t] = 1; printf "%s ", t }
             s = substr(s, RSTART + RLENGTH)
         }
     }'
-TT_CONF_WIRED_LIST=''
-TT_CONF_WIRED_SCANNED=0
-tt_conf_wired_scan() {
-    [ "$TT_CONF_WIRED_SCANNED" = 1 ] && return 0
-    TT_CONF_WIRED_SCANNED=1                      # don't retry even on failure — pin it to a single fork
+FMUX_CONF_WIRED_LIST=''
+FMUX_CONF_WIRED_SCANNED=0
+fmux_conf_wired_scan() {
+    [ "$FMUX_CONF_WIRED_SCANNED" = 1 ] && return 0
+    FMUX_CONF_WIRED_SCANNED=1                      # don't retry even on failure — pin it to a single fork
     local out=''
     [ -r "$SELF" ] || return 0
-    out=$(awk "$TT_CONF_WIRED_AWK" "$SELF" 2>/dev/null) || out=''
+    out=$(awk "$FMUX_CONF_WIRED_AWK" "$SELF" 2>/dev/null) || out=''
     [ -n "$out" ] || return 0
-    TT_CONF_WIRED_LIST=" $out"                   # includes leading/trailing space — case-glob sees exactly one word
+    FMUX_CONF_WIRED_LIST=" $out"                   # includes leading/trailing space — case-glob sees exactly one word
     return 0
 }
-tt_conf_wired() {
-    tt_conf_wired_scan
+fmux_conf_wired() {
+    fmux_conf_wired_scan
     # Couldn't read ourselves = no basis for a judgment. In that case show no marker at all —
     # painting everything "not wired" would be the far bigger lie.
-    [ -n "$TT_CONF_WIRED_LIST" ] || return 0
-    case "$TT_CONF_WIRED_LIST" in *" ${1:-} "*) return 0 ;; esac
+    [ -n "$FMUX_CONF_WIRED_LIST" ] || return 0
+    case "$FMUX_CONF_WIRED_LIST" in *" ${1:-} "*) return 0 ;; esac
     return 1
 }
 
 # Is this a key name fzf accepts inside the popup (a subset whitelist)?
 # Passing a name that isn't here makes fzf refuse to start at all and the cockpit never shows — so we block it up front.
-tt_conf_is_fzf_key() {
+fmux_conf_is_fzf_key() {
     case "${1:-}" in
         ctrl-[a-z]|alt-[a-z0-9]) return 0 ;;
         f[1-9]|f1[0-2]) return 0 ;;
@@ -3108,7 +3118,7 @@ tt_conf_is_fzf_key() {
 }
 
 # Is this a key name tmux accepts? Used for key_summon (one key) and key_summon_fast (space-separated list).
-tt_conf_is_tmux_key() {
+fmux_conf_is_tmux_key() {
     case "${1:-}" in
         ''|*[!A-Za-z0-9C\-M\ ]*) return 1 ;;
     esac
@@ -3116,9 +3126,9 @@ tt_conf_is_tmux_key() {
 }
 
 # Validation. On rc 1 the reason is printed to stderr.
-tt_conf_validate() {
+fmux_conf_validate() {
     local k="${1:-}" v="${2:-}" other ov
-    tt_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; return 1; }
+    fmux_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; return 1; }
     case "$k" in
         rc|snapshot|snapshot_on_exit|boot_restore)
             case "$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')" in
@@ -3132,20 +3142,20 @@ tt_conf_validate() {
             case "$v" in ''|*[!0-9]*) echo "accent must be an integer 0-255 (got: $v)" >&2; return 1 ;; esac
             [ "$v" -le 255 ] || { echo "accent must be 0-255 (got: $v)" >&2; return 1; } ;;
         key_summon)
-            tt_conf_is_tmux_key "$v" || { echo "key_summon must be a tmux key name (e.g. F, C-Left)" >&2; return 1; } ;;
+            fmux_conf_is_tmux_key "$v" || { echo "key_summon must be a tmux key name (e.g. F, C-Left)" >&2; return 1; } ;;
         key_summon_fast)
             for ov in $v; do
-                tt_conf_is_tmux_key "$ov" || { echo "'$ov' in key_summon_fast is not a tmux key name" >&2; return 1; }
+                fmux_conf_is_tmux_key "$ov" || { echo "'$ov' in key_summon_fast is not a tmux key name" >&2; return 1; }
             done ;;
         key_*)
-            for ov in $TT_CONF_RESERVED; do
+            for ov in $FMUX_CONF_RESERVED; do
                 [ "$v" = "$ov" ] && { echo "$v is a reserved key and can't be remapped (close/enter must always stay open)" >&2; return 1; }
             done
-            tt_conf_is_fzf_key "$v" || { echo "not a key name fzf knows: $v (e.g. ctrl-n, alt-x, f2)" >&2; return 1; }
+            fmux_conf_is_fzf_key "$v" || { echo "not a key name fzf knows: $v (e.g. ctrl-n, alt-x, f2)" >&2; return 1; }
             # Conflict — is the same key already used by another action?
-            for other in $TT_CONF_KEYS; do
+            for other in $FMUX_CONF_KEYS; do
                 case "$other" in key_summon|key_summon_fast|"$k") continue ;; key_*) ;; *) continue ;; esac
-                if [ "$(tt_conf_get "$other")" = "$v" ]; then
+                if [ "$(fmux_conf_get "$other")" = "$v" ]; then
                     echo "$v is already used by $other" >&2; return 1
                 fi
             done ;;
@@ -3158,12 +3168,12 @@ tt_conf_validate() {
 #   normal path — a value that comes in that way folds differently per consumer (numbers fall back
 #   to the default, booleans fall back to off, a summon key just drops out of the snippet). If the
 #   table showed that value as if it were in effect, the two screens would tell different truths
-#   (recommendation N4). Validation reuses the existing tt_conf_validate and just swallows the reason.
-tt_conf_lie() {
-    tt_conf_validate "${1:-}" "${2:-}" 2>/dev/null && return 0
+#   (recommendation N4). Validation reuses the existing fmux_conf_validate and just swallows the reason.
+fmux_conf_lie() {
+    fmux_conf_validate "${1:-}" "${2:-}" 2>/dev/null && return 0
     case "${1:-}" in
         rc|snapshot|snapshot_on_exit|boot_restore)  printf '← invalid value · falls back to off' ;;
-        recent_hours|unseen_minutes|accent|log_max) printf '← invalid value · falls back to default %s' "$(tt_conf_default "$1")" ;;
+        recent_hours|unseen_minutes|accent|log_max) printf '← invalid value · falls back to default %s' "$(fmux_conf_default "$1")" ;;
         key_summon|key_summon_fast)                 printf '← invalid value · that key drops out of the snippet' ;;
         *)                                          printf '← invalid value' ;;
     esac
@@ -3172,12 +3182,12 @@ tt_conf_lie() {
 
 # Atomic write. Replaces the value in place for an existing line, appends at the end if not found
 # (preserves comments and ordering).
-tt_conf_write() {
+fmux_conf_write() {
     local k="${1:-}" v="${2:-}" mode="${3:-set}" tmp line seen=0
-    mkdir -p "${TT_CONF%/*}" 2>/dev/null || true
-    tmp="$TT_CONF.tmp.$$"
-    : > "$tmp" || { echo "cannot write config file: $TT_CONF" >&2; return 1; }
-    if [ -f "$TT_CONF" ]; then
+    mkdir -p "${FMUX_CONF%/*}" 2>/dev/null || true
+    tmp="$FMUX_CONF.tmp.$$"
+    : > "$tmp" || { echo "cannot write config file: $FMUX_CONF" >&2; return 1; }
+    if [ -f "$FMUX_CONF" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
             case "$line" in
                 "$k"=*)
@@ -3186,23 +3196,23 @@ tt_conf_write() {
                     ;;
                 *) printf '%s\n' "$line" >> "$tmp" ;;
             esac
-        done < "$TT_CONF"
+        done < "$FMUX_CONF"
     fi
     if [ "$mode" = set ] && [ "$seen" = 0 ]; then printf '%s=%s\n' "$k" "$v" >> "$tmp"; fi
-    mv -f "$tmp" "$TT_CONF" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$FMUX_CONF" || { rm -f "$tmp"; return 1; }
     return 0
 }
 
 # If the key whose value just changed is one that's baked into the tmux snippet, re-render the snippet.
 #   Why we call ourselves again: the render function lives in 87-tmux-conf.sh, and that file is
 #   concatenated after this one. On top of that, `fmux config …` exits in the block below, so
-#   execution never reaches 87 — this process never even has a function named tt_tmux_conf_write.
+#   execution never reaches 87 — this process never even has a function named fmux_tmux_conf_write.
 #   Following the $SELF re-invocation convention already used in ~20 other places is safer than
 #   flipping the file order.
 #   We swallow failure here too: if failing to write the snippet also failed the config save, the
 #   value already written to the file would disagree with the exit code. The config is saved, and
 #   the snippet catches up on the next --tmux-conf.
-tt_conf_resnip() {
+fmux_conf_resnip() {
     case "${1:-}" in
         key_summon|key_summon_fast|snapshot_on_exit)
             "$SELF" --tmux-conf --write >/dev/null 2>&1 || true ;;
@@ -3211,11 +3221,11 @@ tt_conf_resnip() {
 }
 
 if [ "${1:-}" = "config" ]; then
-    # Each subcommand below walks TT_CONF_KEYS and calls tt_conf_get/tt_conf_source many times
-    # wrapped in $(...) — each call is a subshell, so unless tt_conf_load is fired here first as a
-    # bare statement, every subshell re-inherits TT_CONF_LOADED=0 and re-parses the config file once
+    # Each subcommand below walks FMUX_CONF_KEYS and calls fmux_conf_get/fmux_conf_source many times
+    # wrapped in $(...) — each call is a subshell, so unless fmux_conf_load is fired here first as a
+    # bare statement, every subshell re-inherits FMUX_CONF_LOADED=0 and re-parses the config file once
     # per key, repeating broken-line warnings just as many times (the exact bug fix round 1 caught).
-    tt_conf_load
+    fmux_conf_load
     case "${2:-}" in
         ''|list)
             # The same honesty as the in-popup settings screen belongs here too — someone
@@ -3223,16 +3233,16 @@ if [ "${1:-}" = "config" ]; then
             # a feature that doesn't actually do anything.
             printf '%-18s %-14s %s\n' 'KEY' 'VALUE' 'SOURCE'
             unwired=0; bogus=0
-            for k in $TT_CONF_KEYS; do
-                v=$(tt_conf_get "$k")
-                lie=$(tt_conf_lie "$k" "$v")
+            for k in $FMUX_CONF_KEYS; do
+                v=$(fmux_conf_get "$k")
+                lie=$(fmux_conf_lie "$k" "$v")
                 [ -n "$lie" ] && bogus=1
                 [ -z "$lie" ] || lie=" $lie"
-                if tt_conf_wired "$k"; then
-                    printf '%-18s %-14s %s%s\n' "$k" "$v" "$(tt_conf_source "$k")" "$lie"
+                if fmux_conf_wired "$k"; then
+                    printf '%-18s %-14s %s%s\n' "$k" "$v" "$(fmux_conf_source "$k")" "$lie"
                 else
                     unwired=1
-                    printf '%-18s %-14s %-9s%s%s\n' "$k" "$v" "$(tt_conf_source "$k")" '← not wired' "$lie"
+                    printf '%-18s %-14s %-9s%s%s\n' "$k" "$v" "$(fmux_conf_source "$k")" '← not wired' "$lie"
                 fi
             done
             [ "$unwired" = 1 ] && printf '\nnot wired = the value is saved but no code reads it yet — changing it does nothing.\n'
@@ -3240,8 +3250,8 @@ if [ "${1:-}" = "config" ]; then
             exit 0 ;;
         get|source)
             [ -n "${3:-}" ] || { echo "usage: fmux config $2 <key>" >&2; exit 1; }
-            if [ "$2" = get ]; then tt_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
-            else                    tt_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
+            if [ "$2" = get ]; then fmux_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
+            else                    fmux_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
             fi
             echo
             exit 0 ;;
@@ -3249,50 +3259,50 @@ if [ "${1:-}" = "config" ]; then
             [ -n "${3:-}" ] || { echo "usage: fmux config set <key> <value>" >&2; exit 1; }
             shift 2; k=$1; shift
             v="$*"
-            tt_conf_validate "$k" "$v" || exit 1
-            tt_conf_write "$k" "$v" set || exit 1
-            tt_conf_resnip "$k"
+            fmux_conf_validate "$k" "$v" || exit 1
+            fmux_conf_write "$k" "$v" set || exit 1
+            fmux_conf_resnip "$k"
             printf '%s=%s\n' "$k" "$v"
             # The moment a value actually changes is the easiest moment to be misled — hearing only
             # "saved" and believing the feature is now on. Say it again right under the confirmation
             # line (the key=value on stdout stays as-is for scripts to read; this notice alone goes
             # to stderr).
-            tt_conf_wired "$k" || printf '  ↑ %s is not wired to any action yet — saved, but nothing changes right now\n' "$k" >&2
+            fmux_conf_wired "$k" || printf '  ↑ %s is not wired to any action yet — saved, but nothing changes right now\n' "$k" >&2
             exit 0 ;;
         unset)
             [ -n "${3:-}" ] || { echo "usage: fmux config unset <key>" >&2; exit 1; }
-            tt_conf_default "$3" >/dev/null 2>&1 || { echo "unknown key: $3" >&2; exit 1; }
-            tt_conf_write "$3" '' unset || exit 1
-            tt_conf_resnip "$3"
-            printf '%s → default %s\n' "$3" "$(tt_conf_default "$3")"
+            fmux_conf_default "$3" >/dev/null 2>&1 || { echo "unknown key: $3" >&2; exit 1; }
+            fmux_conf_write "$3" '' unset || exit 1
+            fmux_conf_resnip "$3"
+            printf '%s → default %s\n' "$3" "$(fmux_conf_default "$3")"
             exit 0 ;;
         path)
-            printf '%s\n' "$TT_CONF"; exit 0 ;;
+            printf '%s\n' "$FMUX_CONF"; exit 0 ;;
         *)
             echo "usage: fmux config [list|get|source|set|unset|path]" >&2; exit 1 ;;
     esac
 fi
 # ── In-popup settings screen ─────────────────────────────────────────────────
-# Change settings without leaving the popup. One way in — ^O in the popup (TT_KEY_SETTINGS in 90-main.sh).
+# Change settings without leaving the popup. One way in — ^O in the popup (FMUX_KEY_SETTINGS in 90-main.sh).
 #
 # A line has the same shape as --list: "<key>\t<human-readable display>". fzf hides field 1 via
 # --with-nth, and instead of {1} we cut off everything before the tab of the chosen line ourselves
 # (same discipline as --list).
 
 # Boolean keys — keys that can be flipped instantly with Enter. Everything else needs a typed value.
-#   This list must stay in sync with the boolean branch of tt_conf_validate (85-config-cli.sh).
-tt_conf_is_bool() {
+#   This list must stay in sync with the boolean branch of fmux_conf_validate (85-config-cli.sh).
+fmux_conf_is_bool() {
     case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore|status_badges) return 0 ;; *) return 1 ;; esac
 }
 
-# tt_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `fmux config list`
+# fmux_conf_wired, the basis for the "not wired" marker, lives in 85-config-cli.sh — `fmux config list`
 #   uses the same judgment, and since 85 is concatenated before this file we can just call it here.
 #   It's pulled from code rather than a hand-written list: there's no longer any need to remember
 #   "update the list too when you wire a new key".
 
 # One-line description. Avoid parentheses — if this string ever ends up inside an fzf --bind
 # execute/reload argument, a closing paren would truncate the binding (same reason as 80-view.sh:58).
-tt_conf_desc() {
+fmux_conf_desc() {
     case "${1:-}" in
         rc)               printf 'auto-recover the remote-control link' ;;
         snapshot)         printf 'record the fleet on every popup/cron tick' ;;
@@ -3320,9 +3330,9 @@ tt_conf_desc() {
 # One round of the settings screen: draw once, pick once.
 #   Returning rc 1 tells the caller to end the loop (Esc/← = back to the session list).
 #   The list is regenerated as a fresh child process every time — the value that was just changed
-#   needs to show up right away, but this process's tt_conf_load cache is stuck on the file as it
+#   needs to show up right away, but this process's fmux_conf_load cache is stuck on the file as it
 #   was at start.
-tt_conf_view_once() {
+fmux_conf_view_once() {
     local line k rc nv
     # The child's stderr goes to a log, not the screen. If the hand-edited config has a broken
     # line, the warning would paint over the screen fzf drew and make the settings screen
@@ -3360,19 +3370,19 @@ tt_conf_view_once() {
 
 # List for the settings screen. One line = "<key>\t<display>".
 if [ "${1:-}" = "--config-list" ]; then
-    # Contract (05-config.sh:53): the loop below calls tt_conf_get/tt_conf_source via $(...) for
-    # every key — all subshells, so unless tt_conf_load is fired here first as a bare statement, one
+    # Contract (05-config.sh:53): the loop below calls fmux_conf_get/fmux_conf_source via $(...) for
+    # every key — all subshells, so unless fmux_conf_load is fired here first as a bare statement, one
     # broken config line repeats its warning once per key. This list runs every time the screen redraws.
-    tt_conf_load
-    for k in $TT_CONF_KEYS; do
-        v=$(tt_conf_get "$k")
+    fmux_conf_load
+    for k in $FMUX_CONF_KEYS; do
+        v=$(fmux_conf_get "$k")
         # An empty value is a valid value too (that's key_summon_fast's default) — leaving the
         # slot blank would collapse the column, so we fill it with '-'. Width alignment is %-16s, so it must be ASCII.
         [ -n "$v" ] || v='-'
         # A key pinned by env doesn't change no matter what's written to the file — flag that next to the value.
-        [ "$(tt_conf_source "$k")" = env ] && v="$v @env"
-        d=$(tt_conf_desc "$k")
-        if tt_conf_wired "$k"; then
+        [ "$(fmux_conf_source "$k")" = env ] && v="$v @env"
+        d=$(fmux_conf_desc "$k")
+        if fmux_conf_wired "$k"; then
             printf '%s\t%-18s %-16s %s\n' "$k" "$k" "$v" "$d"
         else
             printf '%s\t%-18s %-16s \033[2mnot wired · %s\033[0m\n' "$k" "$k" "$v" "$d"
@@ -3384,37 +3394,37 @@ fi
 # If it's a boolean, flip and save it and return rc 0. If not, rc 2 — a signal that "the caller
 # should read a value". Any other rejection (unknown key, pinned by env) is rc 1 with the reason on stderr.
 if [ "${1:-}" = "--config-toggle" ]; then
-    tt_conf_load
+    fmux_conf_load
     k="${2:-}"
-    tt_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; exit 1; }
+    fmux_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; exit 1; }
     # A key that env wins doesn't change no matter what's written to the file — blocked precisely
     #   because that's the "lying toggle".
     #   This check comes before the boolean check: keys that take a typed value fail the same way,
     #   so it's better not to ask at all than to take input and throw it away.
-    #   log_max used to always hit this — 10-util.sh set up the TT_LOG_MAX global itself, and that
+    #   log_max used to always hit this — 10-util.sh set up the FMUX_LOG_MAX global itself, and that
     #   name is exactly this key's environment variable name, so it always read as "env wins". Once
     #   threshold wiring removed that global, this now only triggers when a real environment
     #   variable is actually set.
-    if [ "$(tt_conf_source "$k")" = env ]; then
-        echo "$k is overridden by environment variable $(tt_conf_envname "$k") — writing to the config file has no effect" >&2
+    if [ "$(fmux_conf_source "$k")" = env ]; then
+        echo "$k is overridden by environment variable $(fmux_conf_envname "$k") — writing to the config file has no effect" >&2
         exit 1
     fi
-    tt_conf_is_bool "$k" || exit 2
-    if tt_conf_on "$k"; then nv=off; else nv=on; fi
+    fmux_conf_is_bool "$k" || exit 2
+    if fmux_conf_on "$k"; then nv=off; else nv=on; fi
     # Validate and write directly in this process (functions from 85-config-cli.sh). Forking via
     # `$SELF config set` would make the child re-parse the config file, turning one broken line into two warnings per toggle.
-    tt_conf_validate "$k" "$nv" || exit 1
-    tt_conf_write "$k" "$nv" set || exit 1
+    fmux_conf_validate "$k" "$nv" || exit 1
+    fmux_conf_write "$k" "$nv" set || exit 1
     # snapshot_on_exit is a boolean baked into the tmux snippet — flipping it here must also update
-    # the snippet. The value-input path (tt_conf_view_once) leaves this to `$SELF config set`, which already runs it there.
-    tt_conf_resnip "$k"
+    # the snippet. The value-input path (fmux_conf_view_once) leaves this to `$SELF config set`, which already runs it there.
+    fmux_conf_resnip "$k"
     exit 0
 fi
 
 # Settings screen. Runs round after round until Esc/← exits.
 if [ "${1:-}" = "--config-view" ]; then
     while :; do
-        tt_conf_view_once || break
+        fmux_conf_view_once || break
     done
     exit 0
 fi
@@ -3426,7 +3436,7 @@ fi
 # (If we spliced our block into someone else's config file, removing it would require us to edit
 #  their file. If that edit ever goes wrong even once, the user's tmux fails to start — a risk we
 #  refuse to carry at all.)
-TT_TMUX_CONF="$TT_CONF_DIR/tmux.conf"
+FMUX_TMUX_CONF="$FMUX_CONF_DIR/tmux.conf"
 
 # Print the list of no-prefix keys to unbind to stdout (space-separated, deduplicated).
 # tmux doesn't have a "vanishes on its own once it's not in the config" model — once a key is
@@ -3442,29 +3452,29 @@ TT_TMUX_CONF="$TT_CONF_DIR/tmux.conf"
 # contradicted the README's "steals no key until you say so" and was never disclosed to the user
 # (team release gate B3). A key we never bound isn't ours to touch — thanks to source ②, any key we
 # did bind dies on its own, whatever its name turns out to be.
-tt_tmux_conf_unbind_list() {
+fmux_tmux_conf_unbind_list() {
     local seen=' ' k line fast
-    fast=$(tt_conf_get key_summon_fast)
+    fast=$(fmux_conf_get key_summon_fast)
     for k in $fast; do
         case "$seen" in *" $k "*) continue ;; esac
-        tt_conf_is_tmux_key "$k" || continue
+        fmux_conf_is_tmux_key "$k" || continue
         seen="$seen$k "
     done
-    if [ -r "$TT_TMUX_CONF" ]; then
+    if [ -r "$FMUX_TMUX_CONF" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
             case "$line" in 'bind -n '*) ;; *) continue ;; esac
             line=${line#bind -n }
             k=${line%% *}
             case "$seen" in *" $k "*) continue ;; esac
-            tt_conf_is_tmux_key "$k" || continue
+            fmux_conf_is_tmux_key "$k" || continue
             seen="$seen$k "
-        done < "$TT_TMUX_CONF"
+        done < "$FMUX_TMUX_CONF"
     fi
     printf '%s' "${seen# }"
 }
 
 # Print the snippet's contents to stdout. The file itself is untouched — so `fmux --tmux-conf` lets you look before you leap.
-tt_tmux_conf_render() {
+fmux_tmux_conf_render() {
     # The popup summon command. SELFQ is a quoted form that survives even if the path has spaces
     # (00-header.sh). --from '#S' tells it the current session — so it can exclude itself from the list (90-main.sh:251).
     # Title on the popup border. The project is fmux; tt is only the short alias you type, so the
@@ -3474,26 +3484,26 @@ tt_tmux_conf_render() {
 
     printf '# File generated by fleetmux — do not hand-edit. fmux config set … rewrites it.\n'
     printf '# Add only this one line to your own config (~/.tmux.conf):\n'
-    printf '#   source-file %s\n' "$TT_TMUX_CONF"
+    printf '#   source-file %s\n' "$FMUX_TMUX_CONF"
     printf '\n'
 
     # Unbinding comes first. Even the key we're about to bind now must be walked through and
     # rebound for reapplication to be idempotent.
     # unbinding a key that isn't actually bound makes tmux error, but -q swallows it — there's no
     # reason to show the user ten lines of "unknown key" on the first source.
-    for k in $(tt_tmux_conf_unbind_list); do
+    for k in $(fmux_tmux_conf_unbind_list); do
         printf 'unbind -n -q %s\n' "$k"
     done
     printf '\n'
 
     # The summon key that comes after prefix. Skipped if empty — some people want no-prefix keys only.
-    k=$(tt_conf_get key_summon)
+    k=$(fmux_conf_get key_summon)
     if [ -n "$k" ]; then
         # The parser (05-config.sh) already filters the value's character set, but a hand-edited
         # file can reach this point too, so the renderer checks the tmux key shape once more. If it
         # doesn't pass, only that line is quietly dropped, with a notice — making the whole snippet
         # unusable would mean a single summon-key typo wipes out the entire cockpit.
-        if tt_conf_is_tmux_key "$k"; then
+        if fmux_conf_is_tmux_key "$k"; then
             printf 'bind %s %s\n' "$k" "$popup"
         else
             printf 'fleetmux: key_summon is not a tmux key name — skipping: %s\n' "$k" >&2
@@ -3502,16 +3512,16 @@ tt_tmux_conf_render() {
 
     # The list of no-prefix summon keys. The same physical key arrives under different names on
     # different terminals, so we bind all of them.
-    fast=$(tt_conf_get key_summon_fast)
+    fast=$(fmux_conf_get key_summon_fast)
     for k in $fast; do
-        if tt_conf_is_tmux_key "$k"; then
+        if fmux_conf_is_tmux_key "$k"; then
             printf 'bind -n %s %s\n' "$k" "$popup"
         else
             printf 'fleetmux: %s in key_summon_fast is not a tmux key name — skipping\n' "$k" >&2
         fi
     done
 
-    if tt_conf_on status_badges; then
+    if fmux_conf_on status_badges; then
         printf '\n# Fleet badges in the status bar — ⏸ waiting · ✓ finished · ✻ working.\n'
         printf '#   Knowing who is stuck without opening anything is the point of the tool, so this\n'
         printf '#   is on by default. Turn it off with: fmux config set status_badges off\n'
@@ -3543,7 +3553,7 @@ tt_tmux_conf_render() {
         printf "run-shell \"'%s' --status-unbind\"\n" "$SELF"
     fi
 
-    if tt_conf_on snapshot_on_exit; then
+    if fmux_conf_on snapshot_on_exit; then
         printf '\n# Record once more on the way out — so the manifest never misses the final moment.\n'
         # client-detached is -b. If the snapshot held onto whoever's leaving, detach would visibly lag.
         printf "set-hook -g client-detached 'run-shell -b \"%s --snapshot >/dev/null 2>&1\"'\n" "$SELF"
@@ -3566,7 +3576,7 @@ tt_tmux_conf_render() {
 #   paths would read that person's config as "not linked" — then fmux config set wouldn't apply to the
 #   live server while the screen still prints success, and re-running the installer appends yet
 #   another duplicate source line. **A hole that catches exactly the person who followed the docs to the letter.**
-tt_tmux_conf_linked() {
+fmux_tmux_conf_linked() {
     local f line rest
     for f in "$HOME/.tmux.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"; do
         [ -r "$f" ] || continue
@@ -3589,30 +3599,30 @@ tt_tmux_conf_linked() {
                 '~')   rest="$HOME" ;;
                 '~/'*) rest="$HOME/${rest#\~/}" ;;
             esac
-            [ "$rest" = "$TT_TMUX_CONF" ] && return 0
+            [ "$rest" = "$FMUX_TMUX_CONF" ] && return 0
         done < "$f"
     done
     return 1
 }
 
 # Write the snippet atomically. If the user has wired this file into their own config and we're inside tmux right now, apply it immediately.
-tt_tmux_conf_write() {
+fmux_tmux_conf_write() {
     local tmp
-    mkdir -p "$TT_CONF_DIR" 2>/dev/null || true
-    tmp="$TT_TMUX_CONF.tmp.$$"
+    mkdir -p "$FMUX_CONF_DIR" 2>/dev/null || true
+    tmp="$FMUX_TMUX_CONF.tmp.$$"
     # The render reads the previous snippet (to collect unbinds) — so we must write to tmp fully
     # before mv'ing it into place. Redirecting straight to the original would truncate it mid-read.
     # stderr is not suppressed here — if the hand-edited config has a strange key, the person
-    # writing it needs to know. The call site that must stay quiet (tt_conf_resnip) wraps itself with 2>/dev/null.
-    tt_tmux_conf_render > "$tmp" || { rm -f "$tmp"; return 1; }
-    mv -f "$tmp" "$TT_TMUX_CONF" || { rm -f "$tmp"; return 1; }
+    # writing it needs to know. The call site that must stay quiet (fmux_conf_resnip) wraps itself with 2>/dev/null.
+    fmux_tmux_conf_render > "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$FMUX_TMUX_CONF" || { rm -f "$tmp"; return 1; }
     # Applying to the live server only happens when both are true:
     #   ① we're inside tmux right now  ② the user's config actually has a line sourcing this file
     # Skipping ② would push our bindings even into the server of someone "not yet linked" — just
     # running `fmux --tmux-conf --write` to eyeball the snippet would change their keys as a side effect.
     # For someone not linked, nothing happens either at the next tmux start or on this server (only our file is up to date).
-    if [ -n "${TMUX:-}" ] && tt_tmux_conf_linked; then
-        tmux source-file "$TT_TMUX_CONF" 2>/dev/null || true
+    if [ -n "${TMUX:-}" ] && fmux_tmux_conf_linked; then
+        tmux source-file "$FMUX_TMUX_CONF" 2>/dev/null || true
     fi
     return 0
 }
@@ -3676,15 +3686,15 @@ if [ "${1:-}" = "--status-unbind" ]; then
 fi
 
 if [ "${1:-}" = "--tmux-conf" ]; then
-    # Contract (05-config.sh:53): the render below calls tt_conf_get repeatedly via $(...) — all
-    # subshells, so unless tt_conf_load is fired here first as a bare statement, one broken config
+    # Contract (05-config.sh:53): the render below calls fmux_conf_get repeatedly via $(...) — all
+    # subshells, so unless fmux_conf_load is fired here first as a bare statement, one broken config
     # line repeats the same warning once per key looked up.
-    tt_conf_load
+    fmux_conf_load
     if [ "${2:-}" = "--write" ]; then
-        tt_tmux_conf_write || { echo "cannot write snippet: $TT_TMUX_CONF" >&2; exit 1; }
-        printf '%s\n' "$TT_TMUX_CONF"
+        fmux_tmux_conf_write || { echo "cannot write snippet: $FMUX_TMUX_CONF" >&2; exit 1; }
+        printf '%s\n' "$FMUX_TMUX_CONF"
     else
-        tt_tmux_conf_render
+        fmux_tmux_conf_render
     fi
     exit 0
 fi
@@ -3705,8 +3715,8 @@ fi
 #   (The settings key, key_settings, isn't read by any code yet — remapping is
 #    T7's job. Reading that value here would make the screen's "not wired"
 #    marker a lie.)
-TT_KEY_SETTINGS='ctrl-o'
-tt_key_label() {
+FMUX_KEY_SETTINGS='ctrl-o'
+fmux_key_label() {
     case "${1:-}" in
         ctrl-?) printf '^%s' "$(printf %s "${1#ctrl-}" | tr 'a-z' 'A-Z')" ;;
         alt-?)  printf 'M-%s' "${1#alt-}" ;;
@@ -3716,7 +3726,7 @@ tt_key_label() {
 
 # Input prompt: Esc=cancel (rc 1) · Enter=confirm · backspace supported — hand-rolled
 # because read can't do Esc-to-cancel
-tt_prompt() {
+fmux_prompt() {
     local p="$1" s="" c
     printf '%s' "$p" >/dev/tty
     while IFS= read -rsn1 c </dev/tty; do
@@ -3727,7 +3737,7 @@ tt_prompt() {
                 # specification", and switching to an integer 1s means every Esc press stalls
                 # for a full second. So on 3.2 we skip the absorb entirely: Esc-to-cancel still
                 # works, arrow keys just get read as cancel too — a small, acceptable cost.
-                [ "$TT_TINY_READ" = 1 ] && { read -rsn2 -t 0.01 _ </dev/tty || true; }
+                [ "$FMUX_TINY_READ" = 1 ] && { read -rsn2 -t 0.01 _ </dev/tty || true; }
                 printf '\n' >/dev/tty; return 1 ;;
             "") printf '\n' >/dev/tty; break ;;
             $'\x7f'|$'\x08')
@@ -3741,11 +3751,11 @@ tt_prompt() {
 # New session (popup ^N): asks for name + start command — the command runs on top of
 # the shell (the session survives even after the command exits)
 if [ "${1:-}" = "--do-new" ]; then
-    n=$(tt_prompt "new session name (Esc to cancel): ") || exit 0
+    n=$(fmux_prompt "new session name (Esc to cancel): ") || exit 0
     [ -n "$n" ] || exit 0
     printf %s "$n" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
         || { echo "broken bytes in name (IME mid-composition?) — retry in English mode"; sleep 2; exit 0; }
-    cmd=$(tt_prompt "start command (empty = plain shell, e.g. claude): ") || exit 0
+    cmd=$(fmux_prompt "start command (empty = plain shell, e.g. claude): ") || exit 0
     tmux new-session -d -s "$n" || exit 0
     if [ -n "$cmd" ]; then
         tmux send-keys -t "=$n:" -l "$cmd"
@@ -3767,20 +3777,20 @@ if [ "${1:-}" = "--do-new" ]; then
     npath=$(tmux display-message -p -t "=$n:" '#{pane_current_path}' 2>/dev/null || true)
     case "$cmd" in claude*|codex*) nkind=agent ;; *) nkind=tool ;; esac
     case "$cmd" in '') ncmd="-" ;; *) ncmd="$cmd" ;; esac
-    tt_mf_upsert "$n" "${npath:-$HOME}" "$nkind" "$ncmd" "-" || true
+    fmux_mf_upsert "$n" "${npath:-$HOME}" "$nkind" "$ncmd" "-" || true
     exit 0
 fi
 
 # Broadcast (popup ^B): injects one prompt into all selected sessions in bulk (tool
-# sessions are filtered out by tt_broadcast)
+# sessions are filtered out by fmux_broadcast)
 if [ "${1:-}" = "--do-broadcast" ]; then
     shift
     # ^B passes fzf's {+1} through as-is — if nothing was tagged, there are no arguments.
     [ $# -ge 1 ] || exit 0
     echo "targets: $*"
-    m=$(tt_prompt "broadcast prompt (Esc to cancel): ") || exit 0
+    m=$(fmux_prompt "broadcast prompt (Esc to cancel): ") || exit 0
     [ -n "$m" ] || exit 0
-    tt_broadcast "$m" "$@"
+    fmux_broadcast "$m" "$@"
     sleep 1
     exit 0
 fi
@@ -3818,9 +3828,9 @@ if [ "${1:-}" = "--preview" ]; then
                #   this spot stale whenever the color is changed elsewhere.
                #   Warnings are swallowed: the preview's stderr would render straight into the
                #   preview window and cover the screen.
-               acc=$(tt_conf_num accent 255 2>/dev/null) || acc=""
-               [ -n "$acc" ] || acc=$(tt_conf_default accent)
-               hdr=$(LC_ALL=C awk -v cols="$cols" -v acc="$acc" "$TT_LASTP_VIEW_AWK" \
+               acc=$(fmux_conf_num accent 255 2>/dev/null) || acc=""
+               [ -n "$acc" ] || acc=$(fmux_conf_default accent)
+               hdr=$(LC_ALL=C awk -v cols="$cols" -v acc="$acc" "$FMUX_LASTP_VIEW_AWK" \
                        "$STATE/last-$psid" 2>/dev/null) || hdr=""
            fi ;;
     esac
@@ -3860,12 +3870,12 @@ fi
 # inject /rename to sync the title
 if [ "${1:-}" = "--do-rename" ]; then
     old="${2:-}"; [ -n "$old" ] || exit 0
-    n=$(tt_prompt "rename $old to (Esc to cancel): ") || exit 0
+    n=$(fmux_prompt "rename $old to (Esc to cancel): ") || exit 0
     [ -n "$n" ] || exit 0
     printf %s "$n" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
         || { echo "broken bytes in name (IME mid-composition?) — retry in English mode"; sleep 2; exit 0; }
     tmux rename-session -t "=$old" "$n" || exit 0
-    tt_mf_rename "$old" "$n" || true   # the manifest's key follows too — otherwise the old
+    fmux_mf_rename "$old" "$n" || true   # the manifest's key follows too — otherwise the old
                                         # name comes back to life on restore
     # Injecting /rename is claude-only — codex has no such slash command (only when the
     # active pane is exactly claude)
@@ -3955,18 +3965,18 @@ fi
 if [ "${1:-}" = "--help" ]; then
     # Config is loaded once, as a bare statement (not in a subshell) at the top of the entry
     # point — the contract of 05-config.sh.
-    tt_conf_load
-    acc=$(tt_conf_num accent 255)
+    fmux_conf_load
+    acc=$(fmux_conf_num accent 255)
     T=$'\033[38;5;'"$acc"'m'; D=$'\033[2m'; R=$'\033[0m'; B=$'\033[1m'
     # The first screen speaks from **this machine's current config**. It used to hardcode
     # Option+← and 6h/10 min, but the default config sets no prefix-less key at all
     # (key_summon_fast is empty by default), so right after install a teammate's first-ever
     # screen taught them a key that didn't exist (team rollout gate B7).
-    hsum=$(tt_conf_get key_summon)
-    hfast=$(tt_conf_get key_summon_fast)
-    hrecent=$(tt_conf_num recent_hours)
-    hunseen=$(tt_conf_num unseen_minutes)
-    hkset=$(tt_key_label "$TT_KEY_SETTINGS")   # display form derived from the same value as the popup binding
+    hsum=$(fmux_conf_get key_summon)
+    hfast=$(fmux_conf_get key_summon_fast)
+    hrecent=$(fmux_conf_num recent_hours)
+    hunseen=$(fmux_conf_num unseen_minutes)
+    hkset=$(fmux_key_label "$FMUX_KEY_SETTINGS")   # display form derived from the same value as the popup binding
     # The summon key gets the first line of the screen, on its own.
     #   It is the one thing a reader has to leave with: every other key here only matters once the
     #   popup is already open, and it is the key people fail to find (measured — a teammate had a
@@ -4021,7 +4031,7 @@ if [ "${1:-}" = "--help" ]; then
     fmux --forget ${D}<name>${R}     drop one session from the manifest
     ${D}--boot-restore waits up to 120s for DNS before restoring, and aborts if it never comes —${R}
     ${D}claudes started without a network die into a shell, then look "already running" forever${R}
-    ${D}touch ~/.cache/tt/no-autorestore to skip it on the next boot; log is ~/.cache/tt/boot.log${R}
+    ${D}touch ~/.cache/fmux/no-autorestore to skip it on the next boot; log is ~/.cache/fmux/boot.log${R}
     ${D}agents come back with claude --resume <id>, never --continue —${R}
     ${D}--continue picks "latest chat in this folder", so same-cwd sessions clone each other${R}
     ${D}resume runs in the conversation's own home dir, which is often not the session cwd${R}
@@ -4058,7 +4068,7 @@ fi
 CUR=""
 [ "${1:-}" = "--from" ] && CUR="${2:-}"
 [ -z "$CUR" ] && [ -n "${TMUX:-}" ] && CUR=$(tmux display-message -p '#S' 2>/dev/null || true)
-export TT_CUR="$CUR"
+export FMUX_CUR="$CUR"
 
 # Snapshot the fleet every time the popup opens — this removes "commit" as a separate action
 #   (the author's suggestion). Things the hook's auto-recording can't catch (an external
@@ -4070,7 +4080,7 @@ export TT_CUR="$CUR"
 # Empty-state bootstrap: create one and enter it directly, but **only when there are
 #   no sessions to go to at all** — tt is tmux's front door.
 #   The test is not "does the list have a row" but "**is there at least one session**".
-#   The two differ: 80-view.sh drops TT_CUR (the currently attached session) from the list,
+#   The two differ: 80-view.sh drops FMUX_CUR (the currently attached session) from the list,
 #   so **if there is exactly one live session and it is the one we're attached to**, the
 #   list comes up empty — the path where the "no sessions yet" onboarding prompt shows up
 #   even though a session is alive and well. So if CUR is set (= we were opened from inside
@@ -4122,11 +4132,11 @@ fi
 #   unreadable. Not discarding it is the same reasoning as line 86 (recommendation N3).
 # The footer prints the settings key — dropping the ⚙ row from the list means discoverability
 #   is repaid here instead. Both the binding and the display text come from the same
-#   TT_KEY_SETTINGS, so changing the key updates the screen too — the two can never drift.
+#   FMUX_KEY_SETTINGS, so changing the key updates the screen too — the two can never drift.
 session=$("$SELF" --list 2>>"$STATE/hook.log" \
     | fzf --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
           --delimiter=$'\t' --with-nth=2 \
-          --footer="? help · $(tt_key_label "$TT_KEY_SETTINGS") settings" \
+          --footer="? help · $(fmux_key_label "$FMUX_KEY_SETTINGS") settings" \
           --bind "?:execute($SELFQ --help --pause </dev/tty >/dev/tty 2>&1)" \
           --color='pointer:#4ec9b0,prompt:#4ec9b0,hl:#56b6c2,hl+:#56b6c2,bg+:#18221e,fg+:regular,footer:#4a5a52,border:#4a5a52,label:#4ec9b0,preview-border:#4a5a52' \
           --preview "$SELFQ --preview {1} {3}" \
@@ -4140,7 +4150,7 @@ session=$("$SELF" --list 2>>"$STATE/hook.log" \
           --bind "ctrl-e:execute($SELFQ --do-rename {1} </dev/tty >/dev/tty 2>&1)+clear-query+reload($SELFQ --list)" \
           --bind "ctrl-x:execute($SELFQ --do-kill {1} </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)" \
           --bind "ctrl-b:execute($SELFQ --do-broadcast {+1} </dev/tty >/dev/tty 2>&1)+deselect-all+clear-query" \
-          --bind "$TT_KEY_SETTINGS:execute($SELFQ --config-view </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)") || exit 0
+          --bind "$FMUX_KEY_SETTINGS:execute($SELFQ --config-view </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)") || exit 0
 
 session=$(printf '%s\n' "$session" | grep -v '^─' || true)   # treat separator lines as unselectable
 [ -z "$session" ] && exit 0
@@ -4157,9 +4167,9 @@ if [ "${count:-0}" -ge 2 ]; then
     done <<< "$session"
     [ "${#targets[@]}" -ge 1 ] || exit 0   # (bash 3.2: guard against empty array + set -u)
     printf 'targets: %s\n' "${targets[*]}"
-    m=$(tt_prompt "broadcast prompt (Esc to cancel): ") || exit 0
+    m=$(fmux_prompt "broadcast prompt (Esc to cancel): ") || exit 0
     [ -n "$m" ] || exit 0
-    tt_broadcast "$m" "${targets[@]}"
+    fmux_broadcast "$m" "${targets[@]}"
     sleep 1
     exit 0
 fi

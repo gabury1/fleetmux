@@ -8,8 +8,8 @@
 # status judgment, or manifest. So the function below returns 0 on every path, and
 # the render side just falls back to the old preview if it can't build a header.
 #
-# ── Why not tt_jv (measured) ─────────────────────────────────────────────
-# tt_jv's regex assumes "no quotes inside the value." That holds for session_id/cwd
+# ── Why not fmux_jv (measured) ─────────────────────────────────────────────
+# fmux_jv's regex assumes "no quotes inside the value." That holds for session_id/cwd
 # but breaks four ways for prompts. All four reproduced:
 #   ① {"prompt":"the \"dependencies\" section of the README"} → the extracted value is
 #      just the fragment `the \` before it. The character class [^"]* stops at the "
@@ -25,7 +25,7 @@
 #      `--hook working`**, and --codex-hooks likewise bundles UserPromptSubmit/PreToolUse/
 #      PostToolUse under working. Looking at $2 alone can't tell you whether this is a
 #      prompt submission, so every tool call becomes a false positive.
-# We leave tt_jv itself untouched — it's fine for its own purpose and keeps the hook
+# We leave fmux_jv itself untouched — it's fine for its own purpose and keeps the hook
 # path's zero-fork rule. Prompts get pulled by a dedicated scanner instead.
 #
 # ── Why awk instead of jq ────────────────────────────────────────────────
@@ -36,13 +36,13 @@
 #
 # ── awk syntax constraints ──────────────────────────────────────────────────
 # The Pi's default is mawk 1.3.4; the Mac uses BSD awk. No gensub, no multi-character RS,
-# no match() array argument, no mktime, no hex literals (same rule as TT_ACT_AWK/TT_MF_CHECK_AWK).
+# no match() array argument, no mktime, no hex literals (same rule as FMUX_ACT_AWK/FMUX_MF_CHECK_AWK).
 # Called with LC_ALL=C — every structural character the scanner deals with is ASCII, and
 # non-ASCII text can just pass through as raw bytes. That keeps length/substr behaving
 # identically **byte-wise** across every awk, and keeps the 4096-"byte" cap independent
 # of the implementation.
 
-TT_LASTP_MAX=4096      # Storage cap (bytes). Keeps a huge pasted instruction from eating disk and preview.
+FMUX_LASTP_MAX=4096      # Storage cap (bytes). Keeps a huge pasted instruction from eating disk and preview.
 # Cap (bytes) for truncating the payload before handing it to awk.
 #   ⚠ Without this line the hook stalls outright. mawk's character-by-character
 #     accumulation is O(n²) — measured: 36KB=0.04s, 140KB=0.54s, 420KB=10.3s,
@@ -52,14 +52,14 @@ TT_LASTP_MAX=4096      # Storage cap (bytes). Keeps a huge pasted instruction fr
 #   storage cap is 4096 bytes, so nothing is gained by going past 16KB. If truncation cuts
 #   the value off before it closes, the scanner records that as 'truncated' (the cut flag
 #   below) — it doesn't give up silently.
-TT_LASTP_SCAN=16384
+FMUX_LASTP_SCAN=16384
 
 # Extracts just the depth-1 prompt key, unescapes it, and strips control characters.
 #   rc 0 = extracted intact / rc 2 = extracted but truncated / rc 1 = absent (writes nothing)
 # Tracks in/out-of-string state, escape state, and brace depth by hand, so it
 #   · isn't fooled by tool_input.prompt (depth 2)
 #   · isn't fooled by a fake {"prompt":"fake"} the user pasted inside the actual prompt value
-TT_LASTP_AWK='
+FMUX_LASTP_AWK='
     BEGIN { for (i = 1; i < 256; i++) ORD[sprintf("%c", i)] = i }
     { if (length(buf) < lim) buf = buf $0 "\n" }
     END {
@@ -191,7 +191,7 @@ TT_LASTP_AWK='
 #     with rc 1. Example: a session editing this repo has PostToolUse carry this very
 #     source text wholesale inside tool_input, but that's inside a string value, so it
 #     never bumps the depth.
-tt_last_prompt_save() {
+fmux_last_prompt_save() {
     local sid="$1" payload="$2" now="$3" body rc=0 id f t
     case "$payload" in
         *'"hook_event_name"'*'"UserPromptSubmit"'*) ;;
@@ -201,8 +201,8 @@ tt_last_prompt_save() {
     #   as-is costs 0.4s on that write alone. We shrink it here first. ${v:0:n} counts
     #   **characters** under a UTF-8 locale, so at least n bytes always remain →
     #   awk's byte cap (lim) never trims anything out of the leading part it sees.
-    body=$(LC_ALL=C awk -v lim="$TT_LASTP_SCAN" -v maxb="$TT_LASTP_MAX" \
-            "$TT_LASTP_AWK" <<< "${payload:0:TT_LASTP_SCAN}" 2>/dev/null) || rc=$?
+    body=$(LC_ALL=C awk -v lim="$FMUX_LASTP_SCAN" -v maxb="$FMUX_LASTP_MAX" \
+            "$FMUX_LASTP_AWK" <<< "${payload:0:FMUX_LASTP_SCAN}" 2>/dev/null) || rc=$?
     case "$rc" in 0|2) ;; *) return 0 ;; esac
     [ -n "$body" ] || return 0
     id=${sid#\$}
@@ -214,7 +214,7 @@ tt_last_prompt_save() {
     #   Line 1 = write timestamp (+ trunc if truncated) / line 2 onward = body
     # ── 0600 ───────────────────────────────────────────────────────────────
     # ⚠ This file holds **the user's prompt text verbatim**. This is the first time
-    #   conversation content lands in ~/.cache/tt — the equivalent, ~/.claude/projects,
+    #   conversation content lands in ~/.cache/fmux — the equivalent, ~/.claude/projects,
     #   is 0700. Leaving it to umask gives different results per machine: 022 yields
     #   -rw-r--r--, 002 yields -rw-rw-r--. Either way **a different uid on the same
     #   machine can read it** (even this one Pi has both uid 1000 and 1001). So we set
@@ -283,7 +283,7 @@ tt_last_prompt_save() {
 #     already filters, but the render side **doesn't trust the file**: hand-crafted files,
 #     files left by an older build, files another uid dropped in — all of these arrive as-is.
 #     If one header line breaks, the whole popup looks broken to the user's eye.
-TT_LASTP_VIEW_AWK='
+FMUX_LASTP_VIEW_AWK='
     BEGIN {
         for (i = 1; i < 256; i++) ORD[sprintf("%c", i)] = i
         E = sprintf("%c", 27); DIM = E "[2m"; RST = E "[0m"

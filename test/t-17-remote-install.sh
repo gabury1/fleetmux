@@ -14,7 +14,7 @@
 # measures the entire release pipeline at once: make dist → the two assets → the installer fetches
 # and verifies them → install.
 #
-# TT_INSTALL_SH can point at a different install.sh — used to confirm the assertions have teeth by
+# FMUX_INSTALL_SH can point at a different install.sh — used to confirm the assertions have teeth by
 # running against a reverted copy (e.g. running against a copy with the SHA check stripped out
 # should flip ④ below to FAIL).
 set -u
@@ -22,19 +22,19 @@ set -u
 
 ORIGPATH="$PATH"
 REPO=$(cd "$(dirname "$0")/.." && pwd -P) || exit 1
-tt_test_sandbox
+fmux_test_sandbox
 
-INST="${TT_INSTALL_SH:-$REPO/install.sh}"
+INST="${FMUX_INSTALL_SH:-$REPO/install.sh}"
 SLUG='fleetmux-test/fleetmux'
 TAG='v9.9.9'
 
-export TMPDIR="$TTROOT/tmp"        # keeps the installer's temp directory inside the sandbox too
+export TMPDIR="$FMUXROOT/tmp"        # keeps the installer's temp directory inside the sandbox too
 mkdir -p "$TMPDIR"
 
-CALLS="$TTROOT/tmux-calls.log"
-LEAK="$TTROOT/tmux-LEAK.log"
-NETLOG="$TTROOT/net.log"
-SRV="$TTROOT/srv"
+CALLS="$FMUXROOT/tmux-calls.log"
+LEAK="$FMUXROOT/tmux-LEAK.log"
+NETLOG="$FMUXROOT/net.log"
+SRV="$FMUXROOT/srv"
 
 has() { case "$1" in *"$2"*) printf 'yes' ;; *) printf 'no' ;; esac; }
 ex()  { if [ -e "$1" ]; then printf 'yes'; else printf 'no'; fi; }
@@ -44,7 +44,7 @@ cnt() { grep -c "$2" "$1" 2>/dev/null || true; }
 # The test must not depend on what is installed on this machine. Builds a directory that symlinks
 # only the needed tools and makes PATH out of that alone. curl/wget are **not here** — only fakes
 # are used.
-SEAL="$TTROOT/seal"
+SEAL="$FMUXROOT/seal"
 mkdir -p "$SEAL"
 for c in sh bash env cat cp mv rm mkdir rmdir chmod ln cmp uname make awk sed grep tr cut \
          date ls dirname basename readlink sort head tail wc id touch find mktemp diff expr \
@@ -60,7 +60,7 @@ if [ ! -e "$SEAL/sha256sum" ] && [ ! -e "$SEAL/shasum" ]; then
 fi
 
 # A PATH with no hash tool — to actually walk the "no tool to verify with" branch.
-SEAL_NOSHA="$TTROOT/seal-nosha"
+SEAL_NOSHA="$FMUXROOT/seal-nosha"
 mkdir -p "$SEAL_NOSHA"
 for f in "$SEAL"/*; do
     case "$(basename "$f")" in sha256sum|shasum) continue ;; esac
@@ -68,7 +68,7 @@ for f in "$SEAL"/*; do
 done
 
 # ── fake tmux/fzf ─────────────────────────────────────────────────────────────
-STUB="$TTROOT/stub"
+STUB="$FMUXROOT/stub"
 mkdir -p "$STUB"
 {
     printf '#!/usr/bin/env bash\n'
@@ -87,9 +87,9 @@ chmod +x "$STUB/tmux" "$STUB/fzf"
 
 # ── fake server ─────────────────────────────────────────────────────────────
 # URL → file path. https://a/b/c is $SRV/a/b/c. Missing means rc≠0, like a 404.
-NET="$TTROOT/net"          # PATH slice with only curl
-NETW="$TTROOT/netw"        # PATH slice with only wget
-NONET="$TTROOT/nonet"      # PATH slice with neither (empty directory)
+NET="$FMUXROOT/net"          # PATH slice with only curl
+NETW="$FMUXROOT/netw"        # PATH slice with only wget
+NONET="$FMUXROOT/nonet"      # PATH slice with neither (empty directory)
 mkdir -p "$NET" "$NETW" "$NONET" "$SRV"
 
 {
@@ -146,12 +146,12 @@ chmod +x "$NET/curl" "$NETW/wget"
 
 # ── build the release assets for real with make dist ────────────────────────
 # Runs from a repo copy — nothing is written to the real repo.
-REPOC="$TTROOT/repoc"
+REPOC="$FMUXROOT/repoc"
 mkdir -p "$REPOC"
 cp -R "$REPO/bin" "$REPO/libexec" "$REPO/src" "$REPO/skills" "$REPOC/"
 cp "$REPO/Makefile" "$REPO/install.sh" "$REPO/README.md" "$REPO/LICENSE" "$REPOC/"
 cp "$INST" "$REPOC/install.sh"
-DIST="$TTROOT/dist"
+DIST="$FMUXROOT/dist"
 DISTOUT=$(PATH="$SEAL" make -C "$REPOC" dist DISTDIR="$DIST" VERSION="$TAG" 2>&1) || DISTOUT="MAKE-FAILED
 $DISTOUT"
 
@@ -186,7 +186,7 @@ cp "$DIST/SHA256SUMS"           "$DLD/SHA256SUMS"
 
 # Leaves the installer alone, outside the repo — this is the situation `curl | bash` creates
 # (there is no repo sitting next to it).
-ALONE="$TTROOT/alone"
+ALONE="$FMUXROOT/alone"
 mkdir -p "$ALONE"
 cp "$INST" "$ALONE/install.sh"
 
@@ -200,18 +200,18 @@ tmpd_of() { printf '%s\n' "$1" | sed -n 's/^  ok   temp directory: \([^ ]*\).*/\
 
 # ── ① mode detection ─────────────────────────────────────────────────────────
 : > "$NETLOG"
-run_remote "$NET" --prefix "$TTROOT/p1" --preset safe
+run_remote "$NET" --prefix "$FMUXROOT/p1" --preset safe
 assert_eq "$RC" "0" "a remote install ends with rc 0"
 assert_eq "$(has "$OUT" 'mode   remote')" "yes" "states in one line on screen which mode it is"
 assert_eq "$(has "$OUT" 'no repo here')" "yes" "says why it is remote"
-assert_eq "$(ex "$TTROOT/p1/bin/fmux")" "yes" "fmux gets installed to the prefix under the fake HOME"
-assert_rc 0 test -x "$TTROOT/p1/bin/fmux"
-assert_eq "$(readlink "$TTROOT/p1/bin/tt")" "fmux" "the tt symlink gets hung too"
-assert_eq "$(ex "$TTROOT/p1/libexec/tt/claude")" "yes" "the hook shim gets installed too"
+assert_eq "$(ex "$FMUXROOT/p1/bin/fmux")" "yes" "fmux gets installed to the prefix under the fake HOME"
+assert_rc 0 test -x "$FMUXROOT/p1/bin/fmux"
+assert_eq "$(readlink "$FMUXROOT/p1/bin/tt")" "fmux" "the tt symlink gets hung too"
+assert_eq "$(ex "$FMUXROOT/p1/libexec/fmux/claude")" "yes" "the hook shim gets installed too"
 assert_eq "$(ex "$XDG_CONFIG_HOME/fleetmux/tmux.conf")" "yes" "the tmux snippet is created too"
 # Is what got installed the exact bytes inside the archive — the comparison only means something
 # if what was verified and what was installed are the same.
-assert_rc 0 cmp -s "$REPOC/bin/fmux" "$TTROOT/p1/bin/fmux"
+assert_rc 0 cmp -s "$REPOC/bin/fmux" "$FMUXROOT/p1/bin/fmux"
 
 # What did it go fetch — the default is the latest release tag. It does not fall through to main.
 assert_eq "$(cnt "$NETLOG" 'github.com/'"$SLUG"'/releases/latest')" "1" "by default it resolves the latest release tag"
@@ -233,33 +233,33 @@ assert_eq "$(has "$OUT" 'deleted the temp directory')" "yes" "says it deleted it
 # stdin is the script — so it cannot ask, and when it cannot ask, no consent is assumed.
 # Runs at a place with no repo (typing one line from the home directory is what it actually looks
 # like).
-ELSEWHERE="$TTROOT/elsewhere"
+ELSEWHERE="$FMUXROOT/elsewhere"
 mkdir -p "$ELSEWHERE"
 : > "$NETLOG"
 RC=0
 OUT=$(cd "$ELSEWHERE" && PATH="$STUB:$NET:$SEAL" FMUX_SLUG="$SLUG" \
-        bash -s -- --prefix "$TTROOT/p2" --preset safe < "$ALONE/install.sh" 2>&1) || RC=$?
+        bash -s -- --prefix "$FMUXROOT/p2" --preset safe < "$ALONE/install.sh" 2>&1) || RC=$?
 assert_eq "$RC" "0" "still rc 0 when sent in through a pipe"
 assert_eq "$(has "$OUT" 'mode   remote')" "yes" "detects remote even coming in through a pipe"
 assert_eq "$(has "$OUT" "latest release tag: $TAG")" "yes" "a piped install also picks the latest tag"
-assert_eq "$(ex "$TTROOT/p2/bin/fmux")" "yes" "fmux also gets installed via a piped install"
+assert_eq "$(ex "$FMUXROOT/p2/bin/fmux")" "yes" "fmux also gets installed via a piped install"
 assert_eq "$(ex "$HOME/.tmux.conf")" "no" "it cannot ask, so it does not touch someone else's tmux config"
 
 # The reverse — piping it from **inside** a clone uses that clone (local). Detection is by file, not by $0.
 : > "$NETLOG"
 RC=0
 OUT=$(cd "$REPOC" && PATH="$STUB:$NET:$SEAL" FMUX_SLUG="$SLUG" \
-        bash -s -- --prefix "$TTROOT/p2b" --preset safe < "$ALONE/install.sh" 2>&1) || RC=$?
+        bash -s -- --prefix "$FMUXROOT/p2b" --preset safe < "$ALONE/install.sh" 2>&1) || RC=$?
 assert_eq "$(has "$OUT" 'mode   local')" "yes" "piping it from inside the repo uses that repo"
 assert_eq "$(cnt "$NETLOG" '.')" "0" "in that case it uses no network"
 
 # ── ③ giving --ref means it does not check the tag API ──────────────────────
 : > "$NETLOG"
-run_remote "$NET" --ref "$TAG" --prefix "$TTROOT/p3" --preset safe
+run_remote "$NET" --ref "$TAG" --prefix "$FMUXROOT/p3" --preset safe
 assert_eq "$RC" "0" "a --ref install is rc 0"
 assert_eq "$(cnt "$NETLOG" 'api.github.com')" "0" "with --ref given, it does not ask for the latest tag"
 assert_eq "$(has "$OUT" "fetching --ref: $TAG")" "yes" "says what it is fetching"
-assert_eq "$(ex "$TTROOT/p3/bin/fmux")" "yes" "installs via --ref too"
+assert_eq "$(ex "$FMUXROOT/p3/bin/fmux")" "yes" "installs via --ref too"
 
 # ── ④ a SHA mismatch halts ───────────────────────────────────────────────────
 # Builds a tampered copy. It **must unpack cleanly** — a corrupted file would make tar die first,
@@ -268,41 +268,41 @@ assert_eq "$(ex "$TTROOT/p3/bin/fmux")" "yes" "installs via --ref too"
 # re-packed.
 BADTAG='v8.8.8'
 BADD="$SRV/github.com/$SLUG/releases/download/$BADTAG"
-mkdir -p "$BADD" "$TTROOT/tam"
-PATH="$SEAL" tar -xzf "$DIST/fleetmux-$TAG.tar.gz" -C "$TTROOT/tam"
-mv "$TTROOT/tam/fleetmux-$TAG" "$TTROOT/tam/fleetmux-$BADTAG"
-printf '#!/bin/sh\n# a slipped-in file\n' > "$TTROOT/tam/fleetmux-$BADTAG/EVIL.sh"
-PATH="$SEAL" tar -czf "$TTROOT/tampered.tar.gz" -C "$TTROOT/tam" "fleetmux-$BADTAG"
-assert_rc 0 env PATH="$SEAL" tar -tzf "$TTROOT/tampered.tar.gz"
-cp "$TTROOT/tampered.tar.gz" "$BADD/fleetmux-$BADTAG.tar.gz"
+mkdir -p "$BADD" "$FMUXROOT/tam"
+PATH="$SEAL" tar -xzf "$DIST/fleetmux-$TAG.tar.gz" -C "$FMUXROOT/tam"
+mv "$FMUXROOT/tam/fleetmux-$TAG" "$FMUXROOT/tam/fleetmux-$BADTAG"
+printf '#!/bin/sh\n# a slipped-in file\n' > "$FMUXROOT/tam/fleetmux-$BADTAG/EVIL.sh"
+PATH="$SEAL" tar -czf "$FMUXROOT/tampered.tar.gz" -C "$FMUXROOT/tam" "fleetmux-$BADTAG"
+assert_rc 0 env PATH="$SEAL" tar -tzf "$FMUXROOT/tampered.tar.gz"
+cp "$FMUXROOT/tampered.tar.gz" "$BADD/fleetmux-$BADTAG.tar.gz"
 {
     printf '%s  fleetmux-%s.tar.gz\n' "$REALSHA" "$BADTAG"      # ← the original's hash (= does not match)
 } > "$BADD/SHA256SUMS"
 
 : > "$NETLOG"
-run_remote "$NET" --ref "$BADTAG" --prefix "$TTROOT/p4" --preset safe
+run_remote "$NET" --ref "$BADTAG" --prefix "$FMUXROOT/p4" --preset safe
 assert_eq "$RC" "1" "★a SHA mismatch halts it"
 assert_eq "$(has "$OUT" 'SHA256 mismatch')" "yes" "says why it halted"
 assert_eq "$(has "$OUT" "$REALSHA")" "yes" "shows the hash it expected"
-assert_eq "$(ex "$TTROOT/p4")" "no" "★not one byte of the tampered copy is installed"
+assert_eq "$(ex "$FMUXROOT/p4")" "no" "★not one byte of the tampered copy is installed"
 T4=$(tmpd_of "$OUT")
 assert_eq "$(ex "$T4")" "no" "★the temp directory does not survive on failure either"
 
 # If the hash is made to match at the same spot it must pass — otherwise the assertion above would
 # always fail regardless of content.
-if [ -e "$SEAL/sha256sum" ]; then BADSHA=$(PATH="$SEAL" sha256sum "$TTROOT/tampered.tar.gz" | awk '{print $1}')
-else BADSHA=$(PATH="$SEAL" shasum -a 256 "$TTROOT/tampered.tar.gz" | awk '{print $1}'); fi
+if [ -e "$SEAL/sha256sum" ]; then BADSHA=$(PATH="$SEAL" sha256sum "$FMUXROOT/tampered.tar.gz" | awk '{print $1}')
+else BADSHA=$(PATH="$SEAL" shasum -a 256 "$FMUXROOT/tampered.tar.gz" | awk '{print $1}'); fi
 printf '%s  fleetmux-%s.tar.gz\n' "$BADSHA" "$BADTAG" > "$BADD/SHA256SUMS"
-run_remote "$NET" --ref "$BADTAG" --prefix "$TTROOT/p4b" --preset safe
+run_remote "$NET" --ref "$BADTAG" --prefix "$FMUXROOT/p4b" --preset safe
 assert_eq "$RC" "0" "when the hash matches, the same archive passes (verification checks the hash, not the content)"
-assert_eq "$(ex "$TTROOT/p4b/bin/fmux")" "yes" "in that case it installs"
+assert_eq "$(ex "$FMUXROOT/p4b/bin/fmux")" "yes" "in that case it installs"
 
 # SHA256SUMS has no entry at all for our file — must not claim it "verified"
 printf '%s  something-else.tar.gz\n' "$BADSHA" > "$BADD/SHA256SUMS"
-run_remote "$NET" --ref "$BADTAG" --prefix "$TTROOT/p4c" --preset safe
+run_remote "$NET" --ref "$BADTAG" --prefix "$FMUXROOT/p4c" --preset safe
 assert_eq "$RC" "1" "no entry in SHA256SUMS for that file halts it"
 assert_eq "$(has "$OUT" 'no entry for')" "yes" "says what is missing"
-assert_eq "$(ex "$TTROOT/p4c")" "no" "nothing gets installed then either"
+assert_eq "$(ex "$FMUXROOT/p4c")" "no" "nothing gets installed then either"
 
 # ── ⑤ a release with no SHA256SUMS ───────────────────────────────────────────
 NOSUM='v7.7.7'
@@ -310,54 +310,54 @@ NOSUMD="$SRV/github.com/$SLUG/releases/download/$NOSUM"
 mkdir -p "$NOSUMD"
 cp "$DIST/fleetmux-$TAG.tar.gz" "$NOSUMD/fleetmux-$NOSUM.tar.gz"      # SHA256SUMS is not uploaded
 
-run_remote "$NET" --ref "$NOSUM" --prefix "$TTROOT/p5" --preset safe
+run_remote "$NET" --ref "$NOSUM" --prefix "$FMUXROOT/p5" --preset safe
 assert_eq "$RC" "1" "★with no SHA256SUMS (and nowhere it can ask), it halts"
 assert_eq "$(has "$OUT" 'has no SHA256SUMS')" "yes" "says it is missing"
 assert_eq "$(has "$OUT" 'the only defence')" "yes" "says why it cannot just skip past this"
-assert_eq "$(ex "$TTROOT/p5")" "no" "it does not install unverified"
+assert_eq "$(ex "$FMUXROOT/p5")" "no" "it does not install unverified"
 
-run_remote "$NET" --yes --ref "$NOSUM" --prefix "$TTROOT/p5b" --preset safe
+run_remote "$NET" --yes --ref "$NOSUM" --prefix "$FMUXROOT/p5b" --preset safe
 assert_eq "$RC" "1" "★--yes does not authorize an unverified install"
 assert_eq "$(has "$OUT" '--yes does not authorize an unverified install')" "yes" "names --yes and refuses it"
-assert_eq "$(ex "$TTROOT/p5b")" "no" "does not install even with --yes"
+assert_eq "$(ex "$FMUXROOT/p5b")" "no" "does not install even with --yes"
 
 # ── ⑥ a machine with no verification tool ────────────────────────────────────
 RC=0
 OUT=$(PATH="$STUB:$NET:$SEAL_NOSHA" FMUX_SLUG="$SLUG" bash "$ALONE/install.sh" \
-        --ref "$TAG" --prefix "$TTROOT/p6" --preset safe < /dev/null 2>&1) || RC=$?
+        --ref "$TAG" --prefix "$FMUXROOT/p6" --preset safe < /dev/null 2>&1) || RC=$?
 assert_eq "$RC" "1" "★with neither sha256sum nor shasum (it cannot ask), it halts"
 assert_eq "$(has "$OUT" 'neither sha256sum nor shasum is present')" "yes" "names which tool is missing"
-assert_eq "$(ex "$TTROOT/p6")" "no" "with no way to verify, it does not install"
+assert_eq "$(ex "$FMUXROOT/p6")" "no" "with no way to verify, it does not install"
 RC=0
 OUT=$(PATH="$STUB:$NET:$SEAL_NOSHA" FMUX_SLUG="$SLUG" bash "$ALONE/install.sh" \
-        --yes --ref "$TAG" --prefix "$TTROOT/p6b" --preset safe < /dev/null 2>&1) || RC=$?
+        --yes --ref "$TAG" --prefix "$FMUXROOT/p6b" --preset safe < /dev/null 2>&1) || RC=$?
 assert_eq "$RC" "1" "--yes also halts when the tool is missing"
-assert_eq "$(ex "$TTROOT/p6b")" "no" "does not install even with --yes"
+assert_eq "$(ex "$FMUXROOT/p6b")" "no" "does not install even with --yes"
 
 # ── ⑦ if it cannot determine the tag, it halts — it does not fall through to main ──
 # Both sources have to be taken down: the redirect (primary) and the API (fallback). Taking
 # down only one proves nothing, because the other still answers.
 mv "$REL/latest" "$REL/latest.off"
 : > "$NETLOG"
-run_remote "$NET" --prefix "$TTROOT/p7r" --preset safe
+run_remote "$NET" --prefix "$FMUXROOT/p7r" --preset safe
 assert_eq "$RC" "0" "★with the redirect down it falls back to the API and still installs"
 assert_eq "$(cnt "$NETLOG" 'api.github.com')" "1" "the fallback is what answered"
-assert_eq "$(ex "$TTROOT/p7r/bin/fmux")" "yes" "the fallback path installs a real binary"
+assert_eq "$(ex "$FMUXROOT/p7r/bin/fmux")" "yes" "the fallback path installs a real binary"
 
 mv "$API/latest" "$API/latest.off"
 : > "$NETLOG"
-run_remote "$NET" --prefix "$TTROOT/p7" --preset safe
+run_remote "$NET" --prefix "$FMUXROOT/p7" --preset safe
 assert_eq "$RC" "1" "★it halts when it cannot get the latest tag"
 assert_eq "$(has "$OUT" 'not falling back to main')" "yes" "says it is not going to main"
 assert_eq "$(has "$OUT" '--ref')" "yes" "says what to do instead"
 assert_eq "$(cnt "$NETLOG" 'main')" "0" "★it genuinely never went to fetch main"
 assert_eq "$(cnt "$NETLOG" 'releases/download')" "0" "no archive was fetched at all"
-assert_eq "$(ex "$TTROOT/p7")" "no" "nothing gets installed"
+assert_eq "$(ex "$FMUXROOT/p7")" "no" "nothing gets installed"
 
 # A response missing the tag name must land on the same verdict (200, but a useless answer)
 printf '{"message":"Not Found"}\n' > "$API/latest"
 : > "$NETLOG"
-run_remote "$NET" --prefix "$TTROOT/p7b" --preset safe
+run_remote "$NET" --prefix "$FMUXROOT/p7b" --preset safe
 assert_eq "$RC" "1" "it also halts on a response with no tag_name"
 assert_eq "$(cnt "$NETLOG" 'releases/download')" "0" "it fetches nothing there either"
 printf '{"url":"x","tag_name": "%s", "name":"%s"}\n' "$TAG" "$TAG" > "$API/latest"
@@ -365,26 +365,26 @@ mv "$REL/latest.off" "$REL/latest"
 
 # ── ⑧ the fetch tool — falls back to wget, halts if neither exists ──────────
 : > "$NETLOG"
-run_remote "$NETW" --prefix "$TTROOT/p8" --preset safe
+run_remote "$NETW" --prefix "$FMUXROOT/p8" --preset safe
 assert_eq "$RC" "0" "it fetches with wget when curl is missing"
 assert_eq "$(has "$OUT" 'downloading with wget')" "yes" "says what it is fetching with"
 assert_eq "$(cnt "$NETLOG" '^wget ')" "3" "wget actually went out three times (tag, asset, SHA)"
 assert_eq "$(cnt "$NETLOG" '^curl ')" "0" "curl was not used"
-assert_eq "$(ex "$TTROOT/p8/bin/fmux")" "yes" "it installs via the wget path too"
+assert_eq "$(ex "$FMUXROOT/p8/bin/fmux")" "yes" "it installs via the wget path too"
 
 : > "$NETLOG"
-run_remote "$NONET" --prefix "$TTROOT/p9" --preset safe
+run_remote "$NONET" --prefix "$FMUXROOT/p9" --preset safe
 assert_eq "$RC" "1" "it halts with neither curl nor wget"
 assert_eq "$(has "$OUT" 'neither curl nor wget is present')" "yes" "says both are missing"
 assert_eq "$(has "$OUT" 'brew install curl')" "yes" "says what to install"
-assert_eq "$(ex "$TTROOT/p9")" "no" "nothing gets installed"
+assert_eq "$(ex "$FMUXROOT/p9")" "no" "nothing gets installed"
 
 # It does not trust the empty husk wget leaves on a 404 as "received" — confirmed with a tag that does not exist.
 : > "$NETLOG"
-run_remote "$NETW" --ref v0.0.0-none --prefix "$TTROOT/p9b" --preset safe
+run_remote "$NETW" --ref v0.0.0-none --prefix "$FMUXROOT/p9b" --preset safe
 assert_eq "$RC" "1" "a nonexistent tag halts it"
 assert_eq "$(has "$OUT" 'could not download the archive')" "yes" "says it could not fetch it"
-assert_eq "$(ex "$TTROOT/p9b")" "no" "does not mistake an empty file for an archive and install it"
+assert_eq "$(ex "$FMUXROOT/p9b")" "no" "does not mistake an empty file for an archive and install it"
 
 # ── ⑨ with no FMUX_SLUG it uses the real published address ───────────────────
 # The repo went public on 2026-08-06, so the default is a real slug, not a placeholder.
@@ -393,21 +393,21 @@ assert_eq "$(ex "$TTROOT/p9b")" "no" "does not mistake an empty file for an arch
 # test slug, so the run still fails — the point is *where* it knocked, not that it succeeded.
 : > "$NETLOG"
 RC=0
-OUT=$(PATH="$STUB:$NET:$SEAL" bash "$ALONE/install.sh" --prefix "$TTROOT/p10" < /dev/null 2>&1) || RC=$?
+OUT=$(PATH="$STUB:$NET:$SEAL" bash "$ALONE/install.sh" --prefix "$FMUXROOT/p10" < /dev/null 2>&1) || RC=$?
 assert_eq "$RC" "1" "with the stub network serving only the test slug, the default-slug run fails rather than installing something bogus"
 assert_eq "$(cnt "$NETLOG" 'github.com/gabury1/fleetmux/releases/latest')" "1" \
     "★the default slug is wired — with FMUX_SLUG unset the redirect probe goes to the published repo"
 assert_eq "$(cnt "$NETLOG" 'api.github.com/repos/gabury1/fleetmux')" "1" \
     "and the API fallback goes to that same repo, not somewhere else"
 assert_eq "$(cnt "$NETLOG" 'OWNER')" "0" "no placeholder address survives anywhere in the installer"
-assert_eq "$(ex "$TTROOT/p10")" "no" "nothing is installed when the fetch fails"
+assert_eq "$(ex "$FMUXROOT/p10")" "no" "nothing is installed when the fetch fails"
 
 # ── ⑩ --dry-run — it fetches but changes not one user file ───────────────────
 : > "$NETLOG"
-run_remote "$NET" --dry-run --prefix "$TTROOT/p11" --preset safe
+run_remote "$NET" --dry-run --prefix "$FMUXROOT/p11" --preset safe
 assert_eq "$RC" "0" "a remote --dry-run is rc 0"
 assert_eq "$(has "$OUT" 'dry  ')" "yes" "shows what would be done as dry lines"
-assert_eq "$(ex "$TTROOT/p11")" "no" "★dry-run installs nothing"
+assert_eq "$(ex "$FMUXROOT/p11")" "no" "★dry-run installs nothing"
 T11=$(tmpd_of "$OUT")
 assert_eq "$(ex "$T11")" "no" "the temp directory dry-run fetched into does not survive either"
 assert_eq "$(has "$OUT" 'Not one byte leaves the temp directory')" "yes" "explains why it fetched"
@@ -415,19 +415,19 @@ assert_eq "$(has "$OUT" 'Not one byte leaves the temp directory')" "yes" "explai
 # ── ⑪ local mode regression — inside a repo it behaves exactly as before ────
 : > "$NETLOG"
 RC=0
-OUT=$(PATH="$STUB:$NET:$SEAL" bash "$REPOC/install.sh" --prefix "$TTROOT/p12" --preset safe \
+OUT=$(PATH="$STUB:$NET:$SEAL" bash "$REPOC/install.sh" --prefix "$FMUXROOT/p12" --preset safe \
         < /dev/null 2>&1) || RC=$?
 assert_eq "$RC" "0" "a local mode install is rc 0"
 assert_eq "$(has "$OUT" 'mode   local')" "yes" "states local in one line"
 assert_eq "$(has "$OUT" 'mode   remote')" "no" "does not mistake it for remote"
 assert_eq "$(cnt "$NETLOG" '.')" "0" "★local mode never touches the network at all"
-assert_eq "$(ex "$TTROOT/p12/bin/fmux")" "yes" "local mode installs it as before"
-assert_eq "$(readlink "$TTROOT/p12/bin/tt")" "fmux" "the tt symlink is the same too"
+assert_eq "$(ex "$FMUXROOT/p12/bin/fmux")" "yes" "local mode installs it as before"
+assert_eq "$(readlink "$FMUXROOT/p12/bin/tt")" "fmux" "the tt symlink is the same too"
 assert_eq "$(has "$OUT" '0/8')" "no" "step 0 does not appear in local mode"
 
 # In local mode --ref is ignored, and it says it ignored it (not silently swallowed)
 RC=0
-OUT=$(PATH="$STUB:$NET:$SEAL" bash "$REPOC/install.sh" --ref v1.2.3 --prefix "$TTROOT/p13" --preset safe \
+OUT=$(PATH="$STUB:$NET:$SEAL" bash "$REPOC/install.sh" --ref v1.2.3 --prefix "$FMUXROOT/p13" --preset safe \
         < /dev/null 2>&1) || RC=$?
 assert_eq "$RC" "0" "still rc 0 giving --ref in local mode"
 assert_eq "$(has "$OUT" 'not used in local mode')" "yes" "says it ignored --ref"
@@ -456,4 +456,4 @@ assert_eq "$(has "$INSTSH" 'sha256sum')" "yes" "the installer looks for Linux's 
 assert_eq "$(ex "$LEAK")" "no" "the fake tmux/fzf was never called with anything but -V"
 assert_rc 0 test -s "$CALLS"
 
-tt_test_done
+fmux_test_done

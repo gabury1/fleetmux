@@ -36,9 +36,9 @@ for a in "$@"; do
 done
 
 # Hook args arrive one per line — read into an array and pass through as-is (no eval = zero shell injection surface)
-TT_HOOK_ARGS=()
-while IFS= read -r line; do TT_HOOK_ARGS+=("$line"); done < <(fmux --codex-hooks 2>/dev/null)
-[ ${#TT_HOOK_ARGS[@]} -gt 0 ] || exec "$REAL" "$@"
+FMUX_HOOK_ARGS=()
+while IFS= read -r line; do FMUX_HOOK_ARGS+=("$line"); done < <(fmux --codex-hooks 2>/dev/null)
+[ ${#FMUX_HOOK_ARGS[@]} -gt 0 ] || exec "$REAL" "$@"
 
 # Boot self-report: codex's SessionStart only fires once the first prompt is submitted, so the
 # wrapper fills in the gap at launch time
@@ -46,4 +46,4 @@ while IFS= read -r line; do TT_HOOK_ARGS+=("$line"); done < <(fmux --codex-hooks
 fmux --hook boot </dev/null >/dev/null 2>&1 || true
 
 # Unmanaged (-c injected) hooks require trust approval → the bypass flag must be included
-exec "$REAL" --dangerously-bypass-hook-trust "${TT_HOOK_ARGS[@]}" "$@"
+exec "$REAL" --dangerously-bypass-hook-trust "${FMUX_HOOK_ARGS[@]}" "$@"

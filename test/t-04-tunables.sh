@@ -17,11 +17,11 @@
 # passed through it.
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")"
-STATE="$HOME/.cache/tt"
+STATE="$HOME/.cache/fmux"
 mkdir -p "$STATE"
 TAB=$'\t'
 ESC=$'\033'
@@ -30,58 +30,58 @@ ESC=$'\033'
 # The lines below call the real `--list`, `--status`, `--cron`. If the code that sets up the fake
 # tmux runs any later than this, that stretch would reach the developer machine's real tmux server
 # (this repo has a kill-server incident in its history, so the order is pinned down here).
-mkdir -p "$TTROOT/bin"
-cat > "$TTROOT/bin/tmux" <<'SHIM'
+mkdir -p "$FMUXROOT/bin"
+cat > "$FMUXROOT/bin/tmux" <<'SHIM'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TT_TMUX_LOG"
+printf '%s\n' "$*" >> "$FMUX_TMUX_LOG"
 case "${1:-}" in
-    ls)              [ -n "${TT_FAKE_LS:-}" ] && printf '%s\n' "$TT_FAKE_LS"; exit 0 ;;
-    list-panes)      printf '%s\n' "${TT_FAKE_PANE:-claude}"; exit 0 ;;
-    display-message) [ -n "${TT_FAKE_DISP:-}" ] && printf '%s\n' "$TT_FAKE_DISP"; exit 0 ;;
+    ls)              [ -n "${FMUX_FAKE_LS:-}" ] && printf '%s\n' "$FMUX_FAKE_LS"; exit 0 ;;
+    list-panes)      printf '%s\n' "${FMUX_FAKE_PANE:-claude}"; exit 0 ;;
+    display-message) [ -n "${FMUX_FAKE_DISP:-}" ] && printf '%s\n' "$FMUX_FAKE_DISP"; exit 0 ;;
 esac
 exit 1
 SHIM
-chmod +x "$TTROOT/bin/tmux"
-export TT_TMUX_LOG="$TTROOT/tmux-calls.log"
-: > "$TT_TMUX_LOG"
-export PATH="$TTROOT/bin:$PATH"
+chmod +x "$FMUXROOT/bin/tmux"
+export FMUX_TMUX_LOG="$FMUXROOT/tmux-calls.log"
+: > "$FMUX_TMUX_LOG"
+export PATH="$FMUXROOT/bin:$PATH"
 
 now=$(date +%s)
 
 # Returns one --list row's "display part" (after the tab). Color codes are not stripped — this
 # test's whole point is measuring exactly that color and weight.
 list_row() {
-    "$TTBIN" --list 2>/dev/null | grep -a "^$1$TAB" || true
+    "$FMUXBIN" --list 2>/dev/null | grep -a "^$1$TAB" || true
 }
 
 # ── ① accent — the accent color's 256-color number ───────────────────────────
 # --help is a surface visible even without tmux, so it's the cheapest evidence of color wiring.
 printf 'accent=200\n' > "$CONF"
-assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;200m" "accent is reflected in the --help color"
+assert_contains "$("$FMUXBIN" --help 2>/dev/null)" "$ESC[38;5;200m" "accent is reflected in the --help color"
 : > "$CONF"
-assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "the default accent works the same way"
+assert_contains "$("$FMUXBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "the default accent works the same way"
 
 # --list's tool-session row uses the same color too (that's the real screen).
-export TT_FAKE_LS="\$0${TAB}1000${TAB}0${TAB}-${TAB}alpha"
-export TT_FAKE_PANE=bash          # neither claude nor codex → tool session (group 0)
+export FMUX_FAKE_LS="\$0${TAB}1000${TAB}0${TAB}-${TAB}alpha"
+export FMUX_FAKE_PANE=bash          # neither claude nor codex → tool session (group 0)
 rm -f "$STATE/hook-0"
 printf 'accent=200\n' > "$CONF"
 assert_contains "$(list_row alpha)" "$ESC[38;5;200m" "accent is reflected in the --list tool-session color"
 
 # A hand-edited out-of-range value — this lands inside an escape sequence, so it must be filtered.
 printf 'accent=999\n' > "$CONF"
-assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "an out-of-range accent falls back to the default"
-assert_contains "$("$TTBIN" --help 2>&1 >/dev/null)" "accent" "and states the reason in one line at that point"
-assert_rc 0 "$TTBIN" --help
+assert_contains "$("$FMUXBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "an out-of-range accent falls back to the default"
+assert_contains "$("$FMUXBIN" --help 2>&1 >/dev/null)" "accent" "and states the reason in one line at that point"
+assert_rc 0 "$FMUXBIN" --help
 # The leading 0 is not octal — it must read as plain 73 (if this were bash arithmetic, it would die here).
 printf 'accent=073\n' > "$CONF"
-assert_contains "$("$TTBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "a leading zero is still read as decimal"
+assert_contains "$("$FMUXBIN" --help 2>/dev/null)" "$ESC[38;5;73m" "a leading zero is still read as decimal"
 
 # ── ② recent_hours — the threshold for showing a name in bold ────────────────
 # Sets up one agent session in a "talked 2 hours ago" state. The hook file's pid 0 plus a recorded
 # time later than the session's creation time = recognized as belonging to this session
-# (tt_hook_valid ②).
-export TT_FAKE_PANE=claude
+# (fmux_hook_valid ②).
+export FMUX_FAKE_PANE=claude
 printf 'idle %s 0\n' "$(( now - 7200 ))" > "$STATE/hook-0"
 
 : > "$CONF"
@@ -104,25 +104,25 @@ printf 'recent_hours=6h\n' > "$CONF"
 row=$(list_row alpha)
 case "$row" in *"$ESC[1m"*) got=bold ;; *"$ESC[2m"*) got=dim ;; *) got=none ;; esac
 assert_eq "$got" "dim" "a non-integer recent_hours folds to the default 1 — the 2-hour-old session dims"
-assert_rc 0 "$TTBIN" --list
+assert_rc 0 "$FMUXBIN" --list
 # The octal trap: `08` passes the character-set check but dies instantly in bash arithmetic.
 printf 'recent_hours=08\n' > "$CONF"
-assert_rc 0 "$TTBIN" --list
+assert_rc 0 "$FMUXBIN" --list
 assert_contains "$(list_row alpha)" "$ESC[1m" "recent_hours=08 is read as 8 hours"
 
 # ── ③ unseen_minutes — how long the status bar keeps the ✓ badge ─────────────
 # Puts one "session that finished 6 min 40 sec ago" into the finished ledger. The session is alive
 # (session_id comes back) and hasn't been attached to yet (last_attached=0 < ts) → the badge
 # condition is elapsed time alone.
-export TT_FAKE_DISP='$0|0'
+export FMUX_FAKE_DISP='$0|0'
 fin_ts=$(( now - 400 ))
 : > "$CONF"
 printf '%s alpha\n' "$fin_ts" > "$STATE/finished"
-assert_contains "$("$TTBIN" --status 2>/dev/null)" "✓alpha" "with the default unseen_minutes=10, a finish from 400 seconds ago is still visible"
+assert_contains "$("$FMUXBIN" --status 2>/dev/null)" "✓alpha" "with the default unseen_minutes=10, a finish from 400 seconds ago is still visible"
 
 printf 'unseen_minutes=5\n' > "$CONF"
 printf '%s alpha\n' "$fin_ts" > "$STATE/finished"
-out=$("$TTBIN" --status 2>/dev/null)
+out=$("$FMUXBIN" --status 2>/dev/null)
 case "$out" in *✓alpha*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "with unseen_minutes=5, a finish from 400 seconds ago disappears from the status bar"
 # Only the badge disappears — it must remain in the ledger (the contract is to keep it until someone attaches).
@@ -136,34 +136,34 @@ mklog() { i=0; : > "$STATE/hook.log"; while [ "$i" -lt 300 ]; do printf 'line %s
 
 printf 'rc=off\nsnapshot=off\nlog_max=200\n' > "$CONF"
 mklog
-"$TTBIN" --cron >/dev/null 2>&1 || true
+"$FMUXBIN" --cron >/dev/null 2>&1 || true
 assert_contains "$(cat "$STATE/hook.log")" "rotated" "with log_max=200, the log rotates"
 
 printf 'rc=off\nsnapshot=off\n' > "$CONF"      # default 1MB
 mklog
-"$TTBIN" --cron >/dev/null 2>&1 || true
+"$FMUXBIN" --cron >/dev/null 2>&1 || true
 case "$(cat "$STATE/hook.log")" in *rotated*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "with the default log_max, the same log does not rotate"
 
 printf 'rc=off\nsnapshot=off\nlog_max=200\n' > "$CONF"
 mklog
-TT_LOG_MAX=1048576 "$TTBIN" --cron >/dev/null 2>&1 || true
+FMUX_LOG_MAX=1048576 "$FMUXBIN" --cron >/dev/null 2>&1 || true
 case "$(cat "$STATE/hook.log")" in *rotated*) got=yes ;; *) got=no ;; esac
-assert_eq "$got" "no" "the TT_LOG_MAX environment variable overrides the config file"
+assert_eq "$got" "no" "the FMUX_LOG_MAX environment variable overrides the config file"
 rm -f "$STATE/hook.log"
 
 # And the lie that was the price of that backward compatibility is gone — 10-util.sh used to set
-# the TT_LOG_MAX global itself, so the source always showed as env even when no real environment
+# the FMUX_LOG_MAX global itself, so the source always showed as env even when no real environment
 # variable was set (which is why the toggle used to be rejected).
 printf 'log_max=4096\n' > "$CONF"
-assert_eq "$("$TTBIN" config get log_max)" "4096" "reads log_max from the config file"
-assert_eq "$("$TTBIN" config source log_max)" "file" "and reports the source as file too"
-assert_eq "$(TT_LOG_MAX=999 "$TTBIN" config get log_max)" "999" "the TT_LOG_MAX environment variable wins"
-assert_eq "$(TT_LOG_MAX=999 "$TTBIN" config source log_max)" "env" "then the source is env"
+assert_eq "$("$FMUXBIN" config get log_max)" "4096" "reads log_max from the config file"
+assert_eq "$("$FMUXBIN" config source log_max)" "file" "and reports the source as file too"
+assert_eq "$(FMUX_LOG_MAX=999 "$FMUXBIN" config get log_max)" "999" "the FMUX_LOG_MAX environment variable wins"
+assert_eq "$(FMUX_LOG_MAX=999 "$FMUXBIN" config source log_max)" "env" "then the source is env"
 
 # ── ⑤ Does the "not wired" marker match the actual wiring? ───────────────────
 : > "$CONF"
-cli=$("$TTBIN" config list)
+cli=$("$FMUXBIN" config list)
 
 # Wired keys — T4 (rc, snapshot, boot_restore) + T6 (the tmux snippet set) + T5 (this task's four).
 # If this list should grow and doesn't, the screen lies. Conversely, if a marker is missing on a
@@ -186,11 +186,11 @@ assert_contains "$cli" "value is saved but no code reads it yet" "explains what 
 # It says so at the moment a value is actually changed too — someone who sets a value without ever
 # looking at the list is the easiest to mislead.
 : > "$CONF"
-assert_contains "$("$TTBIN" config set key_new ctrl-y 2>&1)" "is not wired to any action yet" \
+assert_contains "$("$FMUXBIN" config set key_new ctrl-y 2>&1)" "is not wired to any action yet" \
     "setting a not-wired key states that fact right there"
-assert_eq "$("$TTBIN" config set key_new ctrl-y 2>/dev/null)" "key_new=ctrl-y" \
+assert_eq "$("$FMUXBIN" config set key_new ctrl-y 2>/dev/null)" "key_new=ctrl-y" \
     "that notice goes to stderr only — stdout's key=value stays unchanged"
-out=$("$TTBIN" config set accent 200 2>&1)
+out=$("$FMUXBIN" config set accent 200 2>&1)
 case "$out" in *"not wired"*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "setting a wired key adds no extra remark"
 : > "$CONF"
@@ -198,7 +198,7 @@ assert_eq "$got" "no" "setting a wired key adds no extra remark"
 # The popup settings screen and the CLI both draw their verdict from the same function — someone
 # who only looks at one of them must not reach a different conclusion. Rather than hand-writing key
 # names, this compares the two outputs against each other.
-pop=$("$TTBIN" --config-list)
+pop=$("$FMUXBIN" --config-list)
 mismatch=""
 for k in $(printf '%s\n' "$cli" | sed -n '2,$p' | awk '{ print $1 }'); do
     case "$k" in ''|"not"*) continue ;; esac
@@ -214,7 +214,7 @@ assert_eq "$mismatch" "" "the CLI's and popup's not-wired verdicts agree key by 
 # collapse to the bash executable, so the scan finds nothing — a genuine zero-evidence situation.
 # In that case it must show no marker at all: painting everything as "not wired" would be the far
 # bigger lie.
-out=$(bash -s -- config list < "$TTBIN" 2>/dev/null) || out=''
+out=$(bash -s -- config list < "$FMUXBIN" 2>/dev/null) || out=''
 case "$out" in *"not wired"*) got=yes ;; *) got=no ;; esac
 assert_eq "$got" "no" "when wiring evidence can't be obtained, no not-wired marker is attached at all"
 assert_contains "$out" "key_new" "the table itself still renders normally"
@@ -225,7 +225,7 @@ assert_contains "$out" "key_new" "the table itself still renders normally"
 # default binds no prefix-less key at all (key_summon_fast is empty), so that first line was
 # **a lie teaching a key that doesn't exist**.
 : > "$CONF"
-h=$("$TTBIN" --help 2>/dev/null)
+h=$("$FMUXBIN" --help 2>/dev/null)
 assert_eq "$(printf '%s' "$h" | grep -c 'Option+←' || true)" "0" "it doesn't teach a key that isn't bound"
 # The help screen shows the fast summon key only — prefix + <key> still works and is still in
 # `fmux config list`, but it is deliberately off this screen so the one keystroke that matters is
@@ -238,7 +238,7 @@ assert_contains "$h" "talked within 1h"    "reads and prints the default recent_
 assert_contains "$h" "or 10 min"           "reads and prints the default unseen_minutes"
 
 printf 'key_summon=T\nkey_summon_fast=C-Left M-Left\nrecent_hours=3\nunseen_minutes=45\n' > "$CONF"
-h=$("$TTBIN" --help 2>/dev/null)
+h=$("$FMUXBIN" --help 2>/dev/null)
 assert_contains "$h" "C-Left M-Left"   "the changed key_summon_fast shows up on screen"
 assert_eq "$(printf '%s' "$h" | grep -c 'not set' || true)" "0" "when a key is bound, it does not say there is none"
 assert_contains "$h" "talked within 3h" "the changed recent_hours shows up on screen"
@@ -247,7 +247,7 @@ assert_eq "$(printf '%s' "$h" | grep -c 'talked within 6h' || true)" "0" "the ol
 
 # Must be honest even to someone who empties out every summon key
 printf 'key_summon=\nkey_summon_fast=\n' > "$CONF"
-h=$("$TTBIN" --help 2>/dev/null)
+h=$("$FMUXBIN" --help 2>/dev/null)
 assert_contains "$h" "not set" "with every summon key emptied, the screen says so instead of showing a blank"
 assert_contains "$h" "key_summon_fast" "and tells you the one command that fixes it"
 
@@ -256,4 +256,4 @@ assert_contains "$h" "key_summon_fast" "and tells you the one command that fixes
 # tmux, and not one of them should have been a state-mutating subcommand.
 assert_no_tmux_mutation "every tmux call this file made was read-only"
 
-tt_test_done
+fmux_test_done

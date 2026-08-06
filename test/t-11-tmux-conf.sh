@@ -4,7 +4,7 @@
 # lib.sh's sandbox unsets TMUX, so --write doesn't leak out through source-file either.
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 SNIP="$XDG_CONFIG_HOME/fleetmux/tmux.conf"
@@ -16,7 +16,7 @@ mkdir -p "$(dirname "$CONF")"
 count_lines() { printf '%s\n' "$1" | grep -c "$2" || true; }
 
 # ── ① Default — only the prefix binding appears, no prefix-less binding ──────
-out=$("$TTBIN" --tmux-conf)
+out=$("$FMUXBIN" --tmux-conf)
 assert_contains "$out" "bind F " "the default summon key F comes out as a prefix binding"
 assert_eq "$(count_lines "$out" '^bind -n ')" "0" "there is no prefix-less binding in the default"
 assert_eq "$(count_lines "$out" '^bind F ')" "1" "the prefix binding is exactly one line"
@@ -45,19 +45,19 @@ done
 # A key we did bind dies with it too when removed from config — proven by "a bind -n line left
 # over in the previous snippet."
 printf 'key_summon_fast=M-b\n' > "$CONF"
-"$TTBIN" --tmux-conf --write >/dev/null
+"$FMUXBIN" --tmux-conf --write >/dev/null
 assert_eq "$(grep -c '^bind -n M-b ' "$SNIP" || true)" "1" "binding it when asked works"
 printf 'key_summon_fast=\n' > "$CONF"
-"$TTBIN" --tmux-conf --write >/dev/null
+"$FMUXBIN" --tmux-conf --write >/dev/null
 assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "removing it when asked leaves nothing bound"
 assert_eq "$(grep -c '^unbind -n -q M-b$' "$SNIP" || true)" "1" "the M-b we had bound gets unbound along with it"
 assert_eq "$(grep -c '^unbind -n -q M-f$' "$SNIP" || true)" "0" "M-f, which we never bound, is not unbound"
 rm -f "$SNIP" "$CONF"
-out=$("$TTBIN" --tmux-conf)
+out=$("$FMUXBIN" --tmux-conf)
 
 # ── ④ Populating the fast list gives each entry a prefix-less binding ────────
 printf 'key_summon_fast=C-Left M-b\n' > "$CONF"
-out=$("$TTBIN" --tmux-conf)
+out=$("$FMUXBIN" --tmux-conf)
 assert_contains "$out" "bind -n C-Left " "C-Left gets bound prefix-less"
 assert_contains "$out" "bind -n M-b "    "M-b gets bound prefix-less"
 assert_eq "$(count_lines "$out" '^bind -n ')" "2" "only as many as the list count get bound"
@@ -68,10 +68,10 @@ assert_eq "$(count_lines "$out" '^unbind .*C-Left$')" "1" "a key being bound is 
 # ── ④-b Does the generator accept the key (S-Left) the installer suggests? ───
 # If the suggestion exists only in the preset name and the generator can't accept that value, the
 # installer says "bound" while binding nothing. So this checks that it also passes value
-# validation (tt_conf_is_tmux_key).
+# validation (fmux_conf_is_tmux_key).
 rm -f "$SNIP" "$CONF"
 printf 'key_summon_fast=S-Left\n' > "$CONF"
-out=$("$TTBIN" --tmux-conf)
+out=$("$FMUXBIN" --tmux-conf)
 assert_contains "$out" "bind -n S-Left " "S-Left gets bound prefix-less"
 assert_eq "$(count_lines "$out" '^bind -n ')" "1" "only S-Left gets bound"
 assert_eq "$(count_lines "$out" '^unbind -n -q S-Left$')" "1" "the key being bound is unbound first (idempotent reapplication)"
@@ -80,10 +80,10 @@ assert_eq "$(count_lines "$out" '^unbind -n -q S-Left$')" "1" "the key being bou
 # living on the server.
 rm -f "$SNIP" "$CONF"
 printf 'key_summon_fast=C-Left M-Left\n' > "$CONF"
-"$TTBIN" --tmux-conf --write >/dev/null
+"$FMUXBIN" --tmux-conf --write >/dev/null
 assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "2" "precondition: two old keys are bound first"
 printf 'key_summon_fast=S-Left\n' > "$CONF"
-"$TTBIN" --tmux-conf --write >/dev/null
+"$FMUXBIN" --tmux-conf --write >/dev/null
 assert_eq "$(grep -c '^bind -n S-Left ' "$SNIP" || true)" "1" "only the new key gets bound"
 assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "1" "the old keys are no longer bound"
 assert_eq "$(grep -c '^unbind -n -q C-Left$' "$SNIP" || true)" "1" "the unbind for old key C-Left appears"
@@ -92,44 +92,44 @@ rm -f "$SNIP" "$CONF"
 
 # ── ⑤ Emptying key_summon removes the prefix binding ─────────────────────────
 printf 'key_summon=\n' > "$CONF"
-out=$("$TTBIN" --tmux-conf)
+out=$("$FMUXBIN" --tmux-conf)
 assert_eq "$(count_lines "$out" '^bind [A-Za-z]')" "0" "when key_summon is empty there is no prefix binding"
 
 # ── ⑥ snapshot_on_exit=off drops the two hook lines ───────────────────────────
 printf 'snapshot_on_exit=off\n' > "$CONF"
-out=$("$TTBIN" --tmux-conf)
+out=$("$FMUXBIN" --tmux-conf)
 assert_eq "$(count_lines "$out" '^set-hook ')" "0" "with snapshot_on_exit=off the hooks are dropped"
 assert_contains "$out" "bind F " "the summon key remains even with the hook off"
 
 # ── ⑦ --write creates the file ────────────────────────────────────────────────
 printf 'key_summon=T\n' > "$CONF"
 assert_rc 0 test ! -e "$SNIP"
-assert_rc 0 "$TTBIN" --tmux-conf --write
+assert_rc 0 "$FMUXBIN" --tmux-conf --write
 assert_rc 0 test -f "$SNIP"
 assert_contains "$(cat "$SNIP")" "bind T " "the written file contains the changed key"
-assert_eq "$("$TTBIN" --tmux-conf --write)" "$SNIP" "--write reports the path it wrote"
+assert_eq "$("$FMUXBIN" --tmux-conf --write)" "$SNIP" "--write reports the path it wrote"
 # No temp file is left behind (atomic write)
 assert_eq "$(count_lines "$(ls "$(dirname "$SNIP")")" '^tmux\.conf\.tmp')" "0" "no temp file is left behind"
 
 # ── ⑧ config set rewrites the snippet ─────────────────────────────────────────
-"$TTBIN" config set key_summon G >/dev/null
+"$FMUXBIN" config set key_summon G >/dev/null
 assert_contains "$(cat "$SNIP")" "bind G " "changing key_summon refreshes the snippet"
-"$TTBIN" config set key_summon_fast "M-Left" >/dev/null
+"$FMUXBIN" config set key_summon_fast "M-Left" >/dev/null
 assert_contains "$(cat "$SNIP")" "bind -n M-Left " "changing key_summon_fast refreshes the snippet"
-"$TTBIN" config set snapshot_on_exit off >/dev/null
+"$FMUXBIN" config set snapshot_on_exit off >/dev/null
 assert_eq "$(count_lines "$(cat "$SNIP")" '^set-hook ')" "0" "turning off snapshot_on_exit drops the hook from the snippet"
-"$TTBIN" config unset snapshot_on_exit >/dev/null
+"$FMUXBIN" config unset snapshot_on_exit >/dev/null
 assert_eq "$(count_lines "$(cat "$SNIP")" '^set-hook ')" "2" "unset refreshes the snippet too"
 
 # Changing a key unrelated to the snippet doesn't break anything (a silent no-op reapplication
 # doesn't taint rc)
-assert_rc 0 "$TTBIN" config set accent 100
+assert_rc 0 "$FMUXBIN" config set accent 100
 
 # ── ⑨ A hand-entered odd value doesn't leak into the snippet ─────────────────
 # The parser filters the value's character set, but the renderer also double-checks the tmux key
 # shape once more (defense in depth).
 printf 'key_summon=a/b\n' > "$CONF"
-out=$("$TTBIN" --tmux-conf 2>/dev/null)
+out=$("$FMUXBIN" --tmux-conf 2>/dev/null)
 assert_eq "$(count_lines "$out" '^bind a/b')" "0" "a value that isn't shaped like a key doesn't go out as a binding"
 
 # ── ⑩ Doesn't apply to a live server without consent (gate B4) ───────────────
@@ -139,39 +139,39 @@ assert_eq "$(count_lines "$out" '^bind a/b')" "0" "a value that isn't shaped lik
 #   Verdict: it must go out **only when the user's own config actually has a source-file line**.
 #   The old version fired unconditionally even when ~/.tmux.conf didn't exist at all — just running
 #   --write to eyeball the snippet changed someone else's server keys.
-# Everything up to here (through ⑨) ran under tt_test_sandbox's sealed fake tmux. TMUX is empty, so
+# Everything up to here (through ⑨) ran under fmux_test_sandbox's sealed fake tmux. TMUX is empty, so
 # --write must send nothing to a live server — the seal log pins that down.
 assert_no_tmux_mutation "with TMUX empty, --write never calls tmux at all"
-assert_eq "$(cat "$TT_TMUX_STUB_LOG")" "" "sections ①–⑨ never call tmux even once"
+assert_eq "$(cat "$FMUX_TMUX_STUB_LOG")" "" "sections ①–⑨ never call tmux even once"
 
-mkdir -p "$TTROOT/fakebin"
-cat > "$TTROOT/fakebin/tmux" <<'SHIM'
+mkdir -p "$FMUXROOT/fakebin"
+cat > "$FMUXROOT/fakebin/tmux" <<'SHIM'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TT_TMUX_LOG"
+printf '%s\n' "$*" >> "$FMUX_TMUX_LOG"
 exit 0
 SHIM
-chmod +x "$TTROOT/fakebin/tmux"
-export TT_TMUX_LOG="$TTROOT/tmux-calls.log"
-export PATH="$TTROOT/fakebin:$PATH"
+chmod +x "$FMUXROOT/fakebin/tmux"
+export FMUX_TMUX_LOG="$FMUXROOT/tmux-calls.log"
+export PATH="$FMUXROOT/fakebin:$PATH"
 export TMUX="/fake/socket,0,0"
 printf 'key_summon=F\n' > "$CONF"
 
-: > "$TT_TMUX_LOG"
+: > "$FMUX_TMUX_LOG"
 rm -f "$HOME/.tmux.conf"
-"$TTBIN" --tmux-conf --write >/dev/null
-assert_eq "$(cat "$TT_TMUX_LOG")" "" "no source-file is fired at the server of someone who hasn't wired us in"
+"$FMUXBIN" --tmux-conf --write >/dev/null
+assert_eq "$(cat "$FMUX_TMUX_LOG")" "" "no source-file is fired at the server of someone who hasn't wired us in"
 
 # A substring match would pass right here — a broken, newline-less concatenated line (the shape of
 # B1's damage) and a comment line are not "wired in."
-: > "$TT_TMUX_LOG"
+: > "$FMUX_TMUX_LOG"
 printf 'set -g mouse onsource-file %s\n# source-file %s\n' "$SNIP" "$SNIP" > "$HOME/.tmux.conf"
-"$TTBIN" --tmux-conf --write >/dev/null
-assert_eq "$(cat "$TT_TMUX_LOG")" "" "a broken line or a comment line doesn't count as wired"
+"$FMUXBIN" --tmux-conf --write >/dev/null
+assert_eq "$(cat "$FMUX_TMUX_LOG")" "" "a broken line or a comment line doesn't count as wired"
 
-: > "$TT_TMUX_LOG"
+: > "$FMUX_TMUX_LOG"
 printf 'set -g mouse on\nsource-file %s\n' "$SNIP" > "$HOME/.tmux.conf"
-"$TTBIN" --tmux-conf --write >/dev/null
-assert_contains "$(cat "$TT_TMUX_LOG")" "source-file $SNIP" "someone who is wired in gets it applied to their server right there"
+"$FMUXBIN" --tmux-conf --write >/dev/null
+assert_contains "$(cat "$FMUX_TMUX_LOG")" "source-file $SNIP" "someone who is wired in gets it applied to their server right there"
 
 # ── ⑩-b A line written with a tilde counts as wired too (gate I1) ────────────
 # This is exactly the shape README teaches: `source-file ~/.config/fleetmux/tmux.conf`. tmux
@@ -179,22 +179,22 @@ assert_contains "$(cat "$TT_TMUX_LOG")" "source-file $SNIP" "someone who is wire
 # followed the docs** would read as "not wired" → fmux config set wouldn't apply to the live server
 # while the screen still prints success, and re-running the installer would append yet another
 # duplicate source line.
-: > "$TT_TMUX_LOG"
+: > "$FMUX_TMUX_LOG"
 printf 'set -g mouse on\nsource-file ~/.config/fleetmux/tmux.conf\n' > "$HOME/.tmux.conf"
 assert_eq "$SNIP" "$HOME/.config/fleetmux/tmux.conf" "precondition: that tilde line points at our snippet"
-"$TTBIN" --tmux-conf --write >/dev/null
-assert_contains "$(cat "$TT_TMUX_LOG")" "source-file $SNIP" "a source-file line written with a tilde counts as wired too"
+"$FMUXBIN" --tmux-conf --write >/dev/null
+assert_contains "$(cat "$FMUX_TMUX_LOG")" "source-file $SNIP" "a source-file line written with a tilde counts as wired too"
 
 # But it must not expand unconditionally — ~other/… is **someone else's home**, not our line.
-: > "$TT_TMUX_LOG"
+: > "$FMUX_TMUX_LOG"
 printf 'source-file ~other/.config/fleetmux/tmux.conf\n' > "$HOME/.tmux.conf"
-"$TTBIN" --tmux-conf --write >/dev/null
-assert_eq "$(cat "$TT_TMUX_LOG")" "" "a ~other form (someone else's home) does not count as wired"
+"$FMUXBIN" --tmux-conf --write >/dev/null
+assert_eq "$(cat "$FMUX_TMUX_LOG")" "" "a ~other form (someone else's home) does not count as wired"
 
 # Outside tmux, nothing is fired even if wired in (there's no server to send it to)
-: > "$TT_TMUX_LOG"
-TMUX='' "$TTBIN" --tmux-conf --write >/dev/null
-assert_eq "$(cat "$TT_TMUX_LOG")" "" "outside tmux, no server is touched at all"
+: > "$FMUX_TMUX_LOG"
+TMUX='' "$FMUXBIN" --tmux-conf --write >/dev/null
+assert_eq "$(cat "$FMUX_TMUX_LOG")" "" "outside tmux, no server is touched at all"
 unset TMUX
 
 # ── status bar badges ───────────────────────────────────────────────────────
@@ -208,7 +208,7 @@ unset TMUX
 # ⛔ Saving the old line into a user option. Options are stored unexpanded, so it saves the literal
 #    text #{status-right} — a self-reference. Expanding it (set -F) is worse: a status-right
 #    holding %H:%M or #{session_name} freezes to the values it had at that instant.
-ON=$("$TTBIN" --tmux-conf 2>/dev/null)
+ON=$("$FMUXBIN" --tmux-conf 2>/dev/null)
 assert_contains "$ON" -- '--status-bind' "on: it wires status-right through fmux, not with raw tmux commands"
 assert_eq "$(printf '%s\n' "$ON" | grep -c 'set -ag status-right' || true)" "0" \
     "★on: it does not append — the badges go at the very front of status-left, and an appended fragment is also the first thing truncated"
@@ -219,7 +219,7 @@ assert_eq "$(printf '%s\n' "$ON" | grep -E '^[[:space:]]*set -ag status-right' |
     "★no unguarded append at the start of a line — every append sits behind the if"
 
 printf 'status_badges=off\n' > "$CONF"
-OFF=$("$TTBIN" --tmux-conf 2>/dev/null)
+OFF=$("$FMUXBIN" --tmux-conf 2>/dev/null)
 assert_eq "$(printf '%s\n' "$OFF" | grep -c -- '--status-bind' || true)" "0" "off: it does not wire anything"
 assert_contains "$OFF" -- '--status-unbind' "★off: it actively takes the fragment back out of a live server"
 assert_eq "$(printf '%s\n' "$OFF" | grep -cF '$(' || true)" "0" \
@@ -228,4 +228,4 @@ assert_eq "$(printf '%s\n' "$OFF" | grep -c 'tmux show -gv' || true)" "0" \
     "off: the snippet does not shell out to read tmux options either"
 : > "$CONF"
 
-tt_test_done
+fmux_test_done

@@ -55,7 +55,7 @@ usage: ./install.sh [options]
   -n, --dry-run       change nothing, just print what would be done
   -y, --yes           yes to every prompt (accepts the suggested defaults as-is)
                       except the summon key, which goes to safe — no no-prefix key is stolen
-      --prefix DIR    install location (default ~/.local — bin/ and libexec/tt/ go under it)
+      --prefix DIR    install location (default ~/.local — bin/ and libexec/fmux/ go under it)
       --preset NAME   summon key preset: shift | safe | mac | linux | wsl
                       when we can ask, we suggest shift (S-Left) — the only no-prefix single
                       keystroke that reaches all three of macOS, Linux, and Windows Terminal.
@@ -97,8 +97,15 @@ case "$PREFIX" in
 esac
 
 BINDIR="$PREFIX/bin"
-LIBEXEC="$PREFIX/libexec/tt"     # PATH shim location. Must match the path used in README and
-                                  # 70-fleet.sh's PATH correction.
+# PATH shim location. Must match the path used in README and 70-fleet.sh's PATH correction.
+#   The name is fmux; libexec/tt is what installs made before 2026-08-06 used.
+#   **An existing shim directory is kept.** That path is written into the user's shell rc as a
+#   PATH entry, so moving it would leave the rc pointing at nothing — and the failure is silent:
+#   the shim stops being found, hooks stop attaching, and the tool still looks installed. Only a
+#   fresh install gets the new name.
+if [ -d "$PREFIX/libexec/tt" ]; then LIBEXEC="$PREFIX/libexec/tt"
+else LIBEXEC="$PREFIX/libexec/fmux"
+fi
 
 # ── output ──────────────────────────────────────────────────────────────────
 # Tags are all 4-column ASCII. Non-ASCII tags render at different widths in different
@@ -207,7 +214,7 @@ ver_ge() {
         case "$a" in *.*) a=${a#*.} ;; *) a='' ;; esac
         case "$b" in *.*) b=${b#*.} ;; *) b='' ;; esac
         # A leading 0 is octal in bash arithmetic → normalize with 10# (same reason as
-        # tt_conf_num in 05-config.sh)
+        # fmux_conf_num in 05-config.sh)
         case "$ai" in ''|*[!0-9]*) ai=0 ;; *) ai=$((10#$ai)) ;; esac
         case "$bi" in ''|*[!0-9]*) bi=0 ;; *) bi=$((10#$bi)) ;; esac
         [ "$ai" -gt "$bi" ] && return 0
@@ -273,18 +280,18 @@ FMUX="$REPO/bin/fmux"
 # the screen only printed `ok …/tt → fmux`.
 # Rule: only hang it **when the spot is empty or already ours**. Otherwise show what's there and
 # let the person decide.
-tt_link_absent() {   # rc 0 = the spot is empty (a broken symlink does not count as empty)
+fmux_link_absent() {   # rc 0 = the spot is empty (a broken symlink does not count as empty)
     [ ! -e "$BINDIR/tt" ] && [ ! -L "$BINDIR/tt" ]
 }
 
-tt_link_ours() {     # rc 0 = it's our symlink (fine to hang again — reruns must be idempotent)
+fmux_link_ours() {     # rc 0 = it's our symlink (fine to hang again — reruns must be idempotent)
     local t
     [ -L "$BINDIR/tt" ] || return 1
     t=$(readlink "$BINDIR/tt" 2>/dev/null) || return 1
     [ "$t" = fmux ] || [ "$t" = "$BINDIR/fmux" ]
 }
 
-tt_link_what() {     # What's actually there — the person needs to see this before deciding
+fmux_link_what() {     # What's actually there — the person needs to see this before deciding
     if [ -L "$BINDIR/tt" ]; then
         printf 'symlink → %s' "$(readlink "$BINDIR/tt" 2>/dev/null || printf '?')"
     elif [ -d "$BINDIR/tt" ]; then printf 'a directory'
@@ -607,10 +614,10 @@ install_bin() {
 
     if is_dry; then
         plan "mkdir -p $BINDIR && cp bin/fmux $BINDIR/fmux (make install PREFIX=$PREFIX)"
-        if tt_link_absent || tt_link_ours; then
+        if fmux_link_absent || fmux_link_ours; then
             plan "ln -sf fmux $BINDIR/tt   (symlink — the shim looks for 'tt' on PATH)"
         else
-            plan "$BINDIR/tt is not ours ($(tt_link_what)) → leaving it untouched (hook injection won't attach)"
+            plan "$BINDIR/tt is not ours ($(fmux_link_what)) → leaving it untouched (hook injection won't attach)"
         fi
     else
         if [ "$HAVE_MAKE" = 1 ] && [ "$REMOTE" = 0 ]; then
@@ -624,7 +631,7 @@ install_bin() {
             mkdir -p "$BINDIR" || die "could not create $BINDIR"
             cp "$REPO/bin/fmux" "$BINDIR/fmux" || die "could not write $BINDIR/fmux"
             chmod +x "$BINDIR/fmux" || die "could not make $BINDIR/fmux executable"
-            if tt_link_absent || tt_link_ours; then ln -sf fmux "$BINDIR/tt"; fi
+            if fmux_link_absent || fmux_link_ours; then ln -sf fmux "$BINDIR/tt"; fi
         fi
         [ -x "$BINDIR/fmux" ] || die "$BINDIR/fmux was not installed"
         did "$BINDIR/fmux"
@@ -637,14 +644,14 @@ install_bin() {
         # If that name belongs to something else, it's left alone — **show what's there and let
         # the person decide**. An installer does not make an unrecoverable call on its own
         # (gate I2).
-        if tt_link_ours; then
+        if fmux_link_ours; then
             did "$BINDIR/tt → fmux"
             ok "$BINDIR/tt → fmux"
-        elif tt_link_absent; then
+        elif fmux_link_absent; then
             warn "could not create the $BINDIR/tt symlink — run 'ln -sf fmux $BINDIR/tt' yourself"
         else
             warn "$BINDIR/tt is not ours — left untouched."
-            warn "     currently there: $(tt_link_what)"
+            warn "     currently there: $(fmux_link_what)"
             warn "     someone else's tt is never silently taken over. Decide what to do:"
             warn "       1) keep using that tool — fmux still works fine under the name 'fmux'."
             warn "          but the shim looks for 'tt' on PATH, so hook injection won't attach (no status marker)."
@@ -747,7 +754,7 @@ pick_tmux_conf() {
 #   match on `*source*<path>*`, so appending to a file that didn't end in a newline produced a
 #   corrupted line ("set -g mouse onsource-file …") that still passed as "already configured" —
 #   a rerun couldn't self-heal, and the damage stayed permanently hidden (gate B2). Must follow
-#   the same rule fmux itself uses (tt_tmux_conf_linked in 87-tmux-conf.sh).
+#   the same rule fmux itself uses (fmux_tmux_conf_linked in 87-tmux-conf.sh).
 already_sourced() {   # $1=config file  $2=snippet path
     local line rest
     [ -r "$1" ] || return 1
@@ -803,7 +810,7 @@ append_source_line() {   # $1=config file  $2=snippet path  → rc 0 means it wa
 #   It used to write the snippet first. That write, if inside tmux, fires source-file at the
 #   live server immediately, so it was already applied before "add this line?" was even asked —
 #   and even answering n still left the message saying "not added." fmux itself now has a gate
-#   too (tt_tmux_conf_linked) — it only takes effect when the line is actually present in the
+#   too (fmux_tmux_conf_linked) — it only takes effect when the line is actually present in the
 #   user's config. With this order, "only someone who consented gets it applied to this server
 #   too" holds on both sides.
 install_snippet() {
@@ -1034,7 +1041,7 @@ install_preset() {
         return 0
     fi
 
-    # config set/unset rewrite the snippet themselves (tt_conf_resnip in 85-config-cli.sh).
+    # config set/unset rewrite the snippet themselves (fmux_conf_resnip in 85-config-cli.sh).
     if [ -z "$v" ]; then
         "$FMUX" config unset key_summon_fast > /dev/null || die "could not clear key_summon_fast"
         did "removed config key_summon_fast (safe)"
@@ -1141,7 +1148,7 @@ show_cron() {
     printf '    @reboot %s/fmux --boot-restore >/dev/null 2>&1\n' "$BINDIR"
     printf '\n'
     note "first line: rc auto-recovery + fleet snapshot every minute (the manifest stays under a minute stale)"
-    note "second line: session and conversation restore after boot. To turn it off some day: touch ~/.cache/tt/no-autorestore"
+    note "second line: session and conversation restore after boot. To turn it off some day: touch ~/.cache/fmux/no-autorestore"
     note "both can also be turned off with fmux config: fmux config set rc off / snapshot off / boot_restore off"
 }
 
@@ -1178,7 +1185,7 @@ summary() {
     printf '  rm -rf %s\n' "$LIBEXEC"
     printf '  rm -f  %s\n' "$SNIP"
     printf '  rm -rf %s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
-    printf '  rm -rf %s/.cache/tt   (state and logs — deleting only loses history)\n' "$HOME"
+    printf '  rm -rf %s/.cache/fmux   (state and logs — deleting only loses history)\n' "$HOME"
     printf "  delete the 'source-file %s' line in %s\n" "$SNIP" "$TMUXCONF"
     [ -n "$SKILL_DST" ] && printf '  rm -rf %s\n' "$SKILL_DST"
     printf '  if you added lines to crontab, remove them yourself with crontab -e\n'

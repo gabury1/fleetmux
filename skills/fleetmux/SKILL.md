@@ -84,11 +84,11 @@ disagreement is worth reporting.
 ## Raw state, when you need to be precise
 
 ```bash
-cat ~/.cache/tt/hook-<tmux-session-id>   # "<state> <unix-ts> <agent-pid>"
-cat ~/.cache/tt/manifest                 # TAB: name, cwd, kind, command, conversation-id, conversation home
-cat ~/.cache/tt/finished                 # "<unix-ts> <name>" — finished, not yet seen
-cat ~/.cache/tt/last-<tmux-session-id>   # line 1: unix-ts, line 2+: last prompt sent to that session
-tail ~/.cache/tt/hook.log                # audit trail of every transition (rotated at log_max)
+cat ~/.cache/fmux/hook-<tmux-session-id>   # "<state> <unix-ts> <agent-pid>"
+cat ~/.cache/fmux/manifest                 # TAB: name, cwd, kind, command, conversation-id, conversation home
+cat ~/.cache/fmux/finished                 # "<unix-ts> <name>" — finished, not yet seen
+cat ~/.cache/fmux/last-<tmux-session-id>   # line 1: unix-ts, line 2+: last prompt sent to that session
+tail ~/.cache/fmux/hook.log                # audit trail of every transition (rotated at log_max)
 ```
 
 `last-*` answers "what did I ask this one to do?" without scraping the pane — it is

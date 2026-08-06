@@ -3,9 +3,9 @@
 # If one file dies, the rest still run — so we see every failure in one pass.
 set -u
 cd "$(dirname "$0")/.." || exit 1
-TTBIN="$PWD/bin/fmux"
-[ -x "$TTBIN" ] || { echo "bin/fmux is missing — run make first"; exit 1; }
-export TTBIN
+FMUXBIN="$PWD/bin/fmux"
+[ -x "$FMUXBIN" ] || { echo "bin/fmux is missing — run make first"; exit 1; }
+export FMUXBIN
 
 fail=0
 for t in test/t-*.sh; do

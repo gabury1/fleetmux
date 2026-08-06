@@ -48,7 +48,7 @@ rc_claude_pid() {
     while [ -n "${level// /}" ] && [ "$d" -lt 4 ]; do
         hits=""; next=""; n=0
         for p in $level; do
-            if [ -f "$SESSD/$p.json" ] && [ "$(tt_comm "$p" || true)" = claude ]; then
+            if [ -f "$SESSD/$p.json" ] && [ "$(fmux_comm "$p" || true)" = claude ]; then
                 pst=$(rc_procstart "$p" || true)
                 j=$(rc_read "$SESSD/$p.json") || j=""
                 if [ -n "$j" ] && [ -n "$pst" ] && [ "$pst" = "$(rc_val "$j" procStart)" ]; then
@@ -92,20 +92,20 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
     # (the contract in 05-config.sh:53). Calling it inside $(...) would let the cache die with
     # that subshell, and the loop below would re-parse the file per session and fire the
     # broken-line warning that many times, every minute, duplicated.
-    tt_conf_load
+    fmux_conf_load
     # rc switch. Exiting here would also kill the --snapshot at the end of this block (line
     # 142) — since rc and snapshot are separate switches, we only "skip without exiting."
-    tt_rc_enabled=1
-    tt_conf_on rc || tt_rc_enabled=0
+    fmux_rc_enabled=1
+    fmux_conf_on rc || fmux_rc_enabled=0
     # cron runs every minute -> stay silent where output is swallowed by a redirect (otherwise
     # cron mail piles up every minute), and only tell the reason on a terminal a human typed
     # into directly.
-    if [ "$tt_rc_enabled" = 0 ] && [ -t 1 ]; then
+    if [ "$fmux_rc_enabled" = 0 ] && [ -t 1 ]; then
         printf 'rc=off — skipping auto-recovery (fmux config set rc on)\n'
     fi
     only="${2:-}"; off=""
     mkdir -p "$STATE"
-    tt_log_rotate                              # so the audit log doesn't eat away at the SD card (once per minute)
+    fmux_log_rotate                              # so the audit log doesn't eat away at the SD card (once per minute)
     # In case a round runs long (~11s per recovered session), don't overlap with the next cron
     # tick and fire twice.
     if command -v flock >/dev/null 2>&1; then
@@ -117,7 +117,7 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
     # the moment we enter it, process substitution has already forked tmux. The inner
     # indentation is left as-is on purpose (re-indenting all 53 lines would bury the real
     # change in the diff).
-    if [ "$tt_rc_enabled" = 1 ]; then
+    if [ "$fmux_rc_enabled" = 1 ]; then
     while read -r sid name; do
         [ -z "$only" ] || [ "$name" = "$only" ] || continue
         t=$(rc_target "$sid") || continue          # no claude / ambiguous / suspected PID reuse -> silently skip
@@ -191,17 +191,17 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
     # survives even a sudden reboot.
     #   If snapshot=off, the child would also return early on its own, but we block it here
     #   too, to save the once-a-minute fork itself.
-    tt_conf_on snapshot && { [ -n "$only" ] || "$SELF" --snapshot >/dev/null 2>&1 || true; }
+    fmux_conf_on snapshot && { [ -n "$only" ] || "$SELF" --snapshot >/dev/null 2>&1 || true; }
     exit 0
 fi
 
 # rc status table (read-only, for debugging): session / rc / URL
 if [ "${1:-}" = "--rc" ]; then
-    tt_conf_load                               # bare statement, not a subshell (the contract in 05-config.sh:53)
+    fmux_conf_load                               # bare statement, not a subshell (the contract in 05-config.sh:53)
     # Bail out before the first tmux call that draws the table (the while below) — for someone
     # who has turned off auto-recovery, the rc status table would just be a table asking "why
     # is everything OFF" right back at them.
-    tt_conf_on rc || { printf 'rc=off — auto-recovery is disabled (fmux config set rc on)\n'; exit 0; }
+    fmux_conf_on rc || { printf 'rc=off — auto-recovery is disabled (fmux config set rc on)\n'; exit 0; }
     # The entire rc verdict hangs on /proc/<pid>/stat (rc_procstart). On a machine without
     # /proc (macOS), rc_target always fails and the table below becomes **'?' in every row** —
     # that's unsupported, not broken, but looking at the table alone you can't tell the

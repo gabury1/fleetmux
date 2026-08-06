@@ -98,7 +98,7 @@ WAITING_PAT='Do you want to|Would you like to|Enter to select|Esc to cancel|Pres
 # input box (❯)" — check only that one line.
 # (Checking a chunk of the bottom N lines gets false positives/negatives from leftover
 # conversation text on screen — got burned twice.)
-tt_working() {
+fmux_working() {
     awk '
         { L[NR] = $0 }
         /^❯/ { p = NR }
@@ -119,7 +119,7 @@ tt_working() {
 #
 # ⚠️ This signal is used **only as grounds to turn ✻ on**. Never as grounds to turn it off.
 #    Since this bug was "wrongly clearing the ✻ of a session that was actually working," only a
-#    placement that adds zero new deletion paths is safe. So tt_cpu_busy's rc has 3 values:
+#    placement that adds zero new deletion paths is safe. So fmux_cpu_busy's rc has 3 values:
 #    0=working / 1=not / **2=undecidable**.
 #    The moment "don't know" collapses into "no," ✻ disappears again — the caller decides how to
 #    collapse it, in its own context.
@@ -162,20 +162,20 @@ tt_working() {
 #   (25×10 + 1.5×290)/300 = 9.8 cs/s, crossing the threshold, so **the CPU signal becomes a
 #   weapon that revives a stuck state**. Capping it at 60s means that window never forms in the
 #   first place.
-# Only overridable via environment variable, and deliberately not in the TT_CONF_KEYS whitelist —
+# Only overridable via environment variable, and deliberately not in the FMUX_CONF_KEYS whitelist —
 #   this isn't a user setting, it's a tuning knob (if the TUI render cost changes in the future,
 #   only this gets touched).
 #   ⚠ A value that has become a config key must not be left as a `${VAR:-default}` global like
 #   this: that global's name becomes exactly the env variable name for that key, so the
 #   precedence rule permanently becomes "env wins," which kills the config file (this actually
 #   happened to log_max — see the retrospective in 10-util.sh).
-TT_CPU_BUSY=${TT_CPU_BUSY:-6}              # cs/s. 6% of one core
-TT_CPU_MINWIN=${TT_CPU_MINWIN:-3}          # seconds. A window shorter than this is undecidable (1~2s overlaps with idle)
-TT_CPU_MINWIN_COARSE=${TT_CPU_MINWIN_COARSE:-20}  # seconds. The floor when counter resolution is 1 second (=100cs)
-TT_CPU_MAXWIN=${TT_CPU_MAXWIN:-60}         # seconds. A window longer than this is diluted and untrustworthy → undecidable
-TT_CPU_ROTATE=${TT_CPU_ROTATE:-3}          # seconds. Sample rotation interval (if called earlier than this, the file isn't touched)
+FMUX_CPU_BUSY=${FMUX_CPU_BUSY:-6}              # cs/s. 6% of one core
+FMUX_CPU_MINWIN=${FMUX_CPU_MINWIN:-3}          # seconds. A window shorter than this is undecidable (1~2s overlaps with idle)
+FMUX_CPU_MINWIN_COARSE=${FMUX_CPU_MINWIN_COARSE:-20}  # seconds. The floor when counter resolution is 1 second (=100cs)
+FMUX_CPU_MAXWIN=${FMUX_CPU_MAXWIN:-60}         # seconds. A window longer than this is diluted and untrustworthy → undecidable
+FMUX_CPU_ROTATE=${FMUX_CPU_ROTATE:-3}          # seconds. Sample rotation interval (if called earlier than this, the file isn't touched)
 
-# macOS/BSD fallback: `ps -p <pid> -o time=` → centiseconds. Sets TT_CPU_CS and TT_CPU_Q.
+# macOS/BSD fallback: `ps -p <pid> -o time=` → centiseconds. Sets FMUX_CPU_CS and FMUX_CPU_Q.
 #   `ps -o %cpu=` is not used — on Linux it's a **lifetime average** (measured: a session that
 #   worked for 36 minutes still read 17.8% after going idle), so it can't distinguish "is it
 #   working right now" at all, and BSD's decaying average has an undocumented constant. Above
@@ -187,13 +187,13 @@ TT_CPU_ROTATE=${TT_CPU_ROTATE:-3}          # seconds. Sample rotation interval (
 #   resolution is 1cs (Mac), if not it's 100cs (second-granularity ps) → the caller widens the
 #   minimum window to 20s to block quantization false positives. Built to not break even without
 #   checking on real Mac hardware.
-tt_cpu_cs_ps() {
-    TT_CPU_CS=""; TT_CPU_Q=100
+fmux_cpu_cs_ps() {
+    FMUX_CPU_CS=""; FMUX_CPU_Q=100
     local t d=0 h=0 m=0 s=0 frac=0
     t=$(ps -p "${1:-0}" -o time= 2>/dev/null | tr -d ' ') || return 1
     [ -n "$t" ] || return 1
     case "$t" in *-*) d=${t%%-*}; t=${t#*-} ;; esac
-    case "$t" in *.*) frac=${t##*.}; t=${t%.*}; TT_CPU_Q=1 ;; esac
+    case "$t" in *.*) frac=${t##*.}; t=${t%.*}; FMUX_CPU_Q=1 ;; esac
     case "$t" in
         *:*:*) h=${t%%:*}; t=${t#*:}; m=${t%%:*}; s=${t##*:} ;;
         *:*)   m=${t%%:*}; s=${t##*:} ;;
@@ -205,11 +205,11 @@ tt_cpu_cs_ps() {
     for t in "$d" "$h" "$m" "$s" "$frac"; do
         case "$t" in ''|*[!0-9]*) return 1 ;; esac
     done
-    TT_CPU_CS=$(( ((10#$d * 24 + 10#$h) * 3600 + 10#$m * 60 + 10#$s) * 100 + 10#$frac ))
+    FMUX_CPU_CS=$(( ((10#$d * 24 + 10#$h) * 3600 + 10#$m * 60 + 10#$s) * 100 + 10#$frac ))
     return 0
 }
 
-# utime+stime centiseconds → global TT_CPU_CS, resolution → TT_CPU_Q. rc 1 = couldn't read
+# utime+stime centiseconds → global FMUX_CPU_CS, resolution → FMUX_CPU_Q. rc 1 = couldn't read
 #   (permission / process gone).
 #   Linux reads /proc directly, so it's **zero forks** (measured at 0.5ms per call). The screen
 #   check forks 3 times per session — the CPU check is an order of magnitude cheaper. So putting
@@ -224,14 +224,14 @@ tt_cpu_cs_ps() {
 #      this way makes both platforms measure exactly the same thing.
 #   USER_HZ is hardcoded to 100 (confirmed getconf CLK_TCK=100 on this Pi). Calling getconf would
 #   add one more fork, and alpha/ia64, where it's 1024, aren't fmux targets.
-#   TT_PROC is for test injection — feed it a fake /proc to exercise the whole path with no real
+#   FMUX_PROC is for test injection — feed it a fake /proc to exercise the whole path with no real
 #   process.
-tt_cpu_read() {
-    TT_CPU_CS=""; TT_CPU_Q=1
+fmux_cpu_read() {
+    FMUX_CPU_CS=""; FMUX_CPU_Q=1
     local pid="${1:-0}" f line rest u s g
     case "$pid" in ''|*[!0-9]*) return 1 ;; esac
     [ "$pid" -gt 0 ] || return 1
-    f="${TT_PROC:-/proc}/$pid/stat"
+    f="${FMUX_PROC:-/proc}/$pid/stat"
     if [ -r "$f" ]; then
         line=""
         read -r line < "$f" 2>/dev/null || return 1
@@ -245,11 +245,11 @@ tt_cpu_read() {
         u="${arr[11]:-}"; s="${arr[12]:-}"
         case "$u" in ''|*[!0-9]*) return 1 ;; esac
         case "$s" in ''|*[!0-9]*) return 1 ;; esac
-        TT_CPU_CS=$(( u + s ))
-        TT_CPU_Q=1                                # 1 tick = 1cs
+        FMUX_CPU_CS=$(( u + s ))
+        FMUX_CPU_Q=1                                # 1 tick = 1cs
         return 0
     fi
-    tt_cpu_cs_ps "$pid"
+    fmux_cpu_cs_ps "$pid"
 }
 
 # Snapshot file rotation. Format is one line, 5 fields: "<pid> <ts1> <cs1> <ts2> <cs2>" (same
@@ -264,7 +264,7 @@ tt_cpu_read() {
 #   doesn't collapse the window to 0 seconds, nor does it pile up writes to the SD card.
 #   Why now is taken as an argument: the caller (--list / --status) has already called date once.
 #   If not passed in, it's called here.
-tt_cpu_sample() {
+fmux_cpu_sample() {
     local sid="${1:-}" pid="${2:-0}" now="${3:-}" f cpid ts1 cs1 ts2 cs2 tmp d
     [ -n "$sid" ] || return 0
     case "$pid" in ''|*[!0-9]*) return 0 ;; esac
@@ -282,26 +282,26 @@ tt_cpu_sample() {
         if [ "$cpid" = "$pid" ] && [ "$ts1" -gt 0 ]; then
             # ⛔ Reject a negative delta first. If now < ts1 (= a future timestamp got baked into
             #    the file), `-lt ROTATE` is **permanently true**, so it returns immediately every
-            #    time here, and the file never gets updated again → tt_cpu_busy keeps returning
+            #    time here, and the file never gets updated again → fmux_cpu_busy keeps returning
             #    rc 2 because the window is negative → the CPU-delta check dies entirely.
             #    This actually happens from NTP correction, manual clock changes, or suspend.
             #    Since it's a freeze with no recovery path, this is the one spot where
             #    "it self-heals on the next tick" does not hold.
             d=$(( now - ts1 ))
             if [ "$d" -ge 0 ]; then
-                if [ "$d" -lt "$TT_CPU_ROTATE" ]; then return 0; fi
+                if [ "$d" -lt "$FMUX_CPU_ROTATE" ]; then return 0; fi
                 ts2=$ts1; cs2=$cs1          # normal rotation
             fi
             # if d < 0, don't carry the old sample forward (keep ts2=0) and let it be overwritten
             # below with the new sample
         fi
     fi
-    tt_cpu_read "$pid" || return 0
+    fmux_cpu_read "$pid" || return 0
     mkdir -p "$STATE" 2>/dev/null || return 0
     # tmp+mv — so the reader never encounters a half-written line. Split by $$ so it's safe even
     # if --status and --list overlap.
     tmp="$f.$$"
-    if printf '%s %s %s %s %s\n' "$pid" "$now" "$TT_CPU_CS" "$ts2" "$cs2" > "$tmp" 2>/dev/null; then
+    if printf '%s %s %s %s %s\n' "$pid" "$now" "$FMUX_CPU_CS" "$ts2" "$cs2" > "$tmp" 2>/dev/null; then
         mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp"
     else
         rm -f "$tmp"
@@ -319,10 +319,10 @@ tt_cpu_sample() {
 #   The window is wall-clock (date) while the counter is CPU time → NTP jumps and suspend distort
 #   the window.
 #   Both a negative window and exceeding MAXWIN are blocked, dropping that case to undecidable.
-#   The reason it "self-heals on the next tick" is that tt_cpu_sample overwrites the file on a
+#   The reason it "self-heals on the next tick" is that fmux_cpu_sample overwrites the file on a
 #   negative delta — without that guard, it's the sampler (not here) that freezes, permanently
 #   locking in rc 2 (which is why the two are a pair).
-tt_cpu_busy() {
+fmux_cpu_busy() {
     local sid="${1:-}" pid="${2:-0}" now="${3:-}" f cpid ts1 cs1 ts2 cs2 win minwin oldcs d
     [ -n "$sid" ] || return 2
     case "$pid" in ''|*[!0-9]*) return 2 ;; esac
@@ -338,26 +338,26 @@ tt_cpu_busy() {
     case "${ts2:-}" in ''|*[!0-9]*) ts2=0 ;; esac
     case "${cs2:-}" in ''|*[!0-9]*) cs2=0 ;; esac
     case "$now" in ''|*[!0-9]*) now=$(date +%s) ;; esac
-    tt_cpu_read "$pid" || return 2
+    fmux_cpu_read "$pid" || return 2
     # minimum window = max(MINWIN, resolution/threshold). If resolution is 1 second (ps), the
     # moment an idle process crosses one tick it reads as 33 cs/s in a 3-second window, causing a
     # false positive → only then is the window widened to 20 seconds.
-    minwin=$TT_CPU_MINWIN
-    if [ "${TT_CPU_Q:-1}" -gt 1 ] && [ "$TT_CPU_MINWIN_COARSE" -gt "$minwin" ]; then
-        minwin=$TT_CPU_MINWIN_COARSE
+    minwin=$FMUX_CPU_MINWIN
+    if [ "${FMUX_CPU_Q:-1}" -gt 1 ] && [ "$FMUX_CPU_MINWIN_COARSE" -gt "$minwin" ]; then
+        minwin=$FMUX_CPU_MINWIN_COARSE
     fi
     oldcs=""
     win=$(( now - ts1 ))
-    if [ "$win" -ge "$minwin" ] && [ "$win" -le "$TT_CPU_MAXWIN" ]; then
+    if [ "$win" -ge "$minwin" ] && [ "$win" -le "$FMUX_CPU_MAXWIN" ]; then
         oldcs=$cs1                                  # the newest sample forms a sufficiently long window
     elif [ "$ts2" -gt 0 ]; then
         win=$(( now - ts2 ))                        # the newest sample is too young → widen the window using the previous sample
-        if [ "$win" -ge "$minwin" ] && [ "$win" -le "$TT_CPU_MAXWIN" ]; then oldcs=$cs2; fi
+        if [ "$win" -ge "$minwin" ] && [ "$win" -le "$FMUX_CPU_MAXWIN" ]; then oldcs=$cs2; fi
     fi
     [ -n "$oldcs" ] || return 2
-    d=$(( TT_CPU_CS - oldcs ))
+    d=$(( FMUX_CPU_CS - oldcs ))
     [ "$d" -ge 0 ] || return 2                      # the counter went backward = pid reuse/reset
-    if [ "$d" -ge $(( TT_CPU_BUSY * win )) ]; then return 0; fi
+    if [ "$d" -ge $(( FMUX_CPU_BUSY * win )) ]; then return 0; fi
     return 1
 }
 
@@ -381,14 +381,14 @@ tt_cpu_busy() {
 # notification silently disappears (lost update, deterministically reproducible).
 # Same flock pattern as rc-check. fd 9 releases automatically if the process dies, so keep the
 # critical section short.
-tt_finished_lock() {
+fmux_finished_lock() {
     mkdir -p "$STATE"
     command -v flock >/dev/null 2>&1 || return 0
     exec 9>"$STATE/finished.lock" 2>/dev/null || return 0
     flock 9 2>/dev/null || true
     return 0
 }
-tt_finished_unlock() { exec 9>&- 2>/dev/null || true; return 0; }
+fmux_finished_unlock() { exec 9>&- 2>/dev/null || true; return 0; }
 
 # The finished format is "<ts> <name>" — ts comes first, name is the last field.
 #   The old format ("<name> <ts>") had `read -r name ts` split "my proj 1784…" into name=my/ts=proj,
@@ -398,13 +398,13 @@ tt_finished_unlock() { exec 9>&- 2>/dev/null || true; return 0; }
 #   has.
 #   Normalized here in one pass so the reader still accepts the old format too, and lines with no
 #   numeric ts are dropped.
-#   Giving TT_FIN_SKIP (an env var) a name also erases that session's old records — this used to
+#   Giving FMUX_FIN_SKIP (an env var) a name also erases that session's old records — this used to
 #   be done with a sed regex, but if the name contained a `/`, a parse error (exit 4) got
 #   swallowed by `|| true` and duplicates piled up.
 #   Why ENVIRON is used instead of an awk variable: -v interprets backslashes in the value as
 #   escapes, mangling the name.
-TT_FIN_NORM='
-    BEGIN { skip = ENVIRON["TT_FIN_SKIP"] }
+FMUX_FIN_NORM='
+    BEGIN { skip = ENVIRON["FMUX_FIN_SKIP"] }
     {
         if ($1 ~ /^[0-9]+$/)                  { t = $1;  s = $0; sub(/^[0-9]+[ \t]+/, "", s) }
         else if (NF > 1 && $NF ~ /^[0-9]+$/)  { t = $NF; s = $0; sub(/[ \t]+[0-9]+[ \t]*$/, "", s) }
@@ -413,10 +413,10 @@ TT_FIN_NORM='
     }'
 
 # Normalize (+ optionally remove) then replace in place. Only call this while holding the lock.
-tt_finished_rewrite() {
+fmux_finished_rewrite() {
     local f="$STATE/finished"
     [ -s "$f" ] || return 0
-    if TT_FIN_SKIP="${1:-}" awk "$TT_FIN_NORM" "$f" > "$f.tmp" 2>/dev/null; then
+    if FMUX_FIN_SKIP="${1:-}" awk "$FMUX_FIN_NORM" "$f" > "$f.tmp" 2>/dev/null; then
         mv -f "$f.tmp" "$f"
     else
         rm -f "$f.tmp"
@@ -438,7 +438,7 @@ tt_finished_rewrite() {
 #        session came into being, so it wasn't inherited.
 #   If the session's creation time can't be obtained, it's folded to 0 and passed leniently like
 #   before (no basis to judge → the harmless side).
-tt_hook_valid() {
+fmux_hook_valid() {
     local hf="$1" created="${2:-0}" hts hpid
     [ -f "$hf" ] || return 1
     hts=0; hpid=0
@@ -470,7 +470,7 @@ tt_hook_valid() {
 #   same criterion as the --list grouping check.
 #   If the same check is scattered across multiple places, you get accidents like "listed as a
 #   tool session but the broadcast keys still fly in."
-tt_is_agent() {
+fmux_is_agent() {
     local t="${1:-}" created="${2:-}" sid c2
     [ -n "$t" ] || return 1
     case "$t" in
@@ -482,7 +482,7 @@ tt_is_agent() {
             [ -n "$created" ] || created="$c2" ;;
     esac
     [ -n "$sid" ] || return 1
-    tt_hook_valid "$STATE/hook-${sid#\$}" "${created:-0}" && return 0
+    fmux_hook_valid "$STATE/hook-${sid#\$}" "${created:-0}" && return 0
     tmux list-panes -s -t "$sid" -F '#{pane_current_command}' 2>/dev/null | grep -qxE 'claude|codex'
 }
 
@@ -490,14 +490,14 @@ tt_is_agent() {
 #   Typing a prompt into a tool session (yazi · lazydocker · a bare shell) either executes the
 #   sentence as a shell command or gets eaten as a TUI shortcut (r=restart in lazydocker). Since
 #   it's a safety-incident path, don't skip it silently — show that it was skipped.
-tt_broadcast() {
+fmux_broadcast() {
     local msg="$1" s sent=0 skipped=0 names=""
     shift
     for s in "$@"; do
         [ -n "$s" ] || continue
         # a separator line isn't a session — this is the last line of defense, so it's filtered here too.
         case "$s" in ─*) continue ;; esac
-        if ! tt_is_agent "$s"; then
+        if ! fmux_is_agent "$s"; then
             skipped=$((skipped + 1)); names="$names $s"; continue
         fi
         tmux send-keys -t "=$s:" -l "$msg"
@@ -515,12 +515,12 @@ tt_broadcast() {
 #      After a reboot tmux reissues session ids starting from $0 → a new session inherits a dead
 #      session's state file as-is. Back when only ① was cleaned up, this survived wholesale and a
 #      tool session got misclassified as an agent (measured). The check uses the single
-#      tt_hook_valid, the same one tt_is_agent uses — if "the criterion for deleting" and "the
+#      fmux_hook_valid, the same one fmux_is_agent uses — if "the criterion for deleting" and "the
 #      criterion for trusting" diverge, you get the contradiction of deleting it and then
 #      trusting it again.
 #   If the list of live ids can't be obtained, the sweep is skipped (safe). Shared by the boot
 #   hook and --restore.
-tt_sweep_hooks() {
+fmux_sweep_hooks() {
     local live lsout sid created hf id
     lsout=$(tmux ls -F $'#{session_id}\t#{session_created}' 2>/dev/null) || return 0
     [ -n "$lsout" ] || return 0
@@ -539,7 +539,7 @@ tt_sweep_hooks() {
         case "$live" in
             *" $id="*)
                 created=${live#*" $id="}; created=${created%% *}
-                tt_hook_valid "$hf" "${created:-0}" || rm -f "$hf" "$STATE/cpu-$id" ;;   # ② ghost
+                fmux_hook_valid "$hf" "${created:-0}" || rm -f "$hf" "$STATE/cpu-$id" ;;   # ② ghost
             *) rm -f "$hf" "$STATE/cpu-$id" ;;                                           # ① orphan
         esac
     done
@@ -556,7 +556,7 @@ tt_sweep_hooks() {
         case "$live" in
             *" $id="*)
                 created=${live#*" $id="}; created=${created%% *}
-                tt_hook_valid "$STATE/hook-$id" "${created:-0}" || rm -f "$hf" ;;
+                fmux_hook_valid "$STATE/hook-$id" "${created:-0}" || rm -f "$hf" ;;
             *) rm -f "$hf" ;;
         esac
     done
@@ -576,14 +576,14 @@ tt_sweep_hooks() {
     return 0
 }
 
-# JSON shallow string value → global TT_JV (same rule as rc_val, but zero forks).
+# JSON shallow string value → global FMUX_JV (same rule as rc_val, but zero forks).
 #   Calling $(rc_val …) on the hook path spins up an extra subshell per event — since the hook is
 #   called several times a second, only here does it return via a global instead of stdout. (The
 #   rc-checking code still uses rc_val as-is.)
-tt_jv() {
-    TT_JV=""
+fmux_jv() {
+    FMUX_JV=""
     local re="\"$2\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
     [[ "$1" =~ $re ]] || return 1
-    TT_JV="${BASH_REMATCH[1]}"
+    FMUX_JV="${BASH_REMATCH[1]}"
     return 0
 }

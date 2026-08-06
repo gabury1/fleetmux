@@ -4,7 +4,7 @@
 
 **Goal:** Open up fmux's hardcoded preferences (rc auto-recovery, cron snapshots, thresholds, color, keybindings) into a config file, changeable via the `tt config` CLI and an in-popup settings screen.
 
-**Architecture:** A new file `src/05-config.sh` defines the whitelist parser and `tt_conf_get`, loaded once at script start (never `source`d). Consumption sites (`--cron`, `--snapshot`, `--boot-restore`, `--list`, `--status`, the popup) call `tt_conf_get` instead of using constants. The CLI lives in `src/85-config-cli.sh`, the in-popup settings screen in `src/86-config-view.sh`. On the tmux side (summon key, exit-snapshot hook), fmux generates a snippet file it owns, so the user's `.tmux.conf` is never touched.
+**Architecture:** A new file `src/05-config.sh` defines the whitelist parser and `fmux_conf_get`, loaded once at script start (never `source`d). Consumption sites (`--cron`, `--snapshot`, `--boot-restore`, `--list`, `--status`, the popup) call `fmux_conf_get` instead of using constants. The CLI lives in `src/85-config-cli.sh`, the in-popup settings screen in `src/86-config-view.sh`. On the tmux side (summon key, exit-snapshot hook), fmux generates a snippet file it owns, so the user's `.tmux.conf` is never touched.
 
 **Tech Stack:** bash (3.2-compatible), tmux ≥ 3.2, fzf ≥ 0.64, awk/flock. No new dependencies.
 
@@ -31,7 +31,7 @@
 - Modify: `Makefile:49-57` (add test execution to the `check` target)
 
 **Interfaces:**
-- Produces: shell functions provided by `test/lib.sh` — `tt_test_sandbox` (creates a temp HOME/XDG_CONFIG_HOME and sets `TTBIN` as an absolute path), `assert_eq <actual> <expected> <description>`, `assert_contains <string> <substring> <description>`, `assert_rc <expected_rc> <command...>`. Every subsequent task's tests use only these three.
+- Produces: shell functions provided by `test/lib.sh` — `fmux_test_sandbox` (creates a temp HOME/XDG_CONFIG_HOME and sets `FMUXBIN` as an absolute path), `assert_eq <actual> <expected> <description>`, `assert_contains <string> <substring> <description>`, `assert_rc <expected_rc> <command...>`. Every subsequent task's tests use only these three.
 
 - [ ] **Step 1: Write the test library**
 
@@ -39,37 +39,37 @@
 
 ```bash
 # fleetmux shared test utilities — pure bash. No dependencies.
-# Each test file sources this and starts with tt_test_sandbox.
+# Each test file sources this and starts with fmux_test_sandbox.
 
-TT_FAIL=0
-TT_RUN=0
+FMUX_FAIL=0
+FMUX_RUN=0
 
 # Builds an isolated HOME/XDG so the real ~/.config and ~/.cache are never touched.
-tt_test_sandbox() {
-    TTROOT=$(mktemp -d "${TMPDIR:-/tmp}/fmux-test.XXXXXX") || exit 1
-    export HOME="$TTROOT/home"
-    export XDG_CONFIG_HOME="$TTROOT/home/.config"
+fmux_test_sandbox() {
+    FMUXROOT=$(mktemp -d "${TMPDIR:-/tmp}/fmux-test.XXXXXX") || exit 1
+    export HOME="$FMUXROOT/home"
+    export XDG_CONFIG_HOME="$FMUXROOT/home/.config"
     mkdir -p "$HOME" "$XDG_CONFIG_HOME"
     # isolate the socket name so tests never attach to a real tmux server
-    export TMUX_TMPDIR="$TTROOT"
-    trap 'rm -rf "$TTROOT"' EXIT
+    export TMUX_TMPDIR="$FMUXROOT"
+    trap 'rm -rf "$FMUXROOT"' EXIT
 }
 
 assert_eq() {
-    TT_RUN=$((TT_RUN + 1))
+    FMUX_RUN=$((FMUX_RUN + 1))
     if [ "$1" = "$2" ]; then
         printf '  ok   %s\n' "$3"
     else
-        TT_FAIL=$((TT_FAIL + 1))
+        FMUX_FAIL=$((FMUX_FAIL + 1))
         printf '  FAIL %s\n       expected: [%s]\n       actual:   [%s]\n' "$3" "$2" "$1"
     fi
 }
 
 assert_contains() {
-    TT_RUN=$((TT_RUN + 1))
+    FMUX_RUN=$((FMUX_RUN + 1))
     case "$1" in
         *"$2"*) printf '  ok   %s\n' "$3" ;;
-        *) TT_FAIL=$((TT_FAIL + 1))
+        *) FMUX_FAIL=$((FMUX_FAIL + 1))
            printf '  FAIL %s\n       [%s] does not contain [%s]\n' "$3" "$1" "$2" ;;
     esac
 }
@@ -79,18 +79,18 @@ assert_rc() {
     local want="$1"; shift
     local got=0
     "$@" >/dev/null 2>&1 || got=$?
-    TT_RUN=$((TT_RUN + 1))
+    FMUX_RUN=$((FMUX_RUN + 1))
     if [ "$got" = "$want" ]; then
         printf '  ok   rc=%s  %s\n' "$want" "$1"
     else
-        TT_FAIL=$((TT_FAIL + 1))
+        FMUX_FAIL=$((FMUX_FAIL + 1))
         printf '  FAIL rc  %s\n       expected: %s  actual: %s\n' "$*" "$want" "$got"
     fi
 }
 
-tt_test_done() {
-    printf '  — %d/%d failed\n' "$TT_FAIL" "$TT_RUN"
-    [ "$TT_FAIL" = 0 ]
+fmux_test_done() {
+    printf '  — %d/%d failed\n' "$FMUX_FAIL" "$FMUX_RUN"
+    [ "$FMUX_FAIL" = 0 ]
 }
 ```
 
@@ -104,9 +104,9 @@ tt_test_done() {
 # If one file dies the rest still run — so all failures show up at once.
 set -u
 cd "$(dirname "$0")/.." || exit 1
-TTBIN="$PWD/bin/fmux"
-[ -x "$TTBIN" ] || { echo "bin/fmux not found — run make first"; exit 1; }
-export TTBIN
+FMUXBIN="$PWD/bin/fmux"
+[ -x "$FMUXBIN" ] || { echo "bin/fmux not found — run make first"; exit 1; }
+export FMUXBIN
 
 fail=0
 for t in test/t-*.sh; do
@@ -126,7 +126,7 @@ exit "$fail"
 #!/usr/bin/env bash
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 assert_eq "$(printf 'a')" "a" "assert_eq passes on equal values"
 assert_contains "hello world" "lo w" "assert_contains finds the substring"
@@ -134,10 +134,10 @@ assert_rc 0 true
 assert_rc 1 false
 # the sandbox must not be the real HOME
 case "$HOME" in */fmux-test.*) printf '  ok   HOME is isolated\n' ;;
-    *) printf '  FAIL HOME is not isolated: %s\n' "$HOME"; TT_FAIL=$((TT_FAIL+1)) ;;
+    *) printf '  FAIL HOME is not isolated: %s\n' "$HOME"; FMUX_FAIL=$((FMUX_FAIL+1)) ;;
 esac
 
-tt_test_done
+fmux_test_done
 ```
 
 - [ ] **Step 4: Run it and confirm it passes**
@@ -185,12 +185,12 @@ git commit -m "test: add pure-bash test harness"
 **Interfaces:**
 - Consumes: `STATE` (00-header.sh), `test/lib.sh` (Task 1)
 - Produces:
-  - `TT_CONF` — the config file's absolute path string
-  - `TT_CONF_KEYS` — space-separated list of known keys (same order as output)
-  - `tt_conf_default <key>` — prints the default to stdout. rc 1 if the key is unknown
-  - `tt_conf_get <key>` — prints the effective value (env > file > default) to stdout. rc 1 if the key is unknown
-  - `tt_conf_source <key>` — prints one of `env` | `file` | `default` to stdout
-  - `tt_conf_on <key>` — rc 0 if the boolean key is on, rc 1 otherwise
+  - `FMUX_CONF` — the config file's absolute path string
+  - `FMUX_CONF_KEYS` — space-separated list of known keys (same order as output)
+  - `fmux_conf_default <key>` — prints the default to stdout. rc 1 if the key is unknown
+  - `fmux_conf_get <key>` — prints the effective value (env > file > default) to stdout. rc 1 if the key is unknown
+  - `fmux_conf_source <key>` — prints one of `env` | `file` | `default` to stdout
+  - `fmux_conf_on <key>` — rc 0 if the boolean key is on, rc 1 otherwise
 
 - [ ] **Step 1: Write a failing test**
 
@@ -200,17 +200,17 @@ git commit -m "test: add pure-bash test harness"
 #!/usr/bin/env bash
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")"
 
 # ① everything defaults when there's no file
-assert_eq "$("$TTBIN" config get rc)"             "on"      "rc defaults to on"
-assert_eq "$("$TTBIN" config get recent_hours)"   "6"       "recent_hours defaults to 6"
-assert_eq "$("$TTBIN" config get key_summon)"     "F"       "key_summon defaults to F"
-assert_eq "$("$TTBIN" config get key_summon_fast)" ""       "key_summon_fast defaults to empty"
-assert_eq "$("$TTBIN" config source rc)"          "default" "source is default"
+assert_eq "$("$FMUXBIN" config get rc)"             "on"      "rc defaults to on"
+assert_eq "$("$FMUXBIN" config get recent_hours)"   "6"       "recent_hours defaults to 6"
+assert_eq "$("$FMUXBIN" config get key_summon)"     "F"       "key_summon defaults to F"
+assert_eq "$("$FMUXBIN" config get key_summon_fast)" ""       "key_summon_fast defaults to empty"
+assert_eq "$("$FMUXBIN" config source rc)"          "default" "source is default"
 
 # ② the file beats the default
 cat > "$CONF" <<'EOF'
@@ -220,14 +220,14 @@ rc=off
 recent_hours=12
 key_summon_fast=C-Left M-b
 EOF
-assert_eq "$("$TTBIN" config get rc)"              "off"          "the file beats the default"
-assert_eq "$("$TTBIN" config get recent_hours)"    "12"           "numeric values are also read"
-assert_eq "$("$TTBIN" config get key_summon_fast)" "C-Left M-b"   "a value with a space (a list) is read"
-assert_eq "$("$TTBIN" config source rc)"           "file"         "source is file"
+assert_eq "$("$FMUXBIN" config get rc)"              "off"          "the file beats the default"
+assert_eq "$("$FMUXBIN" config get recent_hours)"    "12"           "numeric values are also read"
+assert_eq "$("$FMUXBIN" config get key_summon_fast)" "C-Left M-b"   "a value with a space (a list) is read"
+assert_eq "$("$FMUXBIN" config source rc)"           "file"         "source is file"
 
 # ③ env beats the file
-assert_eq "$(TT_RC=on "$TTBIN" config get rc)"     "on"   "env beats the file"
-assert_eq "$(TT_RC=on "$TTBIN" config source rc)"  "env"  "source is env"
+assert_eq "$(FMUX_RC=on "$FMUXBIN" config get rc)"     "on"   "env beats the file"
+assert_eq "$(FMUX_RC=on "$FMUXBIN" config source rc)"  "env"  "source is env"
 
 # ④ broken lines and unknown keys are ignored, the rest survives
 cat > "$CONF" <<'EOF'
@@ -237,16 +237,16 @@ unknown_key=1
 rm -rf $HOME
 accent=200
 EOF
-assert_eq "$("$TTBIN" config get rc)"     "off"  "earlier values survive a broken line"
-assert_eq "$("$TTBIN" config get accent)" "200"  "values after the broken line survive too"
-assert_contains "$("$TTBIN" config get rc 2>&1 >/dev/null)" "ignor" "warns that it was ignored"
+assert_eq "$("$FMUXBIN" config get rc)"     "off"  "earlier values survive a broken line"
+assert_eq "$("$FMUXBIN" config get accent)" "200"  "values after the broken line survive too"
+assert_contains "$("$FMUXBIN" config get rc 2>&1 >/dev/null)" "ignor" "warns that it was ignored"
 # and HOME must still be intact — the spot that would've been wiped if this were sourced
 assert_rc 0 test -d "$HOME"
 
 # ⑤ an unknown key is refused
-assert_rc 1 "$TTBIN" config get nope
+assert_rc 1 "$FMUXBIN" config get nope
 
-tt_test_done
+fmux_test_done
 ```
 
 - [ ] **Step 2: Confirm it fails**
@@ -269,15 +269,15 @@ Expected: `t-01-config-parse.sh` fails entirely (there's no `config` subcommand 
 # every minute. If it were sourced, a single typo'd line from the user would silently
 # kill fleet command entirely from that point on. So it's read only through a
 # whitelist parser — only lines with a known key and a known shape pass through.
-TT_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
-TT_CONF="${TT_CONF_FILE:-$TT_CONF_DIR/config}"
+FMUX_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fleetmux"
+FMUX_CONF="${FMUX_CONF_FILE:-$FMUX_CONF_DIR/config}"
 
 # The known keys. This order is also the order `tt config` lists them in.
-TT_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
+FMUX_CONF_KEYS='rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings key_summon key_summon_fast'
 
 # Defaults. rc 1 for an unknown key — this function also doubles as the "is this a
 # known key" check.
-tt_conf_default() {
+fmux_conf_default() {
     case "${1:-}" in
         rc|snapshot|snapshot_on_exit|boot_restore) printf 'on' ;;
         recent_hours)    printf '6' ;;
@@ -300,17 +300,17 @@ tt_conf_default() {
 }
 
 # key → env var name. bash 3.2 has no ${var^^} → uppercase with tr instead.
-tt_conf_envname() {
-    printf 'TT_%s' "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
+fmux_conf_envname() {
+    printf 'FMUX_%s' "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
 }
 
 # Reads one key from the config file. rc 1 if absent.
 #   Passes only if: the key is on the known list, the line has the shape `key=value`,
 #   and the value consists only of [0-9A-Za-z_./:+ -] (space allowed — key_summon_fast
 #   is a list).
-tt_conf_file_get() {
+fmux_conf_file_get() {
     local want="${1:-}" line k v found=1 out=''
-    [ -f "$TT_CONF" ] || return 1
+    [ -f "$FMUX_CONF" ] || return 1
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in ''|'#'*|' '*'#'*) continue ;; esac
         case "$line" in *=*) ;; *) continue ;; esac
@@ -318,50 +318,50 @@ tt_conf_file_get() {
         v=${line#*=}
         # key shape check
         case "$k" in
-            ''|*[!a-z0-9_]*) printf 'fleetmux: ignoring line in %s — not a key shape: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            ''|*[!a-z0-9_]*) printf 'fleetmux: ignoring line in %s — not a key shape: %s\n' "$FMUX_CONF" "$line" >&2; continue ;;
         esac
         # is it a known key
-        if ! tt_conf_default "$k" >/dev/null 2>&1; then
-            printf 'fleetmux: ignoring line in %s — unknown key: %s\n' "$TT_CONF" "$k" >&2
+        if ! fmux_conf_default "$k" >/dev/null 2>&1; then
+            printf 'fleetmux: ignoring line in %s — unknown key: %s\n' "$FMUX_CONF" "$k" >&2
             continue
         fi
         # value charset check
         case "$v" in
-            *[!0-9A-Za-z_./:+\ -]*) printf 'fleetmux: ignoring line in %s — disallowed character in value: %s\n' "$TT_CONF" "$line" >&2; continue ;;
+            *[!0-9A-Za-z_./:+\ -]*) printf 'fleetmux: ignoring line in %s — disallowed character in value: %s\n' "$FMUX_CONF" "$line" >&2; continue ;;
         esac
         if [ "$k" = "$want" ]; then out=$v; found=0; fi   # the last matching line wins
-    done < "$TT_CONF"
+    done < "$FMUX_CONF"
     [ "$found" = 0 ] || return 1
     printf '%s' "$out"
     return 0
 }
 
 # Effective value. rc 1 for an unknown key.
-tt_conf_get() {
+fmux_conf_get() {
     local k="${1:-}" envn v
-    tt_conf_default "$k" >/dev/null 2>&1 || return 1
-    envn=$(tt_conf_envname "$k")
+    fmux_conf_default "$k" >/dev/null 2>&1 || return 1
+    envn=$(fmux_conf_envname "$k")
     eval "v=\${$envn+set}"
     if [ "${v:-}" = set ]; then eval "printf '%s' \"\$$envn\""; return 0; fi
-    if v=$(tt_conf_file_get "$k" 2>/dev/null); then printf '%s' "$v"; return 0; fi
-    tt_conf_default "$k"
+    if v=$(fmux_conf_file_get "$k" 2>/dev/null); then printf '%s' "$v"; return 0; fi
+    fmux_conf_default "$k"
 }
 
 # Where the value came from — env | file | default
-tt_conf_source() {
+fmux_conf_source() {
     local k="${1:-}" envn v
-    tt_conf_default "$k" >/dev/null 2>&1 || return 1
-    envn=$(tt_conf_envname "$k")
+    fmux_conf_default "$k" >/dev/null 2>&1 || return 1
+    envn=$(fmux_conf_envname "$k")
     eval "v=\${$envn+set}"
     if [ "${v:-}" = set ]; then printf 'env'; return 0; fi
-    if tt_conf_file_get "$k" >/dev/null 2>&1; then printf 'file'; return 0; fi
+    if fmux_conf_file_get "$k" >/dev/null 2>&1; then printf 'file'; return 0; fi
     printf 'default'
 }
 
 # Is a boolean key on. on/1/true/yes count as on (case-insensitive).
-tt_conf_on() {
+fmux_conf_on() {
     local v
-    v=$(tt_conf_get "${1:-}") || return 1
+    v=$(fmux_conf_get "${1:-}") || return 1
     case "$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')" in
         on|1|true|yes) return 0 ;;
         *) return 1 ;;
@@ -378,8 +378,8 @@ Append this to the end of `src/05-config.sh`:
 # config query entry point (minimal). 85-config-cli.sh handles the rest of the subcommands.
 if [ "${1:-}" = "config" ] && { [ "${2:-}" = "get" ] || [ "${2:-}" = "source" ]; }; then
     [ -n "${3:-}" ] || { echo "usage: tt config ${2} <key>" >&2; exit 1; }
-    if [ "$2" = get ]; then tt_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
-    else                    tt_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
+    if [ "$2" = get ]; then fmux_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
+    else                    fmux_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
     fi
     echo
     exit 0
@@ -399,7 +399,7 @@ SRC = src/00-header.sh \
 Add a line to the file-description comment too:
 
 ```
-#   05-config.sh   config — whitelist parser, env>file>default priority, tt_conf_get/on/source
+#   05-config.sh   config — whitelist parser, env>file>default priority, fmux_conf_get/on/source
 ```
 
 - [ ] **Step 6: Confirm the test passes**
@@ -444,11 +444,11 @@ git commit -m "feat: config parser — whitelist-based, env>file>default"
 - Test: `test/t-02-config-cli.sh`
 
 **Interfaces:**
-- Consumes: `tt_conf_get`, `tt_conf_source`, `tt_conf_default`, `TT_CONF_KEYS`, `TT_CONF` (Task 2)
+- Consumes: `fmux_conf_get`, `fmux_conf_source`, `fmux_conf_default`, `FMUX_CONF_KEYS`, `FMUX_CONF` (Task 2)
 - Produces:
-  - `tt_conf_validate <key> <value>` — rc 0 if valid, rc 1 + reason on stderr otherwise
-  - `tt_conf_set <key> <value>` — atomic write. Preserves comments and line order
-  - `tt_conf_unset <key>` — deletes that line
+  - `fmux_conf_validate <key> <value>` — rc 0 if valid, rc 1 + reason on stderr otherwise
+  - `fmux_conf_set <key> <value>` — atomic write. Preserves comments and line order
+  - `fmux_conf_unset <key>` — deletes that line
   - CLI: `tt config` / `tt config get <k>` / `tt config source <k>` / `tt config set <k> <v>` / `tt config unset <k>` / `tt config path`
 
 - [ ] **Step 1: Write a failing test**
@@ -459,51 +459,51 @@ git commit -m "feat: config parser — whitelist-based, env>file>default"
 #!/usr/bin/env bash
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 
 # ① path returns the config file path (even before the file exists)
-assert_eq "$("$TTBIN" config path)" "$CONF" "config path returns the path"
+assert_eq "$("$FMUXBIN" config path)" "$CONF" "config path returns the path"
 
 # ② set creates the file and writes the value
-assert_rc 0 "$TTBIN" config set rc off
-assert_eq "$("$TTBIN" config get rc)" "off" "the value set is read back"
+assert_rc 0 "$FMUXBIN" config set rc off
+assert_eq "$("$FMUXBIN" config get rc)" "off" "the value set is read back"
 assert_rc 0 test -f "$CONF"
 
 # ③ an invalid value is rejected — the file isn't touched either
-assert_rc 1 "$TTBIN" config set rc maybe
-assert_eq "$("$TTBIN" config get rc)" "off" "a rejected set doesn't change the file"
-assert_rc 1 "$TTBIN" config set recent_hours abc
-assert_rc 1 "$TTBIN" config set accent 999
-assert_rc 1 "$TTBIN" config set nope 1
+assert_rc 1 "$FMUXBIN" config set rc maybe
+assert_eq "$("$FMUXBIN" config get rc)" "off" "a rejected set doesn't change the file"
+assert_rc 1 "$FMUXBIN" config set recent_hours abc
+assert_rc 1 "$FMUXBIN" config set accent 999
+assert_rc 1 "$FMUXBIN" config set nope 1
 
 # ④ reserved keys refuse to be remapped
-assert_rc 1 "$TTBIN" config set key_new esc
-assert_rc 1 "$TTBIN" config set key_kill enter
+assert_rc 1 "$FMUXBIN" config set key_new esc
+assert_rc 1 "$FMUXBIN" config set key_kill enter
 
 # ⑤ key conflicts are refused (key_rename is already ctrl-e)
-assert_rc 1 "$TTBIN" config set key_new ctrl-e
-assert_contains "$("$TTBIN" config set key_new ctrl-e 2>&1)" "key_rename" "names the key it collided with"
+assert_rc 1 "$FMUXBIN" config set key_new ctrl-e
+assert_contains "$("$FMUXBIN" config set key_new ctrl-e 2>&1)" "key_rename" "names the key it collided with"
 
 # ⑥ hand-written comments and line order are preserved
 printf '# my comment\nrc=off\naccent=200\n' > "$CONF"
-"$TTBIN" config set accent 100 >/dev/null
+"$FMUXBIN" config set accent 100 >/dev/null
 assert_contains "$(cat "$CONF")" "# my comment" "the comment survives"
 assert_eq "$(head -2 "$CONF" | tail -1)" "rc=off" "line order is preserved"
-assert_eq "$("$TTBIN" config get accent)" "100" "only the value changes"
+assert_eq "$("$FMUXBIN" config get accent)" "100" "only the value changes"
 
 # ⑦ unset reverts to the default
-assert_rc 0 "$TTBIN" config unset accent
-assert_eq "$("$TTBIN" config get accent)" "73" "unset gives back the default"
+assert_rc 0 "$FMUXBIN" config unset accent
+assert_eq "$("$FMUXBIN" config get accent)" "73" "unset gives back the default"
 
 # ⑧ the listing shows both value and source
-out=$("$TTBIN" config)
+out=$("$FMUXBIN" config)
 assert_contains "$out" "rc" "rc is in the listing"
 assert_contains "$out" "file" "the listing shows the source"
 assert_contains "$out" "key_summon" "key_summon is in the listing"
 
-tt_test_done
+fmux_test_done
 ```
 
 - [ ] **Step 2: Confirm it fails**
@@ -522,12 +522,12 @@ Expected: most of `t-02-config-cli.sh` fails.
 # ── config CLI ──────────────────────────────────────────────────────────────
 # Keys that can never be remapped. There must always be one door open that gets
 # you out even if you fumble.
-TT_CONF_RESERVED='esc enter left'
+FMUX_CONF_RESERVED='esc enter left'
 
 # Is this a key name fzf recognizes inside the popup (a whitelist subset).
 # If a name not here is passed through, fzf refuses to launch at all, and the
 # control tower doesn't come up — so this is blocked in advance.
-tt_conf_is_fzf_key() {
+fmux_conf_is_fzf_key() {
     case "${1:-}" in
         ctrl-[a-z]|alt-[a-z0-9]) return 0 ;;
         f[1-9]|f1[0-2]) return 0 ;;
@@ -539,7 +539,7 @@ tt_conf_is_fzf_key() {
 
 # Is this a key name tmux understands. Used for key_summon (single) and
 # key_summon_fast (space-separated list).
-tt_conf_is_tmux_key() {
+fmux_conf_is_tmux_key() {
     case "${1:-}" in
         ''|*[!A-Za-z0-9C\-M\ ]*) return 1 ;;
     esac
@@ -547,9 +547,9 @@ tt_conf_is_tmux_key() {
 }
 
 # Validation. On rc 1, the reason is printed to stderr.
-tt_conf_validate() {
+fmux_conf_validate() {
     local k="${1:-}" v="${2:-}" other ov
-    tt_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; return 1; }
+    fmux_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; return 1; }
     case "$k" in
         rc|snapshot|snapshot_on_exit|boot_restore)
             case "$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')" in
@@ -563,20 +563,20 @@ tt_conf_validate() {
             case "$v" in ''|*[!0-9]*) echo "accent must be an integer 0-255 (got: $v)" >&2; return 1 ;; esac
             [ "$v" -le 255 ] || { echo "accent must be 0-255 (got: $v)" >&2; return 1; } ;;
         key_summon)
-            tt_conf_is_tmux_key "$v" || { echo "key_summon must be a tmux key name (e.g. F, C-Left)" >&2; return 1; } ;;
+            fmux_conf_is_tmux_key "$v" || { echo "key_summon must be a tmux key name (e.g. F, C-Left)" >&2; return 1; } ;;
         key_summon_fast)
             for ov in $v; do
-                tt_conf_is_tmux_key "$ov" || { echo "'$ov' in key_summon_fast is not a tmux key name" >&2; return 1; }
+                fmux_conf_is_tmux_key "$ov" || { echo "'$ov' in key_summon_fast is not a tmux key name" >&2; return 1; }
             done ;;
         key_*)
-            for ov in $TT_CONF_RESERVED; do
+            for ov in $FMUX_CONF_RESERVED; do
                 [ "$v" = "$ov" ] && { echo "$v is reserved and can't be remapped (close/enter must always stay open)" >&2; return 1; }
             done
-            tt_conf_is_fzf_key "$v" || { echo "not a key name fzf understands: $v (e.g. ctrl-n, alt-x, f2)" >&2; return 1; }
+            fmux_conf_is_fzf_key "$v" || { echo "not a key name fzf understands: $v (e.g. ctrl-n, alt-x, f2)" >&2; return 1; }
             # conflict — is this key already used by another action
-            for other in $TT_CONF_KEYS; do
+            for other in $FMUX_CONF_KEYS; do
                 case "$other" in key_summon|key_summon_fast|"$k") continue ;; key_*) ;; *) continue ;; esac
-                if [ "$(tt_conf_get "$other")" = "$v" ]; then
+                if [ "$(fmux_conf_get "$other")" = "$v" ]; then
                     echo "$v is already used by $other" >&2; return 1
                 fi
             done ;;
@@ -586,12 +586,12 @@ tt_conf_validate() {
 
 # Atomic write. Existing lines get only their value replaced; new ones are appended
 # (preserves comments and order).
-tt_conf_write() {
+fmux_conf_write() {
     local k="${1:-}" v="${2:-}" mode="${3:-set}" tmp line seen=0
-    mkdir -p "${TT_CONF%/*}" 2>/dev/null || true
-    tmp="$TT_CONF.tmp.$$"
-    : > "$tmp" || { echo "can't write config file: $TT_CONF" >&2; return 1; }
-    if [ -f "$TT_CONF" ]; then
+    mkdir -p "${FMUX_CONF%/*}" 2>/dev/null || true
+    tmp="$FMUX_CONF.tmp.$$"
+    : > "$tmp" || { echo "can't write config file: $FMUX_CONF" >&2; return 1; }
+    if [ -f "$FMUX_CONF" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
             case "$line" in
                 "$k"=*)
@@ -600,10 +600,10 @@ tt_conf_write() {
                     ;;
                 *) printf '%s\n' "$line" >> "$tmp" ;;
             esac
-        done < "$TT_CONF"
+        done < "$FMUX_CONF"
     fi
     if [ "$mode" = set ] && [ "$seen" = 0 ]; then printf '%s=%s\n' "$k" "$v" >> "$tmp"; fi
-    mv -f "$tmp" "$TT_CONF" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$FMUX_CONF" || { rm -f "$tmp"; return 1; }
     return 0
 }
 
@@ -611,14 +611,14 @@ if [ "${1:-}" = "config" ]; then
     case "${2:-}" in
         ''|list)
             printf '%-18s %-14s %s\n' 'KEY' 'VALUE' 'SOURCE'
-            for k in $TT_CONF_KEYS; do
-                printf '%-18s %-14s %s\n' "$k" "$(tt_conf_get "$k")" "$(tt_conf_source "$k")"
+            for k in $FMUX_CONF_KEYS; do
+                printf '%-18s %-14s %s\n' "$k" "$(fmux_conf_get "$k")" "$(fmux_conf_source "$k")"
             done
             exit 0 ;;
         get|source)
             [ -n "${3:-}" ] || { echo "usage: tt config $2 <key>" >&2; exit 1; }
-            if [ "$2" = get ]; then tt_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
-            else                    tt_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
+            if [ "$2" = get ]; then fmux_conf_get "$3" || { echo "unknown key: $3" >&2; exit 1; }
+            else                    fmux_conf_source "$3" || { echo "unknown key: $3" >&2; exit 1; }
             fi
             echo
             exit 0 ;;
@@ -626,18 +626,18 @@ if [ "${1:-}" = "config" ]; then
             [ -n "${3:-}" ] || { echo "usage: tt config set <key> <value>" >&2; exit 1; }
             shift 2; k=$1; shift
             v="$*"
-            tt_conf_validate "$k" "$v" || exit 1
-            tt_conf_write "$k" "$v" set || exit 1
+            fmux_conf_validate "$k" "$v" || exit 1
+            fmux_conf_write "$k" "$v" set || exit 1
             printf '%s=%s\n' "$k" "$v"
             exit 0 ;;
         unset)
             [ -n "${3:-}" ] || { echo "usage: tt config unset <key>" >&2; exit 1; }
-            tt_conf_default "$3" >/dev/null 2>&1 || { echo "unknown key: $3" >&2; exit 1; }
-            tt_conf_write "$3" '' unset || exit 1
-            printf '%s → default %s\n' "$3" "$(tt_conf_default "$3")"
+            fmux_conf_default "$3" >/dev/null 2>&1 || { echo "unknown key: $3" >&2; exit 1; }
+            fmux_conf_write "$3" '' unset || exit 1
+            printf '%s → default %s\n' "$3" "$(fmux_conf_default "$3")"
             exit 0 ;;
         path)
-            printf '%s\n' "$TT_CONF"; exit 0 ;;
+            printf '%s\n' "$FMUX_CONF"; exit 0 ;;
         *)
             echo "usage: tt config [list|get|source|set|unset|path]" >&2; exit 1 ;;
     esac
@@ -691,7 +691,7 @@ git commit -m "feat: tt config CLI — validation, conflict detection, atomic wr
 - Test: `test/t-03-switches.sh`
 
 **Interfaces:**
-- Consumes: `tt_conf_on` (Task 2)
+- Consumes: `fmux_conf_on` (Task 2)
 - Produces: none (behavior change only)
 
 - [ ] **Step 1: Write a failing test**
@@ -702,7 +702,7 @@ git commit -m "feat: tt config CLI — validation, conflict detection, atomic wr
 #!/usr/bin/env bash
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")"
@@ -710,17 +710,17 @@ mkdir -p "$(dirname "$CONF")"
 # should succeed quietly with switches off, even with no tmux or no server.
 printf 'rc=off\nsnapshot=off\nboot_restore=off\n' > "$CONF"
 
-assert_rc 0 "$TTBIN" --cron
-assert_rc 0 "$TTBIN" --rc
-assert_rc 0 "$TTBIN" --boot-restore --dry
+assert_rc 0 "$FMUXBIN" --cron
+assert_rc 0 "$FMUXBIN" --rc
+assert_rc 0 "$FMUXBIN" --boot-restore --dry
 
-out=$("$TTBIN" --snapshot 2>&1) || true
+out=$("$FMUXBIN" --snapshot 2>&1) || true
 assert_contains "$out" "snapshot=off" "says so when the snapshot switch is off"
 
 # no manifest is written while it's off
-assert_rc 1 test -f "$HOME/.cache/tt/manifest"
+assert_rc 1 test -f "$HOME/.cache/fmux/manifest"
 
-tt_test_done
+fmux_test_done
 ```
 
 - [ ] **Step 2: Confirm it fails**
@@ -742,22 +742,22 @@ First, right after `if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; t
 at the end, so **it skips, it doesn't exit**:
 
 ```bash
-    tt_rc_enabled=1
-    tt_conf_on rc || tt_rc_enabled=0     # even with rc=off, the snapshot below must still run
+    fmux_rc_enabled=1
+    fmux_conf_on rc || fmux_rc_enabled=0     # even with rc=off, the snapshot below must still run
 ```
 
 Then, right before the `while read -r sid name; do` loop (line 84) that runs the rc
 pass, add one line:
 
 ```bash
-    if [ "$tt_rc_enabled" = 1 ]; then
+    if [ "$fmux_rc_enabled" = 1 ]; then
 ```
 
 Close it right where the loop ends (**before** the `--snapshot` call at line 142):
 
 ```bash
     fi
-    tt_conf_on snapshot && { [ -n "$only" ] || "$SELF" --snapshot >/dev/null 2>&1 || true; }
+    fmux_conf_on snapshot && { [ -n "$only" ] || "$SELF" --snapshot >/dev/null 2>&1 || true; }
 ```
 
 > Why wrap with `if` instead of just changing indentation: exiting via `exit 0` would
@@ -767,7 +767,7 @@ Close it right where the loop ends (**before** the `--snapshot` call at line 142
 Insert this right after `if [ "${1:-}" = "--rc"; then` (line 147) in `src/60-rc.sh`:
 
 ```bash
-    tt_conf_on rc || { echo "rc=off — auto-recovery is off (tt config set rc on)"; exit 0; }
+    fmux_conf_on rc || { echo "rc=off — auto-recovery is off (tt config set rc on)"; exit 0; }
 ```
 
 - [ ] **Step 4: Wire the switch into `--snapshot` and `--boot-restore`**
@@ -775,13 +775,13 @@ Insert this right after `if [ "${1:-}" = "--rc"; then` (line 147) in `src/60-rc.
 Right after `if [ "${1:-}" = "--snapshot" ]; then` in `src/70-fleet.sh`:
 
 ```bash
-    tt_conf_on snapshot || { echo "snapshot=off — not recording (tt config set snapshot on)"; exit 0; }
+    fmux_conf_on snapshot || { echo "snapshot=off — not recording (tt config set snapshot on)"; exit 0; }
 ```
 
 Right after `if [ "${1:-}" = "--boot-restore" ]; then` in `src/70-fleet.sh`:
 
 ```bash
-    tt_conf_on boot_restore || { echo "boot_restore=off — skipping boot restore"; exit 0; }
+    fmux_conf_on boot_restore || { echo "boot_restore=off — skipping boot restore"; exit 0; }
 ```
 
 - [ ] **Step 5: Confirm the tests pass**
@@ -818,11 +818,11 @@ git commit -m "feat: make rc, snapshot, boot_restore configurable off switches"
 - Modify: `src/80-view.sh:208` (`21600` → `recent_hours`)
 - Modify: `src/50-hook.sh:168` (`600` → `unseen_minutes`)
 - Modify: `src/80-view.sh:166`, `src/90-main.sh:169` (`38;5;73` → `accent`)
-- Modify: `src/10-util.sh:21` (route `TT_LOG_MAX` through config)
+- Modify: `src/10-util.sh:21` (route `FMUX_LOG_MAX` through config)
 - Test: `test/t-04-tunables.sh`
 
 **Interfaces:**
-- Consumes: `tt_conf_get` (Task 2)
+- Consumes: `fmux_conf_get` (Task 2)
 - Produces: none (behavior change only)
 
 - [ ] **Step 1: Write a failing test**
@@ -833,7 +833,7 @@ git commit -m "feat: make rc, snapshot, boot_restore configurable off switches"
 #!/usr/bin/env bash
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")"
@@ -841,18 +841,18 @@ mkdir -p "$(dirname "$CONF")"
 # changing accent should follow through to the color code in --help output
 # (a surface observable even without tmux)
 printf 'accent=200\n' > "$CONF"
-assert_contains "$("$TTBIN" --help 2>&1)" $'\033[38;5;200m' "accent reflects in --help color"
+assert_contains "$("$FMUXBIN" --help 2>&1)" $'\033[38;5;200m' "accent reflects in --help color"
 
 printf 'accent=73\n' > "$CONF"
-assert_contains "$("$TTBIN" --help 2>&1)" $'\033[38;5;73m' "the default accent still works too"
+assert_contains "$("$FMUXBIN" --help 2>&1)" $'\033[38;5;73m' "the default accent still works too"
 
 # log_max should be readable through config
 printf 'log_max=4096\n' > "$CONF"
-assert_eq "$("$TTBIN" config get log_max)" "4096" "log_max reads from config"
+assert_eq "$("$FMUXBIN" config get log_max)" "4096" "log_max reads from config"
 # backward compat — the env var still wins
-assert_eq "$(TT_LOG_MAX=999 "$TTBIN" config get log_max)" "999" "TT_LOG_MAX env var wins"
+assert_eq "$(FMUX_LOG_MAX=999 "$FMUXBIN" config get log_max)" "999" "FMUX_LOG_MAX env var wins"
 
-tt_test_done
+fmux_test_done
 ```
 
 - [ ] **Step 2: Confirm it fails**
@@ -868,15 +868,15 @@ Expected: the two accent-related lines fail (color is fixed at 73).
 Change `src/90-main.sh:169` to this:
 
 ```bash
-    TT_ACCENT_N=$(tt_conf_get accent)
-    T=$'\033[38;5;'"$TT_ACCENT_N"'m'; D=$'\033[2m'; R=$'\033[0m'; B=$'\033[1m'
+    FMUX_ACCENT_N=$(fmux_conf_get accent)
+    T=$'\033[38;5;'"$FMUX_ACCENT_N"'m'; D=$'\033[2m'; R=$'\033[0m'; B=$'\033[1m'
 ```
 
 In the `printf` at `src/80-view.sh:166`, replace the literal `38;5;73` with a variable.
 Read it once at the start of the `--list` entry point in the same file:
 
 ```bash
-    acc=$(tt_conf_get accent)
+    acc=$(fmux_conf_get accent)
 ```
 
 And change the printf to:
@@ -891,7 +891,7 @@ Near `src/80-view.sh:208`, change the comparison using `21600` like this (comput
 earlier in the same entry point):
 
 ```bash
-    recent_s=$(( $(tt_conf_get recent_hours) * 3600 ))
+    recent_s=$(( $(fmux_conf_get recent_hours) * 3600 ))
 ```
 
 ```bash
@@ -902,26 +902,26 @@ Change the `-le 600` in `src/50-hook.sh:168` like this (compute once, earlier in
 `--status` entry point):
 
 ```bash
-    unseen_s=$(( $(tt_conf_get unseen_minutes) * 60 ))
+    unseen_s=$(( $(fmux_conf_get unseen_minutes) * 60 ))
 ```
 
 ```bash
             [ $(( now - ts )) -le "$unseen_s" ] && out="$out ✓$name"   # status bar honors unseen_minutes only
 ```
 
-- [ ] **Step 5: Route `TT_LOG_MAX` through config**
+- [ ] **Step 5: Route `FMUX_LOG_MAX` through config**
 
 Change `src/10-util.sh:21` to this (the env-var priority is already handled by
-`tt_conf_get`):
+`fmux_conf_get`):
 
 ```bash
-TT_LOG_MAX=$(tt_conf_get log_max)
+FMUX_LOG_MAX=$(fmux_conf_get log_max)
 ```
 
-`TT_LOG_KEEP` isn't a config key, so leave it as is.
+`FMUX_LOG_KEEP` isn't a config key, so leave it as is.
 
 > Note: `10-util.sh` is concatenated after `05-config.sh` (Task 2 put it in that SRC
-> order). Get the order wrong and it dies with `tt_conf_get: command not found`. This
+> order). Get the order wrong and it dies with `fmux_conf_get: command not found`. This
 > isn't caught by `bash -n` before `make verify` — you have to actually run it to
 > confirm.
 
@@ -952,11 +952,11 @@ git commit -m "feat: make thresholds and accent color configurable"
 - Test: `test/t-05-tmux-conf.sh`
 
 **Interfaces:**
-- Consumes: `tt_conf_get`, `tt_conf_on` (Task 2), `SELFQ` (00-header.sh)
+- Consumes: `fmux_conf_get`, `fmux_conf_on` (Task 2), `SELFQ` (00-header.sh)
 - Produces:
-  - `TT_TMUX_CONF` — the snippet file's absolute path (`$TT_CONF_DIR/tmux.conf`)
-  - `tt_tmux_conf_render` — prints the snippet contents to stdout
-  - `tt_tmux_conf_write` — writes the snippet atomically. Reflects immediately via `source-file` if inside tmux
+  - `FMUX_TMUX_CONF` — the snippet file's absolute path (`$FMUX_CONF_DIR/tmux.conf`)
+  - `fmux_tmux_conf_render` — prints the snippet contents to stdout
+  - `fmux_tmux_conf_write` — writes the snippet atomically. Reflects immediately via `source-file` if inside tmux
   - CLI: `tt --tmux-conf` (render to stdout) / `tt --tmux-conf --write` (write the file)
 
 - [ ] **Step 1: Write a failing test**
@@ -967,16 +967,16 @@ git commit -m "feat: make thresholds and accent color configurable"
 #!/usr/bin/env bash
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 SNIP="$XDG_CONFIG_HOME/fleetmux/tmux.conf"
 mkdir -p "$(dirname "$CONF")"
 
 # ① default — only the prefix key is bound, no prefix-less binding
-out=$("$TTBIN" --tmux-conf)
+out=$("$FMUXBIN" --tmux-conf)
 assert_contains "$out" "bind F " "the default summon key F appears as a prefix binding"
-case "$out" in *"bind -n"*) printf '  FAIL default has a prefix-less binding\n'; TT_FAIL=$((TT_FAIL+1)) ;;
+case "$out" in *"bind -n"*) printf '  FAIL default has a prefix-less binding\n'; FMUX_FAIL=$((FMUX_FAIL+1)) ;;
     *) printf '  ok   default has no prefix-less binding\n' ;; esac
 
 # ② the exit-snapshot hooks are included
@@ -986,24 +986,24 @@ assert_contains "$out" "run-shell -b"    "client-detached runs in the background
 
 # ③ setting the fast list produces a prefix-less binding per item
 printf 'key_summon_fast=C-Left M-b\n' > "$CONF"
-out=$("$TTBIN" --tmux-conf)
+out=$("$FMUXBIN" --tmux-conf)
 assert_contains "$out" "bind -n C-Left" "C-Left is bound prefix-less"
 assert_contains "$out" "bind -n M-b"    "M-b is bound prefix-less"
 assert_contains "$out" "unbind -n"      "unbind is also emitted for removed keys"
 
 # ④ snapshot_on_exit=off drops the two hook lines
 printf 'snapshot_on_exit=off\n' > "$CONF"
-out=$("$TTBIN" --tmux-conf)
-case "$out" in *client-detached*) printf '  FAIL hook still present when off\n'; TT_FAIL=$((TT_FAIL+1)) ;;
+out=$("$FMUXBIN" --tmux-conf)
+case "$out" in *client-detached*) printf '  FAIL hook still present when off\n'; FMUX_FAIL=$((FMUX_FAIL+1)) ;;
     *) printf '  ok   snapshot_on_exit=off drops the hook\n' ;; esac
 
 # ⑤ --write creates the file
 printf 'key_summon=T\n' > "$CONF"
-assert_rc 0 "$TTBIN" --tmux-conf --write
+assert_rc 0 "$FMUXBIN" --tmux-conf --write
 assert_rc 0 test -f "$SNIP"
 assert_contains "$(cat "$SNIP")" "bind T " "the written file has the changed key"
 
-tt_test_done
+fmux_test_done
 ```
 
 - [ ] **Step 2: Confirm it fails**
@@ -1023,35 +1023,35 @@ Expected: `t-05` fails entirely (`--tmux-conf` doesn't exist yet).
 # fmux never edits the user's ~/.tmux.conf. It owns one file of its own and
 # only borrows one `source-file` line in the user's config. Delete it and it
 # leaves no trace — same philosophy as the shim.
-TT_TMUX_CONF="$TT_CONF_DIR/tmux.conf"
+FMUX_TMUX_CONF="$FMUX_CONF_DIR/tmux.conf"
 
 # Candidate list for stripping prefix-less bindings left over from a previous
 # version. tmux has no "vanishes automatically once removed from config" model —
 # once a key is bound, it stays bound until the server dies.
-TT_TMUX_UNBIND_CANDIDATES='C-Left M-Left M-b C-Right M-Right'
+FMUX_TMUX_UNBIND_CANDIDATES='C-Left M-Left M-b C-Right M-Right'
 
-tt_tmux_conf_render() {
+fmux_tmux_conf_render() {
     local popup="display-popup -E -w 85% -h 75% -b rounded -T ' tt ' $SELFQ --from '#S'"
     local k fast
 
     printf '# file generated by fleetmux — do not edit by hand. Changed via tt config set …\n'
-    printf '# your own config only needs this one line:  source-file %s\n\n' "$TT_TMUX_CONF"
+    printf '# your own config only needs this one line:  source-file %s\n\n' "$FMUX_TMUX_CONF"
 
     # strip prior-version prefix-less bindings first (fails silently if absent, which is fine)
-    for k in $TT_TMUX_UNBIND_CANDIDATES; do
+    for k in $FMUX_TMUX_UNBIND_CANDIDATES; do
         printf 'unbind -n %s\n' "$k"
     done
     printf '\n'
 
-    k=$(tt_conf_get key_summon)
+    k=$(fmux_conf_get key_summon)
     [ -n "$k" ] && printf 'bind %s %s\n' "$k" "$popup"
 
-    fast=$(tt_conf_get key_summon_fast)
+    fast=$(fmux_conf_get key_summon_fast)
     for k in $fast; do
         printf 'bind -n %s %s\n' "$k" "$popup"
     done
 
-    if tt_conf_on snapshot_on_exit; then
+    if fmux_conf_on snapshot_on_exit; then
         printf '\n# record one more time on exit.\n'
         # client-detached uses -b — a snapshot must never hold up someone who's leaving.
         printf "set-hook -g client-detached 'run-shell -b \"%s --snapshot >/dev/null 2>&1\"'\n" "$SELF"
@@ -1061,23 +1061,23 @@ tt_tmux_conf_render() {
     fi
 }
 
-tt_tmux_conf_write() {
+fmux_tmux_conf_write() {
     local tmp
-    mkdir -p "$TT_CONF_DIR" 2>/dev/null || true
-    tmp="$TT_TMUX_CONF.tmp.$$"
-    tt_tmux_conf_render > "$tmp" || { rm -f "$tmp"; return 1; }
-    mv -f "$tmp" "$TT_TMUX_CONF" || { rm -f "$tmp"; return 1; }
+    mkdir -p "$FMUX_CONF_DIR" 2>/dev/null || true
+    tmp="$FMUX_TMUX_CONF.tmp.$$"
+    fmux_tmux_conf_render > "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$FMUX_TMUX_CONF" || { rm -f "$tmp"; return 1; }
     # if inside tmux, reflect immediately. otherwise, source-file picks it up next tmux start.
-    [ -n "${TMUX:-}" ] && tmux source-file "$TT_TMUX_CONF" 2>/dev/null
+    [ -n "${TMUX:-}" ] && tmux source-file "$FMUX_TMUX_CONF" 2>/dev/null
     return 0
 }
 
 if [ "${1:-}" = "--tmux-conf" ]; then
     if [ "${2:-}" = "--write" ]; then
-        tt_tmux_conf_write || { echo "can't write snippet: $TT_TMUX_CONF" >&2; exit 1; }
-        printf '%s\n' "$TT_TMUX_CONF"
+        fmux_tmux_conf_write || { echo "can't write snippet: $FMUX_TMUX_CONF" >&2; exit 1; }
+        printf '%s\n' "$FMUX_TMUX_CONF"
     else
-        tt_tmux_conf_render
+        fmux_tmux_conf_render
     fi
     exit 0
 fi
@@ -1085,7 +1085,7 @@ fi
 
 - [ ] **Step 4: Make `config set` auto-refresh the snippet**
 
-In the `set`/`unset` branches of `src/85-config-cli.sh`, add this right after `tt_conf_write`
+In the `set`/`unset` branches of `src/85-config-cli.sh`, add this right after `fmux_conf_write`
 succeeds:
 
 ```bash
@@ -1138,8 +1138,8 @@ git commit -m "feat: generate tmux snippet — summon key, fast-key list, exit s
 - Test: `test/t-06-keys.sh`
 
 **Interfaces:**
-- Consumes: `tt_conf_get` (Task 2), `tt_conf_is_fzf_key` (Task 3)
-- Produces: `tt_key <action-key-name>` — prints the validated key name to stdout. If the configured value isn't an fzf key name, reverts to default and warns to stderr
+- Consumes: `fmux_conf_get` (Task 2), `fmux_conf_is_fzf_key` (Task 3)
+- Produces: `fmux_key <action-key-name>` — prints the validated key name to stdout. If the configured value isn't an fzf key name, reverts to default and warns to stderr
 
 - [ ] **Step 1: Write a failing test**
 
@@ -1149,30 +1149,30 @@ git commit -m "feat: generate tmux snippet — summon key, fast-key list, exit s
 #!/usr/bin/env bash
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")"
 
-# tt_key lives inside fmux, so it's observed through a debug entry point --print-keys
-assert_contains "$("$TTBIN" --print-keys)" "new=ctrl-n" "the default key appears"
+# fmux_key lives inside fmux, so it's observed through a debug entry point --print-keys
+assert_contains "$("$FMUXBIN" --print-keys)" "new=ctrl-n" "the default key appears"
 
 printf 'key_new=ctrl-t\n' > "$CONF"
-assert_contains "$("$TTBIN" --print-keys)" "new=ctrl-t" "the configured key is reflected"
+assert_contains "$("$FMUXBIN" --print-keys)" "new=ctrl-t" "the configured key is reflected"
 
 # a hand-broken file — a name that fails validation reverts to default
 printf 'key_new=ctrl-nonexistent\n' > "$CONF"
-out=$("$TTBIN" --print-keys 2>&1)
+out=$("$FMUXBIN" --print-keys 2>&1)
 assert_contains "$out" "new=ctrl-n" "an unknown key name reverts to default"
 assert_contains "$out" "warn"       "warns that it reverted"
 
 # reversion is per-key only — other keys keep their configured values
 printf 'key_new=ctrl-nonexistent\nkey_kill=ctrl-y\n' > "$CONF"
-out=$("$TTBIN" --print-keys 2>&1)
+out=$("$FMUXBIN" --print-keys 2>&1)
 assert_contains "$out" "new=ctrl-n"  "only the broken key reverts"
 assert_contains "$out" "kill=ctrl-y" "the intact key keeps its configured value"
 
-tt_test_done
+fmux_test_done
 ```
 
 - [ ] **Step 2: Confirm it fails**
@@ -1183,7 +1183,7 @@ tt_test_done
 
 Expected: `t-06` fails entirely (`--print-keys` doesn't exist).
 
-- [ ] **Step 3: Write `tt_key` and the debug entry point**
+- [ ] **Step 3: Write `fmux_key` and the debug entry point**
 
 Add this **before** the block in `src/90-main.sh` that invokes fzf:
 
@@ -1191,11 +1191,11 @@ Add this **before** the block in `src/90-main.sh` that invokes fzf:
 # Checks whether the configured key is a name fzf understands, and if not, reverts
 # only that key to default. If this isn't caught here, fzf refuses to launch at all
 # and the control tower doesn't come up — the worst failure this tool can have.
-tt_key() {
+fmux_key() {
     local action="${1:-}" k def
-    def=$(tt_conf_default "key_$action") || return 1
-    k=$(tt_conf_get "key_$action")
-    if tt_conf_is_fzf_key "$k"; then printf '%s' "$k"; return 0; fi
+    def=$(fmux_conf_default "key_$action") || return 1
+    k=$(fmux_conf_get "key_$action")
+    if fmux_conf_is_fzf_key "$k"; then printf '%s' "$k"; return 0; fi
     printf 'fleetmux warning: key_%s value "%s" is not a key name fzf understands — reverting to default %s\n' \
         "$action" "$k" "$def" >&2
     printf '%s' "$def"
@@ -1203,7 +1203,7 @@ tt_key() {
 
 if [ "${1:-}" = "--print-keys" ]; then
     for a in new rename kill reload detach broadcast help settings; do
-        printf '%s=%s\n' "$a" "$(tt_key "$a")"
+        printf '%s=%s\n' "$a" "$(fmux_key "$a")"
     done
     exit 0
 fi
@@ -1215,15 +1215,15 @@ Replace the literal `--bind` values at `src/90-main.sh:246-257` with this (only 
 name becomes a variable, the action string stays as-is):
 
 ```bash
-          --bind "$(tt_key help):execute($SELFQ --help </dev/tty >/dev/tty 2>&1; printf '  press any key to return' >/dev/tty; read -rsn1 </dev/tty)" \
+          --bind "$(fmux_key help):execute($SELFQ --help </dev/tty >/dev/tty 2>&1; printf '  press any key to return' >/dev/tty; read -rsn1 </dev/tty)" \
           --bind 'right:accept' \
           --bind 'left:abort' \
-          --bind "$(tt_key reload):reload($SELFQ --list)" \
-          --bind "$(tt_key detach):execute-silent(tmux detach-client)+abort" \
-          --bind "$(tt_key new):execute($SELFQ --do-new </dev/tty >/dev/tty 2>&1)+clear-query+reload($SELFQ --list)" \
-          --bind "$(tt_key rename):execute($SELFQ --do-rename {1} </dev/tty >/dev/tty 2>&1)+clear-query+reload($SELFQ --list)" \
-          --bind "$(tt_key kill):execute($SELFQ --do-kill {1} </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)" \
-          --bind "$(tt_key broadcast):execute($SELFQ --do-broadcast {+1} </dev/tty >/dev/tty 2>&1)+deselect-all+clear-query") || exit 0
+          --bind "$(fmux_key reload):reload($SELFQ --list)" \
+          --bind "$(fmux_key detach):execute-silent(tmux detach-client)+abort" \
+          --bind "$(fmux_key new):execute($SELFQ --do-new </dev/tty >/dev/tty 2>&1)+clear-query+reload($SELFQ --list)" \
+          --bind "$(fmux_key rename):execute($SELFQ --do-rename {1} </dev/tty >/dev/tty 2>&1)+clear-query+reload($SELFQ --list)" \
+          --bind "$(fmux_key kill):execute($SELFQ --do-kill {1} </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)" \
+          --bind "$(fmux_key broadcast):execute($SELFQ --do-broadcast {+1} </dev/tty >/dev/tty 2>&1)+deselect-all+clear-query") || exit 0
 ```
 
 - [ ] **Step 5: Last-resort defense — retry with default bindings if fzf fails to launch**
@@ -1241,10 +1241,10 @@ in the function definition below:
 #   rc 1   nothing matched
 #   rc 2   fzf failed to launch — usually a bad key name in --bind
 #   rc 130 the user exited with Esc/Ctrl-C
-tt_popup_fzf() {
+fmux_popup_fzf() {
     "$SELF" --list \
     | fzf --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
-          ... (existing options unchanged, only --bind uses the tt_key form from Step 4) ...
+          ... (existing options unchanged, only --bind uses the fmux_key form from Step 4) ...
 }
 ```
 
@@ -1252,27 +1252,27 @@ And change the call site to this:
 
 ```bash
 rc=0
-session=$(tt_popup_fzf) || rc=$?
+session=$(fmux_popup_fzf) || rc=$?
 if [ "$rc" = 2 ]; then
     # fzf never even came up because of a configured key — retry once with defaults.
     # A control tower that fails to come up at all is the worst failure this tool can have.
     printf 'fleetmux warning: couldn'"'"'t launch the popup with the configured keys — launching with defaults (check tt config)\n' >&2
     rc=0
-    session=$(TT_KEYS_DEFAULT=1 tt_popup_fzf) || rc=$?
+    session=$(FMUX_KEYS_DEFAULT=1 fmux_popup_fzf) || rc=$?
 fi
 [ "$rc" = 0 ] || exit 0     # 1 (no match) and 130 (user cancelled) end quietly
 ```
 
-Add a `TT_KEYS_DEFAULT` escape hatch to `tt_key` (two lines added to the function
+Add a `FMUX_KEYS_DEFAULT` escape hatch to `fmux_key` (two lines added to the function
 written in Step 3):
 
 ```bash
-tt_key() {
+fmux_key() {
     local action="${1:-}" k def
-    def=$(tt_conf_default "key_$action") || return 1
-    [ -n "${TT_KEYS_DEFAULT:-}" ] && { printf '%s' "$def"; return 0; }
-    k=$(tt_conf_get "key_$action")
-    if tt_conf_is_fzf_key "$k"; then printf '%s' "$k"; return 0; fi
+    def=$(fmux_conf_default "key_$action") || return 1
+    [ -n "${FMUX_KEYS_DEFAULT:-}" ] && { printf '%s' "$def"; return 0; }
+    k=$(fmux_conf_get "key_$action")
+    if fmux_conf_is_fzf_key "$k"; then printf '%s' "$k"; return 0; fi
     printf 'fleetmux warning: key_%s value "%s" is not a key name fzf understands — reverting to default %s\n' \
         "$action" "$k" "$def" >&2
     printf '%s' "$def"
@@ -1306,11 +1306,11 @@ git commit -m "feat: popup keybinding remap — validation, per-key fallback, re
 - Create: `src/86-config-view.sh`
 - Modify: `Makefile` (insert `src/86-config-view.sh` into SRC after `85-config-cli.sh`, before `87-tmux-conf.sh`)
 - Modify: `src/80-view.sh` (add a `⚙ settings` entry at the very end of `--list` output)
-- Modify: `src/90-main.sh` (add the `tt_key settings` binding; selecting the `⚙` entry opens the settings screen)
+- Modify: `src/90-main.sh` (add the `fmux_key settings` binding; selecting the `⚙` entry opens the settings screen)
 - Test: `test/t-07-config-view.sh`
 
 **Interfaces:**
-- Consumes: `tt_conf_get`, `tt_conf_source`, `TT_CONF_KEYS` (Task 2), `tt_conf_validate` (Task 3)
+- Consumes: `fmux_conf_get`, `fmux_conf_source`, `FMUX_CONF_KEYS` (Task 2), `fmux_conf_validate` (Task 3)
 - Produces:
   - `tt --config-list` — prints one line per setting for the settings screen (`key<TAB>display string`)
   - `tt --config-toggle <key>` — flips and saves if boolean, otherwise rc 2 (a signal that the caller needs to prompt for a value)
@@ -1324,30 +1324,30 @@ git commit -m "feat: popup keybinding remap — validation, per-key fallback, re
 #!/usr/bin/env bash
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 mkdir -p "$(dirname "$CONF")"
 
 # the listing used by the settings screen
-out=$("$TTBIN" --config-list)
+out=$("$FMUXBIN" --config-list)
 assert_contains "$out" "rc" "rc is in the listing"
 assert_contains "$out" "on" "the current value shows"
 
 # boolean toggle
-assert_rc 0 "$TTBIN" --config-toggle rc
-assert_eq "$("$TTBIN" config get rc)" "off" "toggling flips the value"
-assert_rc 0 "$TTBIN" --config-toggle rc
-assert_eq "$("$TTBIN" config get rc)" "on" "toggling again flips it back"
+assert_rc 0 "$FMUXBIN" --config-toggle rc
+assert_eq "$("$FMUXBIN" config get rc)" "off" "toggling flips the value"
+assert_rc 0 "$FMUXBIN" --config-toggle rc
+assert_eq "$("$FMUXBIN" config get rc)" "on" "toggling again flips it back"
 
 # a non-boolean key is rc 2 (a signal that a value needs to be entered)
-assert_rc 2 "$TTBIN" --config-toggle accent
-assert_eq "$("$TTBIN" config get accent)" "73" "the value doesn't change when toggle fails"
+assert_rc 2 "$FMUXBIN" --config-toggle accent
+assert_eq "$("$FMUXBIN" config get accent)" "73" "the value doesn't change when toggle fails"
 
 # a settings entry is appended to the end of --list
-assert_contains "$("$TTBIN" --list 2>/dev/null)" "settings" "a settings entry appears at the end of the session list"
+assert_contains "$("$FMUXBIN" --list 2>/dev/null)" "settings" "a settings entry appears at the end of the session list"
 
-tt_test_done
+fmux_test_done
 ```
 
 - [ ] **Step 2: Confirm it fails**
@@ -1363,11 +1363,11 @@ tt_test_done
 ```bash
 # ── popup settings screen ──────────────────────────────────────────────────
 # What each line carries: key<TAB>pretty display. fzf only forwards the first field.
-tt_conf_is_bool() {
+fmux_conf_is_bool() {
     case "${1:-}" in rc|snapshot|snapshot_on_exit|boot_restore) return 0 ;; *) return 1 ;; esac
 }
 
-tt_conf_desc() {
+fmux_conf_desc() {
     case "${1:-}" in
         rc)               printf 'Remote Control auto-recovery' ;;
         snapshot)         printf 'record the fleet every minute' ;;
@@ -1385,33 +1385,33 @@ tt_conf_desc() {
 }
 
 if [ "${1:-}" = "--config-list" ]; then
-    for k in $TT_CONF_KEYS; do
-        v=$(tt_conf_get "$k")
+    for k in $FMUX_CONF_KEYS; do
+        v=$(fmux_conf_get "$k")
         [ -n "$v" ] || v='(none)'
-        printf '%s\t%-18s %-14s %s\n' "$k" "$k" "$v" "$(tt_conf_desc "$k")"
+        printf '%s\t%-18s %-14s %s\n' "$k" "$k" "$v" "$(fmux_conf_desc "$k")"
     done
     exit 0
 fi
 
 if [ "${1:-}" = "--config-toggle" ]; then
     k="${2:-}"
-    tt_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; exit 1; }
-    tt_conf_is_bool "$k" || exit 2          # not boolean → the caller needs to prompt for a value
-    if tt_conf_on "$k"; then nv=off; else nv=on; fi
+    fmux_conf_default "$k" >/dev/null 2>&1 || { echo "unknown key: $k" >&2; exit 1; }
+    fmux_conf_is_bool "$k" || exit 2          # not boolean → the caller needs to prompt for a value
+    if fmux_conf_on "$k"; then nv=off; else nv=on; fi
     "$SELF" config set "$k" "$nv" >/dev/null || exit 1
     exit 0
 fi
 
 if [ "${1:-}" = "--config-view" ]; then
     while :; do
-        sel=$(tt_conf_view_once) || break
+        sel=$(fmux_conf_view_once) || break
         [ -n "$sel" ] || break
     done
     exit 0
 fi
 
 # One draw, one pick. Enter toggles or prompts for a value, Esc exits.
-tt_conf_view_once() {
+fmux_conf_view_once() {
     local line k
     line=$("$SELF" --config-list | fzf --ansi --delimiter=$'\t' --with-nth=2 \
         --prompt='settings ' --header='Enter to change   Esc to go back' \
@@ -1430,7 +1430,7 @@ tt_conf_view_once() {
 ```
 
 > Functions must be defined before entry points reference them. Move the
-> `tt_conf_view_once` definition **above** the `--config-view` entry point in the code
+> `fmux_conf_view_once` definition **above** the `--config-view` entry point in the code
 > above.
 
 - [ ] **Step 4: Append `⚙ settings` to the end of the session list — and plug three leaks**
@@ -1469,11 +1469,11 @@ if [ -z "$("$SELF" --list | grep -v '^--settings--	' || true)" ]; then
 
 - [ ] **Step 5: Wire up the two entry paths in the popup**
 
-Add one line to the fzf bindings in `src/90-main.sh` (the list moved into `tt_popup_fzf`
+Add one line to the fzf bindings in `src/90-main.sh` (the list moved into `fmux_popup_fzf`
 in Step 4 of the previous task):
 
 ```bash
-          --bind "$(tt_key settings):execute($SELFQ --config-view </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)" \
+          --bind "$(fmux_key settings):execute($SELFQ --config-view </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)" \
 ```
 
 Then, right **after** `session=$(printf '%s\n' "$session" | grep -v '^─' || true)`
@@ -1531,7 +1531,7 @@ the pane and changes it again). The skill follows the same discipline:
 - Test: `test/t-08-skill.sh`
 
 **Interfaces:**
-- Consumes: `tt --list`, `tt --status`, `tt --preview` (existing CLI, unchanged), `~/.cache/tt/hook-*`
+- Consumes: `tt --list`, `tt --status`, `tt --preview` (existing CLI, unchanged), `~/.cache/fmux/hook-*`
 - Produces: a file copied to `~/.claude/skills/fleetmux/SKILL.md` at install time. No code changes
 
 - [ ] **Step 1: Write a failing test**
@@ -1542,7 +1542,7 @@ the pane and changes it again). The skill follows the same discipline:
 #!/usr/bin/env bash
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 cd "$(dirname "$0")/.." || exit 1
 
 S=skills/fleetmux/SKILL.md
@@ -1564,7 +1564,7 @@ done
 assert_contains "$(cat "$S")" "--do-broadcast" "mentions broadcasting"
 assert_contains "$(cat "$S")" "read-only" "states that read-only is the default"
 
-tt_test_done
+fmux_test_done
 ```
 
 - [ ] **Step 2: Confirm it fails**
@@ -1621,11 +1621,11 @@ as evidence, never as the state itself.
 ## Raw state, if you need it
 
 ```bash
-cat ~/.cache/tt/hook-<tmux-session-id>   # "<state> <unix-ts> <agent-pid>"
-cat ~/.cache/tt/manifest                 # name, cwd, kind, command, conversation id
+cat ~/.cache/fmux/hook-<tmux-session-id>   # "<state> <unix-ts> <agent-pid>"
+cat ~/.cache/fmux/manifest                 # name, cwd, kind, command, conversation id
 ```
 
-`~/.cache/tt/hook.log` is an append-only audit trail of every state transition — useful for
+`~/.cache/fmux/hook.log` is an append-only audit trail of every state transition — useful for
 "when did it go quiet?".
 
 ## Many sessions

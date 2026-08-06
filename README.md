@@ -28,7 +28,7 @@ The first version scraped the terminal. It failed three times:
 report its own state, through Claude Code / Codex **hooks**:
 
 ```
-[claude|codex] ──hook event──▶ fmux --hook <state> ──▶ ~/.cache/tt/hook-<session-id>
+[claude|codex] ──hook event──▶ fmux --hook <state> ──▶ ~/.cache/fmux/hook-<session-id>
   UserPromptSubmit → working                              │
   Stop             → idle                                 ▼
   Notification     → waiting (⏸)                   list · status bar · alerts
@@ -40,7 +40,7 @@ means each event knows exactly which tmux session it came from. That mapping is
 free here and painful any other way.
 
 The same payload carries the prompt you just typed, so the `UserPromptSubmit` hook
-also parks it in `~/.cache/tt/last-<session-id>` (4096 bytes, control characters
+also parks it in `~/.cache/fmux/last-<session-id>` (4096 bytes, control characters
 stripped). That file holds **what you typed**, so it is written `0600` regardless of your
 umask — it is the only thing under `~/.cache/tt` that is conversation content rather than
 bookkeeping, and a shared machine has other uids on it. The popup preview puts its first
@@ -53,7 +53,7 @@ no header, and the preview is byte-for-byte what it always was.
 fmux never edits your `~/.claude/settings.json`. It puts a wrapper early in `PATH`:
 
 ```bash
-~/.local/libexec/tt/claude
+~/.local/libexec/fmux/claude
   inside tmux → exec real-claude --settings "$(fmux --hooks-json)" "$@"
   outside     → exec real-claude "$@"          # transparent
 ```
@@ -251,7 +251,7 @@ The file lives at `~/.config/fleetmux/config` (`$XDG_CONFIG_HOME/fleetmux/config
 you set that). It is `key=value`, one per line, `#` for comments. fmux **never
 `source`s it** — it is read by a whitelist parser, so a typo costs you one warning
 line, not the whole cockpit. Precedence is **environment variable > file > default**;
-the env var for `recent_hours` is `TT_RECENT_HOURS`, and so on.
+the env var for `recent_hours` is `FMUX_RECENT_HOURS`, and so on.
 
 ### Keys that are wired
 
@@ -265,7 +265,7 @@ the env var for `recent_hours` is `TT_RECENT_HOURS`, and so on.
 | `recent_hours` | `1` | `--list`: bold (recent) vs dim (quiet) session names |
 | `unseen_minutes` | `10` | `--status`: how long a `✓name` badge stays in the status bar |
 | `accent` | `73` | 256-color number for tool-session names and `--help` headings |
-| `log_max` | `1048576` | rotation threshold for `~/.cache/tt/hook.log` and `boot.log` |
+| `log_max` | `1048576` | rotation threshold for `~/.cache/fmux/hook.log` and `boot.log` |
 | `key_summon` | `F` | the tmux snippet: `bind <key>` (after the prefix) |
 | `key_summon_fast` | *(empty)* | the tmux snippet: `bind -n <key>` for each name in the list |
 
@@ -293,14 +293,14 @@ done, and it does not touch anything outside fmux.
   itself, the once-a-minute snapshot inside `--cron`, the one the popup fires when it
   opens, and the on-exit tmux hooks — i.e. every path that rewrites the manifest
   **wholesale** from the live session list. What keeps going: the hook path. Every
-  agent event (`src/50-hook.sh`) ends in an unconditional `tt_mf_upsert`, outside the
+  agent event (`src/50-hook.sh`) ends in an unconditional `fmux_mf_upsert`, outside the
   switch, so any session with a live claude/codex in it keeps its row — name, cwd,
   command, conversation id — up to date. Measured in `test/t-15-hook.sh`: with
   `snapshot=off` and no manifest at all, one `--hook working` creates one.
   So the switch does not freeze the manifest. What actually goes stale is everything
   the hooks cannot see: tool sessions, sessions renamed or moved from outside, and
   rows for sessions that have since died (nothing prunes them any more).
-- **The 7-day warning is not this switch.** If `~/.cache/tt/boot.log` says
+- **The 7-day warning is not this switch.** If `~/.cache/fmux/boot.log` says
   `manifest is older than 7 days — restoring it anyway`, read it as *nothing has been
   writing the manifest at all* — usually the minute cron line was never installed.
   Restore still runs, and each line is re-validated (live conversation, transcript
@@ -323,7 +323,7 @@ done, and it does not touch anything outside fmux.
   you want the tick to be nearly free, turn `snapshot` off too — and if you want the
   job gone, remove it yourself with `crontab -e`.
 - For a one-off skip of the next boot restore, without changing config:
-  `touch ~/.cache/tt/no-autorestore`.
+  `touch ~/.cache/fmux/no-autorestore`.
 
 ## Agent skill
 
@@ -348,7 +348,7 @@ report their state through the hook wrapper; they just cannot load this document
 - Linux and macOS — but **one feature is Linux-only** (Remote Control auto-repair);
   see [macOS](#macos--what-works-and-what-does-not). Windows only through WSL2, with
   caveats — see below.
-- State lives in `~/.cache/tt/`. Delete it and you lose the manifest with it — the
+- State lives in `~/.cache/fmux/`. Delete it and you lose the manifest with it — the
   restore table — so what you lose is the next reboot's recovery, not just history.
 
 ## Install
@@ -420,11 +420,11 @@ prints this line at the end and leaves it to you. Add it to `~/.bashrc`
 (`~/.bash_profile` for bash on macOS, `~/.zshrc` for zsh), then open a **new** shell:
 
 ```bash
-export PATH="$HOME/.local/libexec/tt:$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/libexec/fmux:$HOME/.local/bin:$PATH"
 ```
 
 Order matters. `~/.local/bin` is where `fmux` and the `tt` symlink land;
-`~/.local/libexec/tt` must come **first**, because that is the hook shim — put it after
+`~/.local/libexec/fmux` must come **first**, because that is the hook shim — put it after
 the real `claude` and the status marks never appear. Skipping this step is why `tt`
 says *command not found*.
 
@@ -454,7 +454,7 @@ promises. The same holds for any run where stdin is not a terminal.
 
 Eight steps (remote mode prints a step 0 in front of them — fetch and verify the
 archive): dependencies → `~/.local/bin/fmux` (+ the `tt` symlink) → hook shims in
-`~/.local/libexec/tt/` → the tmux snippet → summon-key preset → agent skill → cron
+`~/.local/libexec/fmux/` → the tmux snippet → summon-key preset → agent skill → cron
 instructions → summary. It asks before touching `~/.tmux.conf`, copies the file to
 `~/.tmux.conf.fmux-bak` before adding the line, and starts a fresh line if yours did
 not end in one. It **never** edits your crontab; it prints the lines and leaves them
@@ -492,7 +492,7 @@ Mac — each row names the line of code it was read from, so you can check us.
 | popup · list · hook state (`✻` `⏸` `✓`) · broadcast · `fmux config` · summon key · manifest | works | no platform-specific call in the path |
 | `fmux --status` (fleet tally) | works | but nothing wires it for you on any platform — see [Troubleshooting](#troubleshooting) Q4 |
 | `fmux --restore` (by hand) | works | process lookup is `ps -o comm=`, which is POSIX (`src/10-util.sh`) |
-| `fmux --boot-restore` (`@reboot` cron) | **does not work** | its network gate is `timeout 5 getent hosts …` (`src/70-fleet.sh`). macOS has neither `timeout` (GNU coreutils) nor `getent` (glibc), so the check can never pass: it burns the full `TT_BOOT_NETWAIT` (120 s) and then exits 1 with `ABORT: no DNS+tcp/443` in `~/.cache/tt/boot.log`. The cron line ends in `>/dev/null 2>&1`, so it fails **silently**. |
+| `fmux --boot-restore` (`@reboot` cron) | **does not work** | its network gate is `timeout 5 getent hosts …` (`src/70-fleet.sh`). macOS has neither `timeout` (GNU coreutils) nor `getent` (glibc), so the check can never pass: it burns the full `FMUX_BOOT_NETWAIT` (120 s) and then exits 1 with `ABORT: no DNS+tcp/443` in `~/.cache/fmux/boot.log`. The cron line ends in `>/dev/null 2>&1`, so it fails **silently**. |
 | Remote Control auto-repair (`rc`) | **does not work** | `/proc/<pid>/stat` — see below |
 | `bash` itself | works | macOS still ships bash 3.2 as `/bin/bash`, and fmux is written to 3.2 — `test/t-14-bash3.sh` scans the source for bash-4-only syntax so it stays that way |
 
@@ -564,11 +564,11 @@ Put the line the installer printed into your shell startup file and open a **new
 shell:
 
 ```bash
-export PATH="$HOME/.local/libexec/tt:$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/libexec/fmux:$HOME/.local/bin:$PATH"
 ```
 
 `~/.bashrc` on Linux, `~/.bash_profile` for bash on macOS, `~/.zshrc` for zsh. The
-`libexec/tt` half must stay **first** — that is the hook shim, and behind the real
+`libexec/fmux` half must stay **first** — that is the hook shim, and behind the real
 `claude` it never fires. The installer does not edit startup files for you.
 
 ### Q2. The summon key does nothing
@@ -602,12 +602,12 @@ three. If `S-Left` also does nothing, something else in your config already bind
 
 That is the hook path, and it depends entirely on the shim:
 
-- `command -v claude` must print `~/.local/libexec/tt/claude`. If it prints anything
+- `command -v claude` must print `~/.local/libexec/fmux/claude`. If it prints anything
   else, go back to Q1 — the shim is not in front.
 - The shim fires **only inside tmux, and only while `fmux` is on `PATH`** (it checks
   `command -v fmux`). Outside tmux it deliberately passes straight through.
 - If you started that agent *before* installing fmux, it has no hooks. Restart it.
-- The audit log is `~/.cache/tt/hook.log`. It is **rotated**, not append-forever: past
+- The audit log is `~/.cache/fmux/hook.log`. It is **rotated**, not append-forever: past
   `log_max` bytes it is cut back to the last ~2000 lines. A log that starts abruptly is
   rotation, not silence.
 
@@ -638,7 +638,7 @@ On macOS this is *unsupported*, not broken: rc needs `/proc/<pid>/stat`, and
 three — see [macOS](#macos--what-works-and-what-does-not) for the exact table. Run
 `fmux --restore` by hand instead; it does not pass through that gate and works fine.
 
-On Linux, both are real diagnostics. Bring `~/.cache/tt/boot.log`: if the last line is
+On Linux, both are real diagnostics. Bring `~/.cache/fmux/boot.log`: if the last line is
 `ABORT: no DNS+tcp/443`, the machine had no network within 120 s of boot and fmux
 refused to restore on purpose — a fleet of network-less agents would look "already
 running" forever and block your manual retry. If the log says the manifest is

@@ -15,8 +15,8 @@
 #   (The settings key, key_settings, isn't read by any code yet — remapping is
 #    T7's job. Reading that value here would make the screen's "not wired"
 #    marker a lie.)
-TT_KEY_SETTINGS='ctrl-o'
-tt_key_label() {
+FMUX_KEY_SETTINGS='ctrl-o'
+fmux_key_label() {
     case "${1:-}" in
         ctrl-?) printf '^%s' "$(printf %s "${1#ctrl-}" | tr 'a-z' 'A-Z')" ;;
         alt-?)  printf 'M-%s' "${1#alt-}" ;;
@@ -26,7 +26,7 @@ tt_key_label() {
 
 # Input prompt: Esc=cancel (rc 1) · Enter=confirm · backspace supported — hand-rolled
 # because read can't do Esc-to-cancel
-tt_prompt() {
+fmux_prompt() {
     local p="$1" s="" c
     printf '%s' "$p" >/dev/tty
     while IFS= read -rsn1 c </dev/tty; do
@@ -37,7 +37,7 @@ tt_prompt() {
                 # specification", and switching to an integer 1s means every Esc press stalls
                 # for a full second. So on 3.2 we skip the absorb entirely: Esc-to-cancel still
                 # works, arrow keys just get read as cancel too — a small, acceptable cost.
-                [ "$TT_TINY_READ" = 1 ] && { read -rsn2 -t 0.01 _ </dev/tty || true; }
+                [ "$FMUX_TINY_READ" = 1 ] && { read -rsn2 -t 0.01 _ </dev/tty || true; }
                 printf '\n' >/dev/tty; return 1 ;;
             "") printf '\n' >/dev/tty; break ;;
             $'\x7f'|$'\x08')
@@ -51,11 +51,11 @@ tt_prompt() {
 # New session (popup ^N): asks for name + start command — the command runs on top of
 # the shell (the session survives even after the command exits)
 if [ "${1:-}" = "--do-new" ]; then
-    n=$(tt_prompt "new session name (Esc to cancel): ") || exit 0
+    n=$(fmux_prompt "new session name (Esc to cancel): ") || exit 0
     [ -n "$n" ] || exit 0
     printf %s "$n" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
         || { echo "broken bytes in name (IME mid-composition?) — retry in English mode"; sleep 2; exit 0; }
-    cmd=$(tt_prompt "start command (empty = plain shell, e.g. claude): ") || exit 0
+    cmd=$(fmux_prompt "start command (empty = plain shell, e.g. claude): ") || exit 0
     tmux new-session -d -s "$n" || exit 0
     if [ -n "$cmd" ]; then
         tmux send-keys -t "=$n:" -l "$cmd"
@@ -77,20 +77,20 @@ if [ "${1:-}" = "--do-new" ]; then
     npath=$(tmux display-message -p -t "=$n:" '#{pane_current_path}' 2>/dev/null || true)
     case "$cmd" in claude*|codex*) nkind=agent ;; *) nkind=tool ;; esac
     case "$cmd" in '') ncmd="-" ;; *) ncmd="$cmd" ;; esac
-    tt_mf_upsert "$n" "${npath:-$HOME}" "$nkind" "$ncmd" "-" || true
+    fmux_mf_upsert "$n" "${npath:-$HOME}" "$nkind" "$ncmd" "-" || true
     exit 0
 fi
 
 # Broadcast (popup ^B): injects one prompt into all selected sessions in bulk (tool
-# sessions are filtered out by tt_broadcast)
+# sessions are filtered out by fmux_broadcast)
 if [ "${1:-}" = "--do-broadcast" ]; then
     shift
     # ^B passes fzf's {+1} through as-is — if nothing was tagged, there are no arguments.
     [ $# -ge 1 ] || exit 0
     echo "targets: $*"
-    m=$(tt_prompt "broadcast prompt (Esc to cancel): ") || exit 0
+    m=$(fmux_prompt "broadcast prompt (Esc to cancel): ") || exit 0
     [ -n "$m" ] || exit 0
-    tt_broadcast "$m" "$@"
+    fmux_broadcast "$m" "$@"
     sleep 1
     exit 0
 fi
@@ -128,9 +128,9 @@ if [ "${1:-}" = "--preview" ]; then
                #   this spot stale whenever the color is changed elsewhere.
                #   Warnings are swallowed: the preview's stderr would render straight into the
                #   preview window and cover the screen.
-               acc=$(tt_conf_num accent 255 2>/dev/null) || acc=""
-               [ -n "$acc" ] || acc=$(tt_conf_default accent)
-               hdr=$(LC_ALL=C awk -v cols="$cols" -v acc="$acc" "$TT_LASTP_VIEW_AWK" \
+               acc=$(fmux_conf_num accent 255 2>/dev/null) || acc=""
+               [ -n "$acc" ] || acc=$(fmux_conf_default accent)
+               hdr=$(LC_ALL=C awk -v cols="$cols" -v acc="$acc" "$FMUX_LASTP_VIEW_AWK" \
                        "$STATE/last-$psid" 2>/dev/null) || hdr=""
            fi ;;
     esac
@@ -170,12 +170,12 @@ fi
 # inject /rename to sync the title
 if [ "${1:-}" = "--do-rename" ]; then
     old="${2:-}"; [ -n "$old" ] || exit 0
-    n=$(tt_prompt "rename $old to (Esc to cancel): ") || exit 0
+    n=$(fmux_prompt "rename $old to (Esc to cancel): ") || exit 0
     [ -n "$n" ] || exit 0
     printf %s "$n" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
         || { echo "broken bytes in name (IME mid-composition?) — retry in English mode"; sleep 2; exit 0; }
     tmux rename-session -t "=$old" "$n" || exit 0
-    tt_mf_rename "$old" "$n" || true   # the manifest's key follows too — otherwise the old
+    fmux_mf_rename "$old" "$n" || true   # the manifest's key follows too — otherwise the old
                                         # name comes back to life on restore
     # Injecting /rename is claude-only — codex has no such slash command (only when the
     # active pane is exactly claude)
@@ -265,18 +265,18 @@ fi
 if [ "${1:-}" = "--help" ]; then
     # Config is loaded once, as a bare statement (not in a subshell) at the top of the entry
     # point — the contract of 05-config.sh.
-    tt_conf_load
-    acc=$(tt_conf_num accent 255)
+    fmux_conf_load
+    acc=$(fmux_conf_num accent 255)
     T=$'\033[38;5;'"$acc"'m'; D=$'\033[2m'; R=$'\033[0m'; B=$'\033[1m'
     # The first screen speaks from **this machine's current config**. It used to hardcode
     # Option+← and 6h/10 min, but the default config sets no prefix-less key at all
     # (key_summon_fast is empty by default), so right after install a teammate's first-ever
     # screen taught them a key that didn't exist (team rollout gate B7).
-    hsum=$(tt_conf_get key_summon)
-    hfast=$(tt_conf_get key_summon_fast)
-    hrecent=$(tt_conf_num recent_hours)
-    hunseen=$(tt_conf_num unseen_minutes)
-    hkset=$(tt_key_label "$TT_KEY_SETTINGS")   # display form derived from the same value as the popup binding
+    hsum=$(fmux_conf_get key_summon)
+    hfast=$(fmux_conf_get key_summon_fast)
+    hrecent=$(fmux_conf_num recent_hours)
+    hunseen=$(fmux_conf_num unseen_minutes)
+    hkset=$(fmux_key_label "$FMUX_KEY_SETTINGS")   # display form derived from the same value as the popup binding
     # The summon key gets the first line of the screen, on its own.
     #   It is the one thing a reader has to leave with: every other key here only matters once the
     #   popup is already open, and it is the key people fail to find (measured — a teammate had a
@@ -331,7 +331,7 @@ if [ "${1:-}" = "--help" ]; then
     fmux --forget ${D}<name>${R}     drop one session from the manifest
     ${D}--boot-restore waits up to 120s for DNS before restoring, and aborts if it never comes —${R}
     ${D}claudes started without a network die into a shell, then look "already running" forever${R}
-    ${D}touch ~/.cache/tt/no-autorestore to skip it on the next boot; log is ~/.cache/tt/boot.log${R}
+    ${D}touch ~/.cache/fmux/no-autorestore to skip it on the next boot; log is ~/.cache/fmux/boot.log${R}
     ${D}agents come back with claude --resume <id>, never --continue —${R}
     ${D}--continue picks "latest chat in this folder", so same-cwd sessions clone each other${R}
     ${D}resume runs in the conversation's own home dir, which is often not the session cwd${R}
@@ -368,7 +368,7 @@ fi
 CUR=""
 [ "${1:-}" = "--from" ] && CUR="${2:-}"
 [ -z "$CUR" ] && [ -n "${TMUX:-}" ] && CUR=$(tmux display-message -p '#S' 2>/dev/null || true)
-export TT_CUR="$CUR"
+export FMUX_CUR="$CUR"
 
 # Snapshot the fleet every time the popup opens — this removes "commit" as a separate action
 #   (the author's suggestion). Things the hook's auto-recording can't catch (an external
@@ -380,7 +380,7 @@ export TT_CUR="$CUR"
 # Empty-state bootstrap: create one and enter it directly, but **only when there are
 #   no sessions to go to at all** — tt is tmux's front door.
 #   The test is not "does the list have a row" but "**is there at least one session**".
-#   The two differ: 80-view.sh drops TT_CUR (the currently attached session) from the list,
+#   The two differ: 80-view.sh drops FMUX_CUR (the currently attached session) from the list,
 #   so **if there is exactly one live session and it is the one we're attached to**, the
 #   list comes up empty — the path where the "no sessions yet" onboarding prompt shows up
 #   even though a session is alive and well. So if CUR is set (= we were opened from inside
@@ -432,11 +432,11 @@ fi
 #   unreadable. Not discarding it is the same reasoning as line 86 (recommendation N3).
 # The footer prints the settings key — dropping the ⚙ row from the list means discoverability
 #   is repaid here instead. Both the binding and the display text come from the same
-#   TT_KEY_SETTINGS, so changing the key updates the screen too — the two can never drift.
+#   FMUX_KEY_SETTINGS, so changing the key updates the screen too — the two can never drift.
 session=$("$SELF" --list 2>>"$STATE/hook.log" \
     | fzf --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
           --delimiter=$'\t' --with-nth=2 \
-          --footer="? help · $(tt_key_label "$TT_KEY_SETTINGS") settings" \
+          --footer="? help · $(fmux_key_label "$FMUX_KEY_SETTINGS") settings" \
           --bind "?:execute($SELFQ --help --pause </dev/tty >/dev/tty 2>&1)" \
           --color='pointer:#4ec9b0,prompt:#4ec9b0,hl:#56b6c2,hl+:#56b6c2,bg+:#18221e,fg+:regular,footer:#4a5a52,border:#4a5a52,label:#4ec9b0,preview-border:#4a5a52' \
           --preview "$SELFQ --preview {1} {3}" \
@@ -450,7 +450,7 @@ session=$("$SELF" --list 2>>"$STATE/hook.log" \
           --bind "ctrl-e:execute($SELFQ --do-rename {1} </dev/tty >/dev/tty 2>&1)+clear-query+reload($SELFQ --list)" \
           --bind "ctrl-x:execute($SELFQ --do-kill {1} </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)" \
           --bind "ctrl-b:execute($SELFQ --do-broadcast {+1} </dev/tty >/dev/tty 2>&1)+deselect-all+clear-query" \
-          --bind "$TT_KEY_SETTINGS:execute($SELFQ --config-view </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)") || exit 0
+          --bind "$FMUX_KEY_SETTINGS:execute($SELFQ --config-view </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)") || exit 0
 
 session=$(printf '%s\n' "$session" | grep -v '^─' || true)   # treat separator lines as unselectable
 [ -z "$session" ] && exit 0
@@ -467,9 +467,9 @@ if [ "${count:-0}" -ge 2 ]; then
     done <<< "$session"
     [ "${#targets[@]}" -ge 1 ] || exit 0   # (bash 3.2: guard against empty array + set -u)
     printf 'targets: %s\n' "${targets[*]}"
-    m=$(tt_prompt "broadcast prompt (Esc to cancel): ") || exit 0
+    m=$(fmux_prompt "broadcast prompt (Esc to cancel): ") || exit 0
     [ -n "$m" ] || exit 0
-    tt_broadcast "$m" "${targets[@]}"
+    fmux_broadcast "$m" "${targets[@]}"
     sleep 1
     exit 0
 fi

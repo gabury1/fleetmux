@@ -10,17 +10,17 @@ set -u
 
 ORIGPATH="$PATH"
 REPO=$(cd "$(dirname "$0")/.." && pwd -P) || exit 1
-tt_test_sandbox
+fmux_test_sandbox
 
 INST="$REPO/install.sh"
-CALLS="$TTROOT/tmux-calls.log"
-LEAK="$TTROOT/tmux-LEAK.log"
+CALLS="$FMUXROOT/tmux-calls.log"
+LEAK="$FMUXROOT/tmux-LEAK.log"
 
 # ── PATH seal ────────────────────────────────────────────────────────────────
 # The test must not depend on where the real fzf happens to be installed on this machine (the "no
 # fzf" case would answer differently on every machine). So it builds a directory that symlinks
 # only the needed utilities and makes PATH out of that alone.
-SEAL="$TTROOT/seal"
+SEAL="$FMUXROOT/seal"
 mkdir -p "$SEAL"
 for c in sh bash env cat cp mv rm mkdir rmdir chmod ln cmp uname make awk sed grep tr cut \
          date ls dirname basename readlink sort head tail wc id touch find mktemp diff expr; do
@@ -55,11 +55,11 @@ mkstub() {   # $1=directory $2=tmux version ('' means do not create tmux) $3=fzf
     fi
 }
 
-STUB_OK="$TTROOT/stub-ok";     mkstub "$STUB_OK"   3.5a  0.65.2
-STUB_OLD="$TTROOT/stub-old";   mkstub "$STUB_OLD"  2.9a  0.65.2
-STUB_NOFZF="$TTROOT/stub-nf";  mkstub "$STUB_NOFZF" 3.5a ''
-STUB_NOTMUX="$TTROOT/stub-nt"; mkstub "$STUB_NOTMUX" ''   0.65.2
-STUB_OLDFZF="$TTROOT/stub-of"; mkstub "$STUB_OLDFZF" 3.5a 0.44.1
+STUB_OK="$FMUXROOT/stub-ok";     mkstub "$STUB_OK"   3.5a  0.65.2
+STUB_OLD="$FMUXROOT/stub-old";   mkstub "$STUB_OLD"  2.9a  0.65.2
+STUB_NOFZF="$FMUXROOT/stub-nf";  mkstub "$STUB_NOFZF" 3.5a ''
+STUB_NOTMUX="$FMUXROOT/stub-nt"; mkstub "$STUB_NOTMUX" ''   0.65.2
+STUB_OLDFZF="$FMUXROOT/stub-of"; mkstub "$STUB_OLDFZF" 3.5a 0.44.1
 
 OUT=''; RC=0
 run_inst() {   # $1=stub directory, the rest=install.sh args
@@ -73,7 +73,7 @@ ex()  { if [ -e "$1" ]; then printf 'yes'; else printf 'no'; fi; }
 cnt() { grep -c "$2" "$1" 2>/dev/null || true; }
 
 BIN="$HOME/.local/bin"
-LIBX="$HOME/.local/libexec/tt"
+LIBX="$HOME/.local/libexec/fmux"
 SNIP="$XDG_CONFIG_HOME/fleetmux/tmux.conf"
 CONF="$XDG_CONFIG_HOME/fleetmux/config"
 TMUXCONF="$HOME/.tmux.conf"
@@ -126,7 +126,7 @@ assert_eq "$(has "$OUT" 'crontab')" "yes" "says to add crontab entries yourself"
 
 # ── ④ a real install — without a terminal, someone else's file is not changed without consent ──
 printf 'set -g mouse on\n' > "$TMUXCONF"
-cp "$TMUXCONF" "$TTROOT/tmuxconf.before"
+cp "$TMUXCONF" "$FMUXROOT/tmuxconf.before"
 
 run_inst "$STUB_OK"
 assert_eq "$RC" "0" "install is rc 0"
@@ -140,7 +140,7 @@ assert_eq "$(ex "$SNIP")" "yes" "the tmux snippet is created"
 assert_eq "$(has "$(cat "$SNIP")" 'bind F ')" "yes" "the snippet contains the summon key"
 
 # ~/.tmux.conf is not changed without consent — measured byte for byte
-assert_rc 0 cmp -s "$TTROOT/tmuxconf.before" "$TMUXCONF"
+assert_rc 0 cmp -s "$FMUXROOT/tmuxconf.before" "$TMUXCONF"
 assert_eq "$(cnt "$TMUXCONF" 'source-file')" "0" "without consent, no source-file line is added"
 assert_eq "$(has "$OUT" 'not a terminal, so we did not ask')" "yes" "says why it did not add it"
 assert_eq "$(has "$OUT" "source-file $SNIP")" "yes" "shows on screen the line it would add instead"
@@ -162,13 +162,13 @@ assert_eq "$(ex "$HOME/.claude")" "no" "without consent, ~/.claude is left untou
 assert_eq "$(has "$OUT" 'not installed')" "yes" "says it was not installed and how to install it later"
 
 # ── ⑤ second run — idempotent ────────────────────────────────────────────────
-cp -R "$HOME/.local" "$TTROOT/local.before"
+cp -R "$HOME/.local" "$FMUXROOT/local.before"
 run_inst "$STUB_OK"
 assert_eq "$RC" "0" "the second run is also rc 0"
 assert_eq "$(has "$OUT" 'already identical')" "yes" "says what already exists is left as-is"
-assert_rc 0 cmp -s "$TTROOT/local.before/bin/fmux" "$BIN/fmux"
-assert_rc 0 cmp -s "$TTROOT/local.before/libexec/tt/claude" "$LIBX/claude"
-assert_rc 0 cmp -s "$TTROOT/tmuxconf.before" "$TMUXCONF"
+assert_rc 0 cmp -s "$FMUXROOT/local.before/bin/fmux" "$BIN/fmux"
+assert_rc 0 cmp -s "$FMUXROOT/local.before/libexec/fmux/claude" "$LIBX/claude"
+assert_rc 0 cmp -s "$FMUXROOT/tmuxconf.before" "$TMUXCONF"
 assert_eq "$(cnt "$TMUXCONF" 'source-file')" "0" "the second run also does not change someone else's file"
 
 # ── ⑥ --yes is consent — one line only, still one line after two runs ───────
@@ -183,11 +183,11 @@ assert_eq "$(cnt "$TMUXCONF" 'source-file')" "1" "running twice does not create 
 assert_eq "$(has "$OUT" 'already sources this file')" "yes" "says so when it is already there"
 
 # A line that only exists as a comment is treated as absent (a commented line does not run)
-cp "$TMUXCONF" "$TTROOT/tmuxconf.sourced"
+cp "$TMUXCONF" "$FMUXROOT/tmuxconf.sourced"
 printf 'set -g mouse on\n# source-file %s\n' "$SNIP" > "$TMUXCONF"
 run_inst "$STUB_OK" --yes
 assert_eq "$(cnt "$TMUXCONF" '^source-file')" "1" "a comment line does not count as sourcing"
-cp "$TTROOT/tmuxconf.sourced" "$TMUXCONF"
+cp "$FMUXROOT/tmuxconf.sourced" "$TMUXCONF"
 
 # ── ⑥-b someone else's file that does not end in a newline (gate B1) ────────
 # Using `>>` alone **corrupts the user's last line** — and it is still reported as rc 0 "success".
@@ -195,7 +195,7 @@ cp "$TTROOT/tmuxconf.sourced" "$TMUXCONF"
 # saves a file).
 rm -f "$TMUXCONF.fmux-bak"
 printf 'set -g mouse on\nset -g status-position top' > "$TMUXCONF"     # ← no newline (deliberate)
-cp "$TMUXCONF" "$TTROOT/tmuxconf.nonl"
+cp "$TMUXCONF" "$FMUXROOT/tmuxconf.nonl"
 assert_eq "$(tail -c 1 "$TMUXCONF" | od -An -c | tr -d ' \n')" "p" "repro: the last byte is not a newline"
 
 run_inst "$STUB_OK" --yes
@@ -206,7 +206,7 @@ assert_eq "$(cnt "$TMUXCONF" 'topsource-file')" "0" "the two lines were not glue
 # A backup exists, and its content is byte-identical to the pre-edit original — it must be
 # possible to undo this
 assert_eq "$(ex "$TMUXCONF.fmux-bak")" "yes" "leaves a backup before editing"
-assert_rc 0 cmp -s "$TTROOT/tmuxconf.nonl" "$TMUXCONF.fmux-bak"
+assert_rc 0 cmp -s "$FMUXROOT/tmuxconf.nonl" "$TMUXCONF.fmux-bak"
 assert_eq "$(has "$OUT" "$TMUXCONF.fmux-bak")" "yes" "tells the person the backup path"
 assert_eq "$(has "$OUT" 'does not end in a newline')" "yes" "says why it added the newline first"
 
@@ -250,7 +250,7 @@ printf 'source-file %s.other\n' "$SNIP" > "$TMUXCONF"
 run_inst "$STUB_OK" --yes
 assert_eq "$(cnt "$TMUXCONF" 'source-file')" "2" "a line sourcing a different path is not counted as ours"
 
-cp "$TTROOT/tmuxconf.sourced" "$TMUXCONF"
+cp "$FMUXROOT/tmuxconf.sourced" "$TMUXCONF"
 
 # ── ⑦ summon key preset ──────────────────────────────────────────────────────
 run_inst "$STUB_OK" --yes --preset mac
@@ -336,7 +336,7 @@ assert_eq "$(has "$OUT" './install.sh --yes --preset shift')" "yes" "also says h
 # ── ⑦-e warns before overwriting a line that already uses that key ──────────
 # Does not ask a live tmux server — reads only config files. A dotfile that binds S-Left/S-Right
 # to window switching being common is exactly why this detection exists.
-cp "$TMUXCONF" "$TTROOT/tmuxconf.noclash"
+cp "$TMUXCONF" "$FMUXROOT/tmuxconf.noclash"
 printf 'bind -n S-Left previous-window\n' >> "$TMUXCONF"
 run_inst "$STUB_OK" --dry-run
 assert_eq "$(has "$OUT" 'found a line in your config already binding that key')" "yes" "warns before overwriting a clash"
@@ -344,11 +344,11 @@ assert_eq "$(has "$OUT" 'bind -n S-Left previous-window')" "yes" "shows that lin
 assert_eq "$(has "$OUT" "$TMUXCONF:")" "yes" "says which file and which line number"
 # Does not overreach onto someone else's other key — a line binding S-Right is not a clash with
 # the S-Left suggestion.
-cp "$TTROOT/tmuxconf.noclash" "$TMUXCONF"
+cp "$FMUXROOT/tmuxconf.noclash" "$TMUXCONF"
 printf 'bind -n S-Right next-window\n' >> "$TMUXCONF"
 run_inst "$STUB_OK" --dry-run
 assert_eq "$(has "$OUT" 'found a line in your config already binding that key')" "no" "a non-overlapping line is not called a clash"
-cp "$TTROOT/tmuxconf.noclash" "$TMUXCONF"
+cp "$FMUXROOT/tmuxconf.noclash" "$TMUXCONF"
 
 # ── ⑦-f the suggestion and a decline where it can ask (a real pty) ──────────
 # ASK_TTY is `[ -t 0 ]`. A pipe cannot hit that branch, so this spins up a pty.
@@ -394,19 +394,19 @@ fi
 run_inst "$STUB_OK" --yes --preset safe
 
 # ── ⑧ --dry-run after install still changes nothing ─────────────────────────
-cp -R "$HOME/.local" "$TTROOT/local.dry"
-cp "$SNIP" "$TTROOT/snip.dry"; cp "$CONF" "$TTROOT/conf.dry"; cp "$TMUXCONF" "$TTROOT/tmuxconf.dry"
+cp -R "$HOME/.local" "$FMUXROOT/local.dry"
+cp "$SNIP" "$FMUXROOT/snip.dry"; cp "$CONF" "$FMUXROOT/conf.dry"; cp "$TMUXCONF" "$FMUXROOT/tmuxconf.dry"
 run_inst "$STUB_OK" --dry-run --yes --preset mac
 assert_eq "$RC" "0" "dry-run after install is also rc 0"
-assert_rc 0 cmp -s "$TTROOT/snip.dry" "$SNIP"
-assert_rc 0 cmp -s "$TTROOT/conf.dry" "$CONF"
-assert_rc 0 cmp -s "$TTROOT/tmuxconf.dry" "$TMUXCONF"
-assert_rc 0 cmp -s "$TTROOT/local.dry/bin/fmux" "$BIN/fmux"
+assert_rc 0 cmp -s "$FMUXROOT/snip.dry" "$SNIP"
+assert_rc 0 cmp -s "$FMUXROOT/conf.dry" "$CONF"
+assert_rc 0 cmp -s "$FMUXROOT/tmuxconf.dry" "$TMUXCONF"
+assert_rc 0 cmp -s "$FMUXROOT/local.dry/bin/fmux" "$BIN/fmux"
 assert_eq "$(has "$OUT" 'config set key_summon_fast')" "yes" "dry-run only talks about the value it would change"
 
 # ── ⑨ skill — if present, asks and installs ─────────────────────────────────
 # Clones the repo and drops a skill file in (the real repo is untouched).
-REPO2="$TTROOT/repo2"
+REPO2="$FMUXROOT/repo2"
 mkdir -p "$REPO2/skills/fleetmux"
 cp "$INST" "$REPO2/install.sh"
 cp "$REPO/Makefile" "$REPO2/Makefile"
@@ -446,13 +446,13 @@ assert_eq "$(has "$OUT" "comes before the shim")" "no" "does not warn when the s
 rm -f "$STUB_OK/claude"
 
 # ── ⑪ someone else's tt is not overwritten ───────────────────────────────────
-ALT="$TTROOT/alt"
+ALT="$FMUXROOT/alt"
 mkdir -p "$ALT/bin"
 printf '#!/bin/sh\necho not our tt\n' > "$ALT/bin/tt"; chmod +x "$ALT/bin/tt"
-cp "$ALT/bin/tt" "$TTROOT/tt.before"
+cp "$ALT/bin/tt" "$FMUXROOT/tt.before"
 run_inst "$STUB_OK" --prefix "$ALT" --preset safe
 assert_eq "$RC" "0" "the install finishes even with someone else's tt present"
-assert_rc 0 cmp -s "$TTROOT/tt.before" "$ALT/bin/tt"
+assert_rc 0 cmp -s "$FMUXROOT/tt.before" "$ALT/bin/tt"
 assert_eq "$(has "$OUT" 'is not ours')" "yes" "says it did not touch someone else's tt"
 
 # ── ⑪-b someone else's tt **symlink** is not overwritten either (gate I2) ───
@@ -462,7 +462,7 @@ assert_eq "$(has "$OUT" 'is not ours')" "yes" "says it did not touch someone els
 # nowhere = unrecoverable. Both paths get walked here: with make present, `make install` hangs it
 # (so the Makefile needs the same guard too), and without make, install.sh hangs it by its own
 # hand.
-ALT2="$TTROOT/alt2"
+ALT2="$FMUXROOT/alt2"
 mkdir -p "$ALT2/bin" "$ALT2/theirs"
 printf '#!/bin/sh\necho not our tool\n' > "$ALT2/theirs/mytool"; chmod +x "$ALT2/theirs/mytool"
 ln -sf "$ALT2/theirs/mytool" "$ALT2/bin/tt"
@@ -479,13 +479,13 @@ assert_eq "$(ex "$ALT2/bin/fmux")" "yes" "fmux itself still gets installed anywa
 
 # The path without make (HAVE_MAKE=0) must land on the same judgment — here install.sh does the
 # ln itself.
-NOMAKE="$TTROOT/nomake"
+NOMAKE="$FMUXROOT/nomake"
 mkdir -p "$NOMAKE"
 for c in sh bash env cat cp mv rm mkdir chmod ln cmp uname awk sed grep tr cut date ls \
          dirname basename readlink sort head tail wc id touch find mktemp diff expr; do
     [ -e "$SEAL/$c" ] && ln -sf "$SEAL/$c" "$NOMAKE/$c"
 done
-ALT3="$TTROOT/alt3"
+ALT3="$FMUXROOT/alt3"
 mkdir -p "$ALT3/bin" "$ALT3/theirs"
 printf '#!/bin/sh\necho not our tool\n' > "$ALT3/theirs/mytool"; chmod +x "$ALT3/theirs/mytool"
 ln -sf "$ALT3/theirs/mytool" "$ALT3/bin/tt"
@@ -497,18 +497,18 @@ assert_eq "$(readlink "$ALT3/bin/tt")" "$ALT3/theirs/mytool" "the no-make path a
 
 # The other side — a symlink we hung gets re-hung the same way on rerun (idempotent). Otherwise
 # hook injection dies wholesale from the second install onward.
-ALT4="$TTROOT/alt4"
+ALT4="$FMUXROOT/alt4"
 run_inst "$STUB_OK" --prefix "$ALT4" --preset safe
 assert_eq "$(readlink "$ALT4/bin/tt")" "fmux" "hangs our symlink in an empty spot"
 run_inst "$STUB_OK" --prefix "$ALT4" --preset safe
 assert_eq "$(readlink "$ALT4/bin/tt")" "fmux" "a rerun leaves our symlink as-is"
 assert_eq "$(has "$OUT" 'is not ours')" "no" "does not mistake our own for someone else's"
 # A dangling symlink belonging to someone else is not 'empty' either — -e is false but -L is true.
-ALT5="$TTROOT/alt5"
+ALT5="$FMUXROOT/alt5"
 mkdir -p "$ALT5/bin"
-ln -sf "$TTROOT/does-not-exist" "$ALT5/bin/tt"
+ln -sf "$FMUXROOT/does-not-exist" "$ALT5/bin/tt"
 run_inst "$STUB_OK" --prefix "$ALT5" --preset safe
-assert_eq "$(readlink "$ALT5/bin/tt")" "$TTROOT/does-not-exist" "does not swap out a dangling symlink belonging to someone else either"
+assert_eq "$(readlink "$ALT5/bin/tt")" "$FMUXROOT/does-not-exist" "does not swap out a dangling symlink belonging to someone else either"
 assert_eq "$(has "$OUT" 'is not ours')" "yes" "treats a dangling symlink as someone else's too"
 
 # --dry-run has to say the same thing (so there is no surprise after the fact)
@@ -517,7 +517,7 @@ assert_eq "$(has "$OUT" 'is not ours')" "yes" "dry-run warns ahead of time"
 assert_eq "$(readlink "$ALT2/bin/tt")" "$ALT2/theirs/mytool" "dry-run naturally changes nothing"
 
 # ── ⑫ an unusable prefix — says how far it got and stops ────────────────────
-NOPREFIX="$TTROOT/notadir"
+NOPREFIX="$FMUXROOT/notadir"
 : > "$NOPREFIX"
 run_inst "$STUB_OK" --prefix "$NOPREFIX"
 assert_eq "$RC" "1" "halts when the location cannot be installed to"
@@ -528,8 +528,8 @@ assert_rc 0 test -f "$NOPREFIX"
 # Only here does it fill in TMUX to create "installing from inside tmux." The stub logs to a log
 # file dedicated to this section so it does not mix with ⑬'s seal check (source-file is not -V,
 # so it would be a LEAK if it were STUB_OK).
-TIN="$TTROOT/stub-tmuxin"
-TIN_LOG="$TTROOT/tmuxin-calls.log"
+TIN="$FMUXROOT/stub-tmuxin"
+TIN_LOG="$FMUXROOT/tmuxin-calls.log"
 mkdir -p "$TIN"
 {
     printf '#!/usr/bin/env bash\n'
@@ -569,7 +569,7 @@ rm -rf "$HOME/.claude"
 mkdir -p "$HOME/.claude/skills/fleetmux"
 printf 'my skill\n' > "$HOME/.claude/skills/fleetmux/SKILL.md"
 printf 'my note\n'  > "$HOME/.claude/skills/fleetmux/mine.md"
-cp -R "$HOME/.claude/skills/fleetmux" "$TTROOT/skill.before"
+cp -R "$HOME/.claude/skills/fleetmux" "$FMUXROOT/skill.before"
 RC=0
 OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" --yes < /dev/null 2>&1) || RC=$?
 assert_eq "$(ex "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md")" "no" "a repo with no skill makes no backup either"
@@ -578,8 +578,8 @@ printf -- '---\nname: fleetmux\n---\ntest skill\n' > "$REPO2/skills/fleetmux/SKI
 RC=0
 OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" --yes < /dev/null 2>&1) || RC=$?
 assert_eq "$RC" "0" "rc 0 even when the skill already exists"
-assert_rc 0 cmp -s "$TTROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md"
-assert_rc 0 cmp -s "$TTROOT/skill.before/mine.md"  "$HOME/.claude/skills/fleetmux.fmux-bak/mine.md"
+assert_rc 0 cmp -s "$FMUXROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md"
+assert_rc 0 cmp -s "$FMUXROOT/skill.before/mine.md"  "$HOME/.claude/skills/fleetmux.fmux-bak/mine.md"
 assert_eq "$(has "$OUT" 'fmux-bak')" "yes" "tells the person the backup path"
 assert_contains "$(cat "$HOME/.claude/skills/fleetmux/SKILL.md")" "test skill" "installs ours after that"
 
@@ -593,8 +593,8 @@ assert_contains "$(cat "$HOME/.claude/skills/fleetmux/SKILL.md")" "test skill" "
 RC=0
 OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" --yes < /dev/null 2>&1) || RC=$?
 assert_eq "$RC" "0" "a rerun is also rc 0"
-assert_rc 0 cmp -s "$TTROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md"
-assert_rc 0 cmp -s "$TTROOT/skill.before/mine.md"  "$HOME/.claude/skills/fleetmux.fmux-bak/mine.md"
+assert_rc 0 cmp -s "$FMUXROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md"
+assert_rc 0 cmp -s "$FMUXROOT/skill.before/mine.md"  "$HOME/.claude/skills/fleetmux.fmux-bak/mine.md"
 assert_eq "$(has "$(cat "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md")" 'test skill')" "no" \
     "★the backup did not turn into our file — the user's original stays intact"
 assert_eq "$(has "$OUT" 'nothing to back up')" "yes" "when the content is already identical, no backup is made at all"
@@ -605,7 +605,7 @@ printf 'a line I edited later\n' >> "$HOME/.claude/skills/fleetmux/SKILL.md"
 RC=0
 OUT=$(PATH="$STUB_OK:$SEAL" bash "$REPO2/install.sh" --yes < /dev/null 2>&1) || RC=$?
 assert_eq "$RC" "0" "a rerun with changed content is also rc 0"
-assert_rc 0 cmp -s "$TTROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md"
+assert_rc 0 cmp -s "$FMUXROOT/skill.before/SKILL.md" "$HOME/.claude/skills/fleetmux.fmux-bak/SKILL.md"
 assert_eq "$(has "$OUT" 'your original from the first run')" "yes" "recognizes the existing backup as the original and does not overwrite it"
 assert_eq "$(ls -d "$HOME/.claude/skills/fleetmux.fmux-bak."* 2>/dev/null | wc -l | tr -d ' ')" "1" \
     "this run's change gets a timestamp and is saved alongside"
@@ -625,12 +625,12 @@ assert_eq "$(cat "$HOME"/.claude/skills/fleetmux.fmux-bak.*/SKILL.md | grep -c '
 # exactly the `curl | bash` shape — and requires that a question is actually printed.
 # Skipped where no pty tool exists; the no-tty path below is measured either way.
 if script -qec true /dev/null > /dev/null 2>&1; then
-    PTYOUT="$TTROOT/pty.out"
-    PTYHOME="$TTROOT/ptyhome"; mkdir -p "$PTYHOME"
-    printf 'n\nn\nn\nn\nn\nn\n' > "$TTROOT/answers"
+    PTYOUT="$FMUXROOT/pty.out"
+    PTYHOME="$FMUXROOT/ptyhome"; mkdir -p "$PTYHOME"
+    printf 'n\nn\nn\nn\nn\nn\n' > "$FMUXROOT/answers"
     FMUX_TTY='' script -qec \
         "HOME=$PTYHOME FMUX_TTY= bash -c 'cat $REPO/install.sh | bash -s -- --prefix $PTYHOME/.local --preset safe'" \
-        /dev/null < "$TTROOT/answers" > "$PTYOUT" 2>&1 || true
+        /dev/null < "$FMUXROOT/answers" > "$PTYOUT" 2>&1 || true
     assert_eq "$(cnt "$PTYOUT" '\[y/N\]')" "2" \
         "★piped into bash under a terminal, it still asks (the README one-liner is this exact shape)"
     assert_eq "$(cnt "$PTYOUT" 'not a terminal, so we did not ask')" "0" \
@@ -642,7 +642,7 @@ fi
 # And the genuine no-one-is-here case must keep answering itself "no". FMUX_TTY=off forces it
 # (the sandbox exports it), because a suite run from a terminal could otherwise open /dev/tty
 # and behave differently depending on whether a human was watching.
-NOTTYHOME="$TTROOT/nottyhome"; mkdir -p "$NOTTYHOME"
+NOTTYHOME="$FMUXROOT/nottyhome"; mkdir -p "$NOTTYHOME"
 OUT=$(HOME="$NOTTYHOME" FMUX_TTY=off bash "$REPO/install.sh" \
         --prefix "$NOTTYHOME/.local" --preset safe < /dev/null 2>&1) || true
 assert_eq "$(has "$OUT" 'not a terminal, so we did not ask')" "yes" \
@@ -654,4 +654,4 @@ assert_eq "$(ex "$LEAK")" "no" "the fake tmux/fzf was never called with anything
 assert_eq "$(cnt "$CALLS" '^tmux -V$')" "$(cnt "$CALLS" '^tmux ')" "every tmux call was -V"
 assert_rc 0 test -s "$CALLS"
 
-tt_test_done
+fmux_test_done

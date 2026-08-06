@@ -16,7 +16,7 @@
 # ⛔ This test never calls tmux. Every screen is a real capture file under test/fixtures/screen.
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 
 TESTDIR=$(cd "$(dirname "$0")" && pwd) || exit 1
 FIX="$TESTDIR/fixtures/screen"
@@ -24,17 +24,17 @@ FIX="$TESTDIR/fixtures/screen"
 # ── Pull only the verdict logic out of the build artifact ────────────────────
 # Sourcing bin/fmux wholesale runs all the way to the entry point (the fzf popup). Extract just the two
 # pieces we need and eval them.
-eval "$(sed -n '/^WORKING_PAT=/{p;q;}' "$TTBIN")"
-eval "$(sed -n '/^WAITING_PAT=/{p;q;}' "$TTBIN")"
-eval "$(awk '/^tt_working\(\) \{/ { f = 1 } f { print } f && /^\}/ { exit }' "$TTBIN")"
+eval "$(sed -n '/^WORKING_PAT=/{p;q;}' "$FMUXBIN")"
+eval "$(sed -n '/^WAITING_PAT=/{p;q;}' "$FMUXBIN")"
+eval "$(awk '/^fmux_working\(\) \{/ { f = 1 } f { print } f && /^\}/ { exit }' "$FMUXBIN")"
 
 assert_rc 0 test -n "${WORKING_PAT:-}"
-TT_RUN=$((TT_RUN + 1))
-if [ "$(type -t tt_working 2>/dev/null)" = function ]; then
-    printf '  ok   extracted tt_working from bin/fmux\n'
+FMUX_RUN=$((FMUX_RUN + 1))
+if [ "$(type -t fmux_working 2>/dev/null)" = function ]; then
+    printf '  ok   extracted fmux_working from bin/fmux\n'
 else
-    TT_FAIL=$((TT_FAIL + 1))
-    printf '  FAIL failed to extract tt_working from bin/fmux — the extraction awk cannot follow the function shape\n'
+    FMUX_FAIL=$((FMUX_FAIL + 1))
+    printf '  FAIL failed to extract fmux_working from bin/fmux — the extraction awk cannot follow the function shape\n'
 fi
 
 # ── Structural guards ──────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ for bad in '\d' '\s' '\b' '\w' '(?:' '(?='; do
 done
 
 # ── Case-verdict helper ────────────────────────────────────────────────────
-# tt_working takes a whole screen blob, but the actual verdict is a grep against just one line of it.
+# fmux_working takes a whole screen blob, but the actual verdict is a grep against just one line of it.
 # Feed that one line directly to measure each alternative's responsibility clearly (the full-screen
 # path is measured separately in ③ below).
 pat_case() {                 # pat_case <MATCH|no> <line> <description>
@@ -159,7 +159,7 @@ case "$WORKING_PAT" in
 esac
 assert_eq "$got" "no" '★never puts the hour(h)-unit for-gate back into the pattern (indistinguishable from a completion line)'
 
-# ── ③ real-capture regression — the full tt_working path ────────────────────
+# ── ③ real-capture regression — the full fmux_working path ────────────────────
 # Here it is fed the whole screen blob, not a single line. This is the only place that also measures
 # the line-picking awk (skipping separators and blank lines). The captures are the 2026-08-05
 # 01:38-01:41 real originals, **structure-preserving anonymized** — the lines the verdict uses
@@ -172,7 +172,7 @@ for f in "$FIX"/*.screen; do
         WORKING-*) want=0; label='a working capture must match' ;;
         *)         want=1; label='an idle capture must not match' ;;
     esac
-    got=0; tt_working < "$f" || got=$?
+    got=0; fmux_working < "$f" || got=$?
     assert_eq "$got" "$want" "$label — $base"
 done
 # Nail down the capture count too — even if fixtures were wiped out wholesale, the loop above would
@@ -236,4 +236,4 @@ for f in "$FIX"/*.screen; do
     assert_eq "$got" no "a non-waiting capture does not match WAITING_PAT — $base"
 done
 
-tt_test_done
+fmux_test_done

@@ -17,7 +17,7 @@
 # be written, the next person makes the same mistake without knowing why.
 set -u
 . "$(dirname "$0")/lib.sh"
-tt_test_sandbox
+fmux_test_sandbox
 cd "$(dirname "$0")/.." || exit 1
 
 # Forbidden syntax -> human-readable name. All three exist for the same reason: "dies on 3.2."
@@ -54,7 +54,7 @@ done
 # ── self-test: is the net actually catching anything ───────────────────────────────────────
 # If one typo in a regex turns it into a net that catches nothing, this file stays green
 # forever. So we deliberately manufacture "something that should get caught" and catch it once.
-BAIT="$TTROOT/bait.sh"
+BAIT="$FMUXROOT/bait.sh"
 cat > "$BAIT" <<'EOF'
 # this line is a comment and must NOT be caught: ${v,,} ${v^^} declare -A mapfile
 x=${payload,,}
@@ -84,7 +84,7 @@ assert_eq "$(scan "$BAIT" "$PAT_LOWER" | grep -c 'this line is a comment' || tru
 # Only the text *inside* execute(...)/execute-silent(...)/reload(...) is the bind body. The rest
 # of the line is our own script and may use whatever bash syntax it likes — matching the whole
 # line would flag the `) || exit 0` that closes the command substitution.
-BINDS=$(grep -a -o -E '(execute|execute-silent|reload)\([^)]*\)' "$TTBIN" || true)
+BINDS=$(grep -a -o -E '(execute|execute-silent|reload)\([^)]*\)' "$FMUXBIN" || true)
 assert_rc 0 test -n "$BINDS"
 assert_rc 0 test "$(printf '%s\n' "$BINDS" | grep -c .)" -ge 6
 
@@ -105,7 +105,7 @@ assert_contains "$BINDS" '--help --pause' "the ? binding delegates the wait to f
 # EOF/exit 0/fi), the suite stayed green, and ? kept flashing on a real machine. So measure that
 # the pause sits **inside the --help branch**: take the file from the --help dispatch onward, cut
 # it at that branch's `exit 0`, and require the pause to be in what is left.
-HELPBLK=$(awk '/^if \[ "\$\{1:-\}" = "--help" \]; then/ { f = 1 } f { print } f && /^    exit 0$/ { exit }' "$TTBIN")
+HELPBLK=$(awk '/^if \[ "\$\{1:-\}" = "--help" \]; then/ { f = 1 } f { print } f && /^    exit 0$/ { exit }' "$FMUXBIN")
 assert_rc 0 test -n "$HELPBLK"
 assert_contains "$HELPBLK" '"${2:-}" = "--pause"' \
     "★the pause lives inside the --help branch, not merely somewhere in the file"
@@ -126,23 +126,23 @@ assert_contains "$HELPBLK" 'read -rsn1' "and it actually waits for a key"
 # The second way to write this guard wrong, met while fixing the first: a replacement that put
 # backslashes in, `case "$v" in \'\'|…`, which is the pattern "two apostrophes", not the empty
 # string. bash -n passes, the suite passed, and the guard still did nothing.
-assert_eq "$(grep -c "in ..'..'|" "$TTBIN" || true)" "0" \
+assert_eq "$(grep -c "in ..'..'|" "$FMUXBIN" || true)" "0" \
     "★no numeric guard writes the empty case as escaped quotes (that matches two apostrophes, not empty)"
-assert_eq "$(grep -c ':-0}" in .*\[!0-9\]' "$TTBIN" || true)" "0" \
+assert_eq "$(grep -c ':-0}" in .*\[!0-9\]' "$FMUXBIN" || true)" "0" \
     "★no numeric guard tests \${x:-0} — that substitutes the default before testing, so an empty value slips through"
 
 # And a missing file must not print. Redirections are applied left to right, so a trailing
 # 2>/dev/null cannot suppress an error the shell reports while opening the input — measured:
-#   fmux: line 2880: ~/.cache/tt/hook-0: No such file or directory
+#   fmux: line 2880: ~/.cache/fmux/hook-0: No such file or directory
 # for a session that simply never had a hook, which is an ordinary state, not an error.
-assert_eq "$(grep -cE 'read [^|;]*< "\$STATE/[^"]*" 2>/dev/null' "$TTBIN" || true)" "0" \
+assert_eq "$(grep -cE 'read [^|;]*< "\$STATE/[^"]*" 2>/dev/null' "$FMUXBIN" || true)" "0" \
     "★no read puts 2>/dev/null after the input redirect (too late to catch a failed open)"
 
 # The status-right wiring must go through fmux for the same reason the ? pause does: a run-shell
 # body has to survive tmux quoting and shell quoting at once, and prepending has no tmux flag.
 for e in '--status-bind' '--status-unbind' '--status-fit'; do
-    assert_contains "$(grep -a -c "\"\${1:-}\" = \"$e\"" "$TTBIN" || true)" '1' \
+    assert_contains "$(grep -a -c "\"\${1:-}\" = \"$e\"" "$FMUXBIN" || true)" '1' \
         "$e is a real entry point in the binary"
 done
 
-tt_test_done
+fmux_test_done

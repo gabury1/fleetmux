@@ -10,7 +10,7 @@
 #   The process cwd's correct answer is the /proc/<pid>/cwd symlink (Linux). macOS has no /proc,
 #   so home becomes '-' — in that case the hook's old value, already filled in from the stdin
 #   JSON's cwd, is preserved (upsert rule ②).
-tt_conv_of() {
+fmux_conv_of() {
     local t pid j v home=""
     t=$(rc_target "$1") || return 1
     pid=${t##* }
@@ -29,26 +29,26 @@ tt_conv_of() {
 #   --snapshot right after a reboot, the restore table would evaporate right then (at the moment
 #   it's needed most).
 if [ "${1:-}" = "--snapshot" ]; then
-    tt_conf_load                               # bare statement, not a subshell (05-config.sh:53 contract)
+    fmux_conf_load                               # bare statement, not a subshell (05-config.sh:53 contract)
     # The instant we enter the while loop below, process substitution forks tmux, and inside the
     # loop display-message gets called again per session — we must bail before that to block
     # 'everything'. No lock is held yet.
-    tt_conf_on snapshot || { printf 'snapshot=off — not recording (fmux config set snapshot on)\n'; exit 0; }
+    fmux_conf_on snapshot || { printf 'snapshot=off — not recording (fmux config set snapshot on)\n'; exit 0; }
     mkdir -p "$STATE"
     rows=""; n=0
     while IFS=$'\t' read -r sid name; do
         [ -n "$name" ] || continue
         # The zz prefix is our test-session convention — never entered into the real fleet manifest.
-        #   But if TT_MANIFEST has redirected the manifest elsewhere (a test path), that rule would
+        #   But if FMUX_MANIFEST has redirected the manifest elsewhere (a test path), that rule would
         #   block the test itself, so it doesn't apply there. What we're protecting was only ever
         #   the real manifest to begin with.
-        if [ -z "${TT_MANIFEST:-}" ]; then
+        if [ -z "${FMUX_MANIFEST:-}" ]; then
             case "$name" in zz*) printf '  skip %s — test session\n' "$name"; continue ;; esac
         fi
         info=$(tmux display-message -p -t "=$name:" $'#{pane_current_path}\t#{pane_current_command}' 2>/dev/null) || info=""
         cwd=${info%%$'\t'*}; pcmd=${info#*$'\t'}
         [ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$HOME"
-        old=$(tt_mf_row "$name")
+        old=$(fmux_mf_row "$name")
         oldcmd=""; oldconv=""; oldhome=""; oldkind=""
         if [ -n "$old" ]; then
             # Field order: name·cwd·kind·cmd·conv[·chome] — reaching cmd means stripping 3 tabs.
@@ -62,7 +62,7 @@ if [ "${1:-}" = "--snapshot" ]; then
             case "$o" in *$'\t'*) o=${o#*$'\t'}; oldhome=${o%%$'\t'*} ;; esac
         fi
         chome=""
-        if tt_is_agent "$sid"; then
+        if fmux_is_agent "$sid"; then
             kind=agent
             # For the start command, look at whatever claude|codex is actually running in the pane
             # (scans across windows even if there are several). If not found (the agent died and
@@ -71,7 +71,7 @@ if [ "${1:-}" = "--snapshot" ]; then
             cmd=$(tmux list-panes -s -t "$sid" -F '#{pane_current_command}' 2>/dev/null | grep -m1 -xE 'claude|codex' || true)
             [ -n "$cmd" ] || cmd="$oldcmd"
             case "$cmd" in ''|-) cmd=claude ;; esac
-            ci=$(tt_conv_of "$sid" || true)
+            ci=$(fmux_conv_of "$sid" || true)
             conv=${ci%%$'\t'*}
             case "$ci" in *$'\t'*) chome=${ci##*$'\t'} ;; esac
             # Not being able to figure it out right now doesn't mean we throw away the old value —
@@ -86,7 +86,7 @@ if [ "${1:-}" = "--snapshot" ]; then
             # (accurate for yazi/lazydocker). If it's a bare shell, record no command — restore
             # will just launch a shell.
             case "$pcmd" in ''|bash|-bash|zsh|-zsh|sh|fish|tmux) cmd="-" ;; *) cmd="$pcmd" ;; esac
-            # Being classified as a tool doesn't mean we drop the conversation id — if tt_is_agent
+            # Being classified as a tool doesn't mean we drop the conversation id — if fmux_is_agent
             # is false even once (e.g. the moment the hook file gets cleared), the conversation would
             # be lost for good. If kind is tool, restore doesn't use conv anyway, so keeping it
             # around is the safe choice.
@@ -94,7 +94,7 @@ if [ "${1:-}" = "--snapshot" ]; then
             [ -n "$conv" ] || conv="-"
             chome="$oldhome"
             # ★ Don't demote a dead agent to a tool — secondary damage from the 2026-07-26 incident.
-            #   When an agent dies, only a bare shell is left in the pane → tt_is_agent is false →
+            #   When an agent dies, only a bare shell is left in the pane → fmux_is_agent is false →
             #   recorded as kind=tool → restore branches on kind, so it ignores conv and just
             #   launches a bare shell. In other words, exactly when "restore is needed most," the
             #   manifest erases its own ability to restore. --snapshot runs every minute via cron,
@@ -104,14 +104,14 @@ if [ "${1:-}" = "--snapshot" ]; then
             #   bare shell (no replacement tool came up) → treat it as a dead agent. If a human
             #   launched yazi in that session, cmd wouldn't be a bare shell, so it's filtered out by
             #   the case above and correctly falls through to tool.
-            if [ "$oldkind" = agent ] && [ "$cmd" = "-" ] && tt_is_uuid "$conv"; then
+            if [ "$oldkind" = agent ] && [ "$cmd" = "-" ] && fmux_is_uuid "$conv"; then
                 kind=agent
                 cmd="$oldcmd"; case "$cmd" in ''|-) cmd=claude ;; esac
             fi
         fi
         # Only a uuid-shaped string is accepted as the conversation id — letting a string like
         # "claude" pass through is what let the incident grow
-        tt_is_uuid "$conv" || conv="-"
+        fmux_is_uuid "$conv" || conv="-"
         # Only record the conversation home when it's a directory that actually exists (recording
         # a vanished path makes restore try to cd there and fail)
         [ -n "$chome" ] && [ -d "$chome" ] || chome="-"
@@ -130,25 +130,25 @@ if [ "${1:-}" = "--snapshot" ]; then
     # Integrity check before writing — any broken line not caught here becomes the "old value" of
     #   the next snapshot and spreads. On rejection, we don't touch the existing file at all: a
     #   stale manifest is always better than a corrupt one.
-    if ! tt_mf_check "$rows"; then
+    if ! fmux_mf_check "$rows"; then
         printf 'snapshot ABORTED — generated rows failed the integrity check; %s left untouched\n' "$MANIFEST" >&2
         exit 1
     fi
-    tt_mf_lock || { echo "manifest busy — try again"; exit 1; }
+    fmux_mf_lock || { echo "manifest busy — try again"; exit 1; }
     # A vanished session's line disappears only here (hooks/listings are never deleted — the
     #   whole point is reviving the dead)
     if [ -f "$MANIFEST" ]; then
         # Rotates three backup generations. --snapshot runs every minute via cron, so with only one
         # generation the window to notice and revert a bad snapshot is 60 seconds — the next tick
         # overwrites the only backup too. Three generations = at least 3 minutes.
-        tt_mf_backup
+        fmux_mf_backup
         while IFS=$'\t' read -r on _rest || [ -n "$on" ]; do
             [ -n "$on" ] || continue
             case $'\n'"$rows" in *$'\n'"$on"$'\t'*) ;; *) printf '  dropped %s — no longer running\n' "$on" ;; esac
         done < "$MANIFEST.bak"
     fi
-    tt_mf_write "$rows" || { tt_mf_unlock; exit 1; }
-    tt_mf_unlock
+    fmux_mf_write "$rows" || { fmux_mf_unlock; exit 1; }
+    fmux_mf_unlock
     printf 'snapshot: %d sessions → %s\n' "$n" "$MANIFEST"
     exit 0
 fi
@@ -158,8 +158,8 @@ fi
 if [ "${1:-}" = "--forget" ]; then
     n="${2:-}"
     [ -n "$n" ] || { echo "usage: fmux --forget <session name>"; exit 1; }
-    tt_mf_forget "$n" || { echo "manifest busy — try again"; exit 1; }
-    if [ "${TT_MF_HITS:-0}" -gt 0 ]; then
+    fmux_mf_forget "$n" || { echo "manifest busy — try again"; exit 1; }
+    if [ "${FMUX_MF_HITS:-0}" -gt 0 ]; then
         printf 'forgot %s\n' "$n"
     else
         printf 'no manifest entry named %s\n' "$n"
@@ -187,10 +187,10 @@ if [ "${1:-}" = "--restore" ]; then
     if [ "$dry" = 1 ]; then
         echo "[dry] would sweep orphan hook files"
     else
-        tt_sweep_hooks
+        fmux_sweep_hooks
     fi
     made=0; skipped=0; used=""; livec=""; verify=""
-    TT_SH=$(tt_login_shell)
+    FMUX_SH=$(fmux_login_shell)
     # First gather the list of conversations that currently-live claude processes are holding.
     #   Judging "dead" by name alone isn't enough — if a session gets renamed (a human uses ^E, or
     #   claude renames itself), the manifest's old name looks like a dead session, and a perfectly
@@ -204,7 +204,7 @@ if [ "${1:-}" = "--restore" ]; then
         [ -f "$sf" ] || continue
         spid=${sf##*/}; spid=${spid%.json}
         case "$spid" in ''|*[!0-9]*) continue ;; esac
-        [ "$(tt_comm "$spid" || true)" = claude ] || continue
+        [ "$(fmux_comm "$spid" || true)" = claude ] || continue
         sj=$(rc_read "$sf") || continue
         sv=$(rc_val "$sj" sessionId)
         [ -n "$sv" ] && livec="$livec $sv"
@@ -214,7 +214,7 @@ if [ "${1:-}" = "--restore" ]; then
     while IFS=$'\t' read -r name cwd kind cmd conv chome || [ -n "$name" ]; do
         [ -n "$name" ] || continue
         case "$name" in \#*) continue ;; esac
-        tt_is_uuid "${conv:-}" || conv="-"      # so a corrupted line can't leak into a command line
+        fmux_is_uuid "${conv:-}" || conv="-"      # so a corrupted line can't leak into a command line
         case "${chome:-}" in ''|-) chome="" ;; esac
         # Even a live session records its own conversation as "claimed" and gets skipped —
         # there's a real case of an already-running tt-worker and the manifest's worker2 both
@@ -296,7 +296,7 @@ if [ "${1:-}" = "--restore" ]; then
         # Explicitly specify the shell — even if the server-wide default-shell got stuck at
         # /bin/sh from cron, our session still comes up as a login bash (server option untouched).
         # Primary cause of the 2026-07-26 incident.
-        if ! tmux new-session -d -s "$name" -c "$cwd" "$TT_SH" -l 2>/dev/null; then
+        if ! tmux new-session -d -s "$name" -c "$cwd" "$FMUX_SH" -l 2>/dev/null; then
             printf 'FAIL   %-16s could not create session\n' "$name"
             continue
         fi
@@ -323,7 +323,7 @@ if [ "${1:-}" = "--restore" ]; then
         vbad=""
         while IFS=$'\t' read -r vn vrun || [ -n "$vn" ]; do
             [ -n "$vn" ] || continue
-            tt_pane_has_agent "$vn" && continue
+            fmux_pane_has_agent "$vn" && continue
             printf '  warn  %-16s agent did not come up — retrying once\n' "$vn"
             tmux send-keys -t "=$vn:" -l "$vrun" 2>/dev/null
             tmux send-keys -t "=$vn:" Enter 2>/dev/null
@@ -333,7 +333,7 @@ if [ "${1:-}" = "--restore" ]; then
             sleep 12
             vfail=""
             for vn in $vbad; do
-                tt_pane_has_agent "$vn" || vfail="$vfail $vn"
+                fmux_pane_has_agent "$vn" || vfail="$vfail $vn"
             done
             if [ -n "$vfail" ]; then
                 printf 'RESTORE INCOMPLETE — agents still down after retry:%s\n' "$vfail"
@@ -389,8 +389,8 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #   Rotation (log_max) reads config before the boot_restore switch below, so the load must come
     #   before that too — if it's first read inside a $(...) during rotation, the cache dies along
     #   with that subshell, and one broken line ends up printing the warning twice per boot.
-    tt_conf_load
-    TT_LOG_FILE="$BOOTLOG" tt_log_rotate
+    fmux_conf_load
+    FMUX_LOG_FILE="$BOOTLOG" fmux_log_rotate
     blog "=== boot-restore start (dry=$dry, pid $$)"
 
     # ⓪ Config switch. Means the same thing as the ① kill switch, just a different handle (a
@@ -399,7 +399,7 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #    where this entry point first calls tmux) below at all.
     #    (The config cache was already set up before the log rotation above — because rotation
     #    reads log_max.)
-    if ! tt_conf_on boot_restore; then
+    if ! fmux_conf_on boot_restore; then
         blog "boot_restore=off in config — nothing done"
         printf 'boot_restore=off — skipping boot restore (fmux config set boot_restore on)\n'
         exit 0
@@ -430,7 +430,9 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #    Order matters: since we prepend, the list below is in *reverse* priority order. libexec/tt
     #    must end up first — if it lands behind the others, a bare claude that skips the
     #    hook-injection wrapper comes up, and the fleet status board (hook-*) dies entirely.
-    for d in "$HOME/.npm-global/bin" "$HOME/.local/bin" "$HOME/.local/libexec/tt"; do
+    #    Both shim directory names are listed: fmux is the current one, tt is what installs made
+    #    before 2026-08-06 used and is never moved (the path lives in the user's shell rc).
+    for d in "$HOME/.npm-global/bin" "$HOME/.local/bin" "$HOME/.local/libexec/tt" "$HOME/.local/libexec/fmux"; do
         [ -d "$d" ] || continue
         case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
     done
@@ -445,7 +447,7 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #   and the status board stayed green for 40 minutes. Why the PATH loop above can't stop this —
     #   it fixes our own process's PATH, but the pane's login shell re-reads /etc/profile and
     #   overwrites PATH wholesale anyway.
-    SHELL=$(tt_login_shell); export SHELL
+    SHELL=$(fmux_login_shell); export SHELL
 
     # ③ Duplicate-run prevention. Same approach as --cron's rc.lock (flock -n, fd 9).
     #    --restore's "skip if already alive" check is only true *after* the session has been
@@ -508,8 +510,8 @@ if [ "${1:-}" = "--boot-restore" ]; then
     #    To cover the gap DNS alone can't (name resolves, but routing isn't up yet), we also probe
     #    TCP 443 once more. /dev/tcp is a bash builtin, so it doesn't pull in a curl dependency
     #    (measured 42ms).
-    NETHOST=${TT_BOOT_NETHOST:-api.anthropic.com}
-    NETWAIT=${TT_BOOT_NETWAIT:-120}
+    NETHOST=${FMUX_BOOT_NETHOST:-api.anthropic.com}
+    NETWAIT=${FMUX_BOOT_NETWAIT:-120}
     t0=$(date +%s); netok=0
     while :; do
         # Pass the hostname as $1 instead of concatenating it into the command string (this keeps
@@ -555,7 +557,7 @@ if [ "${1:-}" = "--boot-restore" ]; then
     # existence, checking cwd existence). The reason for 7 days: anything shorter would fire a
     # warning every time in the perfectly normal case of the Pi being off for a few days due to
     # travel or a power outage.
-    # The reason we don't use stat for the age comparison is the same as tt_log_rotate — GNU and BSD
+    # The reason we don't use stat for the age comparison is the same as fmux_log_rotate — GNU and BSD
     # options are exact opposites. `find -mtime +7` is POSIX, so it behaves identically on both.
     if [ -n "$(find "$MANIFEST" -mtime +7 2>/dev/null)" ]; then
         blog "warn: $MANIFEST is older than 7 days — restoring it anyway"

@@ -29,7 +29,7 @@
 #   Only the background is new, and it is **one colour for all three** (a dark chip). Recolouring
 #   the glyphs would have thrown away the meaning they already carry; the background is the part
 #   that was missing.
-tt_fleet_agg() {
+fmux_fleet_agg() {
     local f st ts pid w=0 k=0 out="" now sid wids="" wnames="" wshown=0 nm line
     now=$(date +%s)
     for f in "$STATE"/hook-*; do
@@ -65,8 +65,8 @@ tt_fleet_agg() {
                 # *The sampler must stay here* — the status bar rotating the sample here every
                 #   5 seconds is the axis of the CPU delta design. Without this line, there
                 #   would be no sample at all for the popup (--list) to use when opened,
-                #   tt_cpu_busy would be permanently rc2, and criterion C would die entirely.
-                tt_cpu_sample "$sid" "$pid" "$now" ;;
+                #   fmux_cpu_busy would be permanently rc2, and criterion C would die entirely.
+                fmux_cpu_sample "$sid" "$pid" "$now" ;;
         esac
     done
     # Attach names to ⏸. Query tmux **exactly once** — this function is called by the status
@@ -133,15 +133,15 @@ if [ "${1:-}" = "--hook" ]; then
     echo "$(date '+%F %T') $sid $st" >> "$STATE/hook.log"   # event audit log (for tracing false positives)
     # Walk up the parent chain to find the agent's real PID ($PPID may be a throwaway shell)
     #   — used for detecting dead sessions.
-    #   Why tt_comm: macOS ps gives an absolute path in comm — a raw comparison would never
+    #   Why fmux_comm: macOS ps gives an absolute path in comm — a raw comparison would never
     #   match on Mac.
     cpid=$PPID
     while [ "$cpid" -gt 1 ]; do
-        case "$(tt_comm "$cpid" || true)" in claude|codex) break ;; esac
+        case "$(fmux_comm "$cpid" || true)" in claude|codex) break ;; esac
         cpid=$(ps -p "$cpid" -o ppid= 2>/dev/null | tr -d ' ') || { cpid=0; break; }
         [ -n "$cpid" ] || { cpid=0; break; }
     done
-    case "$(tt_comm "${cpid:-0}" || true)" in claude|codex) ;; *) cpid=0 ;; esac
+    case "$(fmux_comm "${cpid:-0}" || true)" in claude|codex) ;; *) cpid=0 ;; esac
     case "$st" in
         waiting)
             # Notification payloads fall broadly into two branches:
@@ -163,7 +163,7 @@ if [ "${1:-}" = "--hook" ]; then
             # stock /bin/bash is 3.2. It parses fine and dies **only at expansion time**, so the
             # symptom is a silent one: "install works, the list shows up, but ⏸ just never
             # appears" (team deploy gate B6).
-            # tt_conf_envname in 05-config.sh avoids ${var^^} for the same reason — it's this
+            # fmux_conf_envname in 05-config.sh avoids ${var^^} for the same reason — it's this
             # repo's convention.
             # t-14 catches bash4-only syntax across all of src/*.sh (regression guard).
             case "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" in
@@ -184,7 +184,7 @@ if [ "${1:-}" = "--hook" ]; then
             #   hook_event_name. If it's not a prompt submission, it returns immediately with
             #   zero forks. Fails silently if it fails — the state file has already been
             #   written above (this is a side-effect-only addition).
-            tt_last_prompt_save "$sid" "$payload" "$now" ;;
+            fmux_last_prompt_save "$sid" "$payload" "$now" ;;
         idle)
             prev=$(cut -d' ' -f1 "$hf" 2>/dev/null || true)
             echo "idle $(date +%s) $cpid" > "$hf"
@@ -195,10 +195,10 @@ if [ "${1:-}" = "--hook" ]; then
                 if [ "$att" = 0 ]; then
                     # Locking is mandatory: the status bar rewrites this same file wholesale
                     # every 5 seconds — without a lock, this notification would be lost.
-                    tt_finished_lock
-                    tt_finished_rewrite "$name"   # normalize + drop old entries for the same session (sed replacement)
+                    fmux_finished_lock
+                    fmux_finished_rewrite "$name"   # normalize + drop old entries for the same session (sed replacement)
                     echo "$(date +%s) $name" >> "$STATE/finished"   # status bar badge + list unread marker
-                    tt_finished_unlock
+                    fmux_finished_unlock
                     tmux list-clients -F '#{client_name}' 2>/dev/null | while read -r c; do
                         tmux display-message -c "$c" -d 8000 "✓ $name done"
                     done
@@ -208,7 +208,7 @@ if [ "${1:-}" = "--hook" ]; then
             # The CPU snapshot's lifetime is entirely tied to the hook file's lifetime — if we
             # split the cleanup rule into two separate sets, we get the contradiction of
             # "deleted it, but still trust it" (same reasoning as the existing judgment in the
-            # tt_sweep_hooks comment).
+            # fmux_sweep_hooks comment).
             #   The last prompt is removed here too, in the same place — the session is over,
             #   and "what did I ask it to do" shouldn't linger and show up in the next
             #   session's preview (same judgment as sweep).
@@ -224,15 +224,15 @@ if [ "${1:-}" = "--hook" ]; then
             #   inherited ghost file, we'd inherit someone else's state as-is.
             #   Sweep first, then create if missing = either way, a file with this session's
             #   pid is left behind.
-            tt_sweep_hooks
+            fmux_sweep_hooks
             [ -f "$hf" ] || echo "idle $(date +%s) $cpid" > "$hf"
             # The rotation threshold (log_max) is read from config, so load the cache first —
             # as a bare statement, not inside a subshell (the contract in 05-config.sh). This
             # is the only place in the hook path that reads config, so it's placed right before
             # the rotation call rather than at the very top of the entry point: the
             # working/idle path, which runs on every event, reads zero bytes of config.
-            tt_conf_load
-            tt_log_rotate   # so the audit log doesn't grow unbounded on environments without cron installed
+            fmux_conf_load
+            fmux_log_rotate   # so the audit log doesn't grow unbounded on environments without cron installed
             name="$sname"                          # already asked above (fork savings)
             [ -n "$name" ] || exit 0
             pr="$STATE/pending-rename-$name"
@@ -257,7 +257,7 @@ if [ "${1:-}" = "--hook" ]; then
     # conversation" (stdin's session_id) at the same time — the conversation id falls into our
     # lap for free. If we pick it up here, the restore table stays current even if the user
     # never runs --snapshot even once (zero user intervention required).
-    # Cost: zero forks (a global-return tt_jv + string ops) + no file touch if the content is
+    # Cost: zero forks (a global-return fmux_jv + string ops) + no file touch if the content is
     # unchanged. Fails silently on failure.
     # The conversation home (6th field) is also only accurate here: stdin's cwd is claude's own
     # cwd, and claude uses exactly that value to compute
@@ -267,7 +267,7 @@ if [ "${1:-}" = "--hook" ]; then
     if [ -n "$sname" ]; then
         mconv=""; mhome=""
         if [ -n "$payload" ]; then
-            tt_jv "$payload" session_id && mconv="$TT_JV" || true   # conversation id from the claude hook
+            fmux_jv "$payload" session_id && mconv="$FMUX_JV" || true   # conversation id from the claude hook
             # Conversation home: don't just trust cwd as-is. The hook **also fires for
             # subagents**, and that payload's cwd is the directory the subagent was working in.
             # If we record that as the home, restore would run
@@ -283,10 +283,10 @@ if [ "${1:-}" = "--hook" ]; then
             # decode — if a directory name contains '-', the encoding can't be reversed:
             # _myproject -> -home-...-_myproject).
             mhome=""
-            if tt_jv "$payload" cwd; then
-                _hcwd="$TT_JV"
-                if tt_jv "$payload" transcript_path; then
-                    _hdir=${TT_JV%/*}; _hdir=${_hdir##*/}          # encoded folder name
+            if fmux_jv "$payload" cwd; then
+                _hcwd="$FMUX_JV"
+                if fmux_jv "$payload" transcript_path; then
+                    _hdir=${FMUX_JV%/*}; _hdir=${_hdir##*/}          # encoded folder name
                     case "$(printf '%s' "$_hcwd" | tr '/' '-')" in
                         "$_hdir") mhome="$_hcwd" ;;                 # match -> this cwd is the real home
                     esac
@@ -297,7 +297,7 @@ if [ "${1:-}" = "--hook" ]; then
         # the tty foreground) -> only record it when certain, otherwise pass an empty value to
         # preserve the existing record.
         case "$scmd" in claude|codex) mcmd="$scmd" ;; *) mcmd="" ;; esac
-        tt_mf_upsert "$sname" "$spath" agent "$mcmd" "$mconv" "$mhome" || true
+        fmux_mf_upsert "$sname" "$spath" agent "$mcmd" "$mconv" "$mhome" || true
     fi
     exit 0
 fi
@@ -312,13 +312,13 @@ if [ "${1:-}" = "--status" ]; then
     # Load config once at the top of the entry point, as a bare statement, not a subshell
     # (the contract in 05-config.sh). This path is called by the status bar every 5 seconds —
     # a single broken line must not spew warnings once per call.
-    tt_conf_load
-    unseen_s=$(( $(tt_conf_num unseen_minutes) * 60 ))
-    agg=$(tt_fleet_agg)     # unrelated to finished, so compute it first, outside the lock
+    fmux_conf_load
+    unseen_s=$(( $(fmux_conf_num unseen_minutes) * 60 ))
+    agg=$(fmux_fleet_agg)     # unrelated to finished, so compute it first, outside the lock
     out=""
     if [ -s "$f" ]; then
-        tt_finished_lock
-        tt_finished_rewrite     # migrate old format + strip poison lines
+        fmux_finished_lock
+        fmux_finished_rewrite     # migrate old format + strip poison lines
         keep=""
         while read -r ts name; do
             case "$ts" in ''|*[!0-9]*) continue ;; esac   # discard non-numeric lines (prevents permanent lingering)
@@ -339,7 +339,7 @@ if [ "${1:-}" = "--status" ]; then
             [ $(( now - ts )) -le "$unseen_s" ] && out="$out ✓$name"   # status bar shows it only for unseen_minutes; the file keeps it until viewed
         done < "$f"
         printf '%s' "$keep" > "$f"
-        tt_finished_unlock
+        fmux_finished_unlock
     fi
     badge=""
     [ -n "$out" ] && badge="#[fg=#7fae6e,bg=colour235,bold]$out #[default] "
