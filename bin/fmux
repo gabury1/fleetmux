@@ -4030,7 +4030,7 @@ if [ "${1:-}" = "--help" ]; then
   $hsummon
 
   ${T}in the list${R}
-    ${B}→${R} ${D}or${R} ${B}Enter${R}  enter        ${B}←${R} ${D}or${R} ${B}Esc${R}  close        ${B}^D${R}  detach tmux
+    ${B}Enter${R}  enter session        ${B}←${R} ${D}or${R} ${B}Esc${R}  close        ${B}^D${R}  detach tmux
     ${B}^N${R}  new    ${B}^E${R}  rename    ${B}^X${R}  kill    ${B}^R${R}  refresh    ${hkset}  settings
     ${B}Tab${R}  mark several, then ${B}Enter${R} — one prompt to all    ${B}^B${R}  same, popup stays open
 
