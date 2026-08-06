@@ -2,6 +2,12 @@
 
 A tmux cockpit for running a fleet of AI coding agents.
 
+![fmux — the fleet at a glance](demo/demo.gif)
+
+*The status bar already told you: `parser` is waiting on a human, one session is working,
+`docs` finished while you were away. One keystroke opens the list; the preview shows what
+you last asked that session.*
+
 `fmux` shows you — at a glance, without opening a single session — which of your
 Claude Code / Codex sessions are **working**, which are **waiting for your approval**,
 and which **finished while you were away**. It brings the whole fleet back after a
