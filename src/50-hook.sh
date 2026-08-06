@@ -29,9 +29,9 @@ tt_fleet_agg() {
         read -r st ts pid < "$f" 2>/dev/null || true
         case "$st" in waiting|working) ;; *) continue ;; esac
         # If the hook process is dead, it's a "stuck" state — don't count it (same criterion as --list's liveness check)
-        case "${pid:-0}" in ''|*[!0-9]*) pid=0 ;; esac
+        case "$pid" in \'\'|*[!0-9]*) pid=0 ;; esac
         [ "$pid" -gt 0 ] && ! kill -0 "$pid" 2>/dev/null && continue
-        case "${ts:-0}" in ''|*[!0-9]*) ts=0 ;; esac
+        case "$ts" in \'\'|*[!0-9]*) ts=0 ;; esac
         case "$st" in
             waiting)
                 w=$((w + 1))
@@ -229,7 +229,7 @@ if [ "${1:-}" = "--hook" ]; then
                 # same-named session and injected /rename (codex doesn't even have that slash
                 # command).
                 read -r pts _ < "$pr" 2>/dev/null || pts=0
-                case "${pts:-0}" in ''|*[!0-9]*) pts=0 ;; esac
+                case "$pts" in \'\'|*[!0-9]*) pts=0 ;; esac
                 rm -f "$pr"
                 if [ $(( $(date +%s) - pts )) -le 300 ]; then
                     ( sleep 1

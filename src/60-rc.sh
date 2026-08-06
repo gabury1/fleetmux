@@ -140,7 +140,7 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
         n=0; fpid=""; lastok=0
         [ -f "$ff" ] && read -r n fpid lastok < "$ff" || true
         [ "${fpid:-}" = "$cpid" ] || { n=0; lastok=0; }        # if claude has restarted, start a new count
-        case "${lastok:-0}" in ''|*[!0-9]*) lastok=0 ;; esac
+        case "$lastok" in \'\'|*[!0-9]*) lastok=0 ;; esac
         # Recurrence brake: it just recovered successfully but disconnected again within 5
         # minutes = a session that won't stay connected no matter how many times we attach it.
         # It used to clear the counter on success, so fails stayed at 0 forever, and the

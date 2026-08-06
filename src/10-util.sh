@@ -43,7 +43,7 @@ tt_log_rotate() {
     local f="${TT_LOG_FILE:-$STATE/hook.log}" sz max
     [ -f "$f" ] || return 0
     sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ') || return 0
-    case "${sz:-0}" in ''|*[!0-9]*) return 0 ;; esac
+    case "$sz" in \'\'|*[!0-9]*) return 0 ;; esac
     max=$(tt_conf_num log_max)
     [ "$sz" -gt "$max" ] || return 0
     if tail -n "$TT_LOG_KEEP" "$f" > "$f.tmp" 2>/dev/null; then

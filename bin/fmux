@@ -261,7 +261,7 @@ tt_log_rotate() {
     local f="${TT_LOG_FILE:-$STATE/hook.log}" sz max
     [ -f "$f" ] || return 0
     sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ') || return 0
-    case "${sz:-0}" in ''|*[!0-9]*) return 0 ;; esac
+    case "$sz" in \'\'|*[!0-9]*) return 0 ;; esac
     max=$(tt_conf_num log_max)
     [ "$sz" -gt "$max" ] || return 0
     if tail -n "$TT_LOG_KEEP" "$f" > "$f.tmp" 2>/dev/null; then
@@ -845,9 +845,9 @@ tt_hook_valid() {
     hts=0; hpid=0
     # The hook file format is "<state> <recorded-ts> <pid>" — state isn't used here (discarded into _)
     read -r _ hts hpid < "$hf" 2>/dev/null || true
-    case "${hpid:-0}" in ''|*[!0-9]*) hpid=0 ;; esac
-    case "${hts:-0}" in ''|*[!0-9]*) hts=0 ;; esac
-    case "${created:-0}" in ''|*[!0-9]*) created=0 ;; esac
+    case "$hpid" in \'\'|*[!0-9]*) hpid=0 ;; esac
+    case "$hts" in \'\'|*[!0-9]*) hts=0 ;; esac
+    case "$created" in \'\'|*[!0-9]*) created=0 ;; esac
     # ① If a pid was recorded, its liveness is the final verdict — alive means genuine, dead
     #    means a ghost.
     #    Must not fall through to comparing timestamps here: if a reboot reuses the id, a dead
@@ -1610,9 +1610,9 @@ tt_fleet_agg() {
         read -r st ts pid < "$f" 2>/dev/null || true
         case "$st" in waiting|working) ;; *) continue ;; esac
         # If the hook process is dead, it's a "stuck" state — don't count it (same criterion as --list's liveness check)
-        case "${pid:-0}" in ''|*[!0-9]*) pid=0 ;; esac
+        case "$pid" in \'\'|*[!0-9]*) pid=0 ;; esac
         [ "$pid" -gt 0 ] && ! kill -0 "$pid" 2>/dev/null && continue
-        case "${ts:-0}" in ''|*[!0-9]*) ts=0 ;; esac
+        case "$ts" in \'\'|*[!0-9]*) ts=0 ;; esac
         case "$st" in
             waiting)
                 w=$((w + 1))
@@ -1810,7 +1810,7 @@ if [ "${1:-}" = "--hook" ]; then
                 # same-named session and injected /rename (codex doesn't even have that slash
                 # command).
                 read -r pts _ < "$pr" 2>/dev/null || pts=0
-                case "${pts:-0}" in ''|*[!0-9]*) pts=0 ;; esac
+                case "$pts" in \'\'|*[!0-9]*) pts=0 ;; esac
                 rm -f "$pr"
                 if [ $(( $(date +%s) - pts )) -le 300 ]; then
                     ( sleep 1
@@ -2057,7 +2057,7 @@ if [ "${1:-}" = "--cron" ] || [ "${1:-}" = "--rc-check" ]; then   # old name kep
         n=0; fpid=""; lastok=0
         [ -f "$ff" ] && read -r n fpid lastok < "$ff" || true
         [ "${fpid:-}" = "$cpid" ] || { n=0; lastok=0; }        # if claude has restarted, start a new count
-        case "${lastok:-0}" in ''|*[!0-9]*) lastok=0 ;; esac
+        case "$lastok" in \'\'|*[!0-9]*) lastok=0 ;; esac
         # Recurrence brake: it just recovered successfully but disconnected again within 5
         # minutes = a session that won't stay connected no matter how many times we attach it.
         # It used to clear the counter on success, so fails stayed at 0 forever, and the
@@ -2847,7 +2847,7 @@ if [ "${1:-}" = "--list" ]; then
             case "$actraw" in
                 *$'\n'"${actp[$i]}"$'\t'*) v=${actraw#*$'\n'"${actp[$i]}"$'\t'}; v=${v%%$'\n'*} ;;
             esac
-            case "${v:-0}" in ''|*[!0-9]*) v=0 ;; esac
+            case "$v" in \'\'|*[!0-9]*) v=0 ;; esac
             [ "$v" -gt 0 ] && acttab="$acttab"$'\n'"${actn[$i]}"$'\t'"$v"
             i=$((i + 1))
         done
@@ -2877,13 +2877,13 @@ if [ "${1:-}" = "--list" ]; then
             if [ "$grp" = 1 ]; then
                 # Read the hook file with read (used to be cut — 1 fork per session). We need the state too.
                 hst=""; hts=0
-                read -r hst hts _ < "$STATE/hook-${sid#\$}" 2>/dev/null || true
-                case "${hts:-0}" in ''|*[!0-9]*) hts=0 ;; esac
+                read -r hst hts _ 2>/dev/null < "$STATE/hook-${sid#\$}" || true
+                case "$hts" in \'\'|*[!0-9]*) hts=0 ;; esac
                 ats=0
                 case "$acttab" in
                     *$'\n'"$name"$'\t'*) ats=${acttab#*$'\n'"$name"$'\t'}; ats=${ats%%$'\n'*} ;;
                 esac
-                case "${ats:-0}" in ''|*[!0-9]*) ats=0 ;; esac
+                case "$ats" in \'\'|*[!0-9]*) ats=0 ;; esac
                 if [ "$ats" -gt 0 ]; then
                     ts="$ats"
                     # We accept exactly one case where the hook is newer than the transcript —
@@ -2935,7 +2935,7 @@ if [ "${1:-}" = "--list" ]; then
             # State: hook record takes priority (accurate); fall back to screen judgment if missing or the hook process is dead
             mark=""; hstate=""
             if [ -f "$STATE/hook-$sid" ]; then
-                read -r hstate _hts hpid < "$STATE/hook-$sid" || true
+                read -r hstate _hts hpid 2>/dev/null < "$STATE/hook-$sid" || true
                 if [ "$hstate" != idle ] && [ "${hpid:-0}" -gt 0 ] && ! kill -0 "$hpid" 2>/dev/null; then hstate=""; fi
             fi
             case "$hstate" in

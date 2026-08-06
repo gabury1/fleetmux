@@ -103,4 +103,25 @@ assert_contains "$BINDS" '--help --pause' "the ? binding delegates the wait to f
 assert_contains "$(grep -a -A3 'if \[ "\${2:-}" = "--pause" \]' "$TTBIN" || true)" 'read -' \
     "and fmux is where the waiting actually happens"
 
+# ── a sanitizer that does not sanitize ──────────────────────────────────────
+# Measured 2026-08-06 on a Mac, from the hook log:
+#   fmux: line 2851: [: : integer expected
+#
+# The guard meant to make a value safe for arithmetic was written as
+#     case "${v:-0}" in ''|*[!0-9]*) v=0 ;; esac
+# which tests the **substituted** value: when v is empty, `${v:-0}` is already "0", so no branch
+# matches, nothing is assigned, and v stays empty — straight into `[ "$v" -gt 0 ]`. The guard read
+# as if it worked and never did. There were eleven of them.
+#
+# The value has to be tested as it is: case "$v" in ''|*[!0-9]*) v=0 ;; esac
+assert_eq "$(grep -c ':-0}" in .*\[!0-9\]' "$TTBIN" || true)" "0" \
+    "★no numeric guard tests \${x:-0} — that substitutes the default before testing, so an empty value slips through"
+
+# And a missing file must not print. Redirections are applied left to right, so a trailing
+# 2>/dev/null cannot suppress an error the shell reports while opening the input — measured:
+#   fmux: line 2880: ~/.cache/tt/hook-0: No such file or directory
+# for a session that simply never had a hook, which is an ordinary state, not an error.
+assert_eq "$(grep -cE 'read [^|;]*< "\$STATE/[^"]*" 2>/dev/null' "$TTBIN" || true)" "0" \
+    "★no read puts 2>/dev/null after the input redirect (too late to catch a failed open)"
+
 tt_test_done

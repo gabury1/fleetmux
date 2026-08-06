@@ -119,7 +119,7 @@ if [ "${1:-}" = "--list" ]; then
             case "$actraw" in
                 *$'\n'"${actp[$i]}"$'\t'*) v=${actraw#*$'\n'"${actp[$i]}"$'\t'}; v=${v%%$'\n'*} ;;
             esac
-            case "${v:-0}" in ''|*[!0-9]*) v=0 ;; esac
+            case "$v" in \'\'|*[!0-9]*) v=0 ;; esac
             [ "$v" -gt 0 ] && acttab="$acttab"$'\n'"${actn[$i]}"$'\t'"$v"
             i=$((i + 1))
         done
@@ -149,13 +149,13 @@ if [ "${1:-}" = "--list" ]; then
             if [ "$grp" = 1 ]; then
                 # Read the hook file with read (used to be cut — 1 fork per session). We need the state too.
                 hst=""; hts=0
-                read -r hst hts _ < "$STATE/hook-${sid#\$}" 2>/dev/null || true
-                case "${hts:-0}" in ''|*[!0-9]*) hts=0 ;; esac
+                read -r hst hts _ 2>/dev/null < "$STATE/hook-${sid#\$}" || true
+                case "$hts" in \'\'|*[!0-9]*) hts=0 ;; esac
                 ats=0
                 case "$acttab" in
                     *$'\n'"$name"$'\t'*) ats=${acttab#*$'\n'"$name"$'\t'}; ats=${ats%%$'\n'*} ;;
                 esac
-                case "${ats:-0}" in ''|*[!0-9]*) ats=0 ;; esac
+                case "$ats" in \'\'|*[!0-9]*) ats=0 ;; esac
                 if [ "$ats" -gt 0 ]; then
                     ts="$ats"
                     # We accept exactly one case where the hook is newer than the transcript —
@@ -207,7 +207,7 @@ if [ "${1:-}" = "--list" ]; then
             # State: hook record takes priority (accurate); fall back to screen judgment if missing or the hook process is dead
             mark=""; hstate=""
             if [ -f "$STATE/hook-$sid" ]; then
-                read -r hstate _hts hpid < "$STATE/hook-$sid" || true
+                read -r hstate _hts hpid 2>/dev/null < "$STATE/hook-$sid" || true
                 if [ "$hstate" != idle ] && [ "${hpid:-0}" -gt 0 ] && ! kill -0 "$hpid" 2>/dev/null; then hstate=""; fi
             fi
             case "$hstate" in
