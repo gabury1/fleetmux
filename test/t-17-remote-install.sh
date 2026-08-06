@@ -95,11 +95,15 @@ mkdir -p "$NET" "$NETW" "$NONET" "$SRV"
 {
     printf '#!/usr/bin/env bash\n'
     printf '# fake curl — uses no network. Unfolds the URL into a local file.\n'
-    printf 'url=""; out=""\n'
+    printf 'url=""; out=""; head=0\n'
     printf 'while [ $# -gt 0 ]; do\n'
     printf '  case "$1" in\n'
     printf '    -o) out="$2"; shift ;;\n'
     printf '    --max-time) shift ;;\n'
+    printf '    -A) shift ;;\n'
+    printf '    -w) shift ;;\n'
+    printf '    -fsSLI) head=1 ;;\n'
+    printf '    -I) head=1 ;;\n'
     printf '    http://*|https://*) url="$1" ;;\n'
     printf '  esac\n'
     printf '  shift\n'
@@ -108,16 +112,22 @@ mkdir -p "$NET" "$NETW" "$NONET" "$SRV"
     printf 'p=${url#https://}; p=${p#http://}\n'
     printf 'f="%s/$p"\n' "$SRV"
     printf 'if [ ! -f "$f" ]; then echo "curl: (22) The requested URL returned error: 404" >&2; exit 22; fi\n'
+    # -I is the redirect probe: the file holds the final URL, which is what -w %%{url_effective}
+    # prints. This is how the real /releases/latest answers — a redirect, not an API document.
+    printf 'if [ "${head:-0}" = 1 ]; then cat "$f"; exit 0; fi\n'
     printf 'if [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi\n'
 } > "$NET/curl"
 {
     printf '#!/usr/bin/env bash\n'
     printf '# fake wget — same rule. Receives via -O.\n'
-    printf 'url=""; out=""\n'
+    printf 'url=""; out=""; head=0\n'
     printf 'while [ $# -gt 0 ]; do\n'
     printf '  case "$1" in\n'
     printf '    -O) out="$2"; shift ;;\n'
     printf '    -T) shift ;;\n'
+    printf '    -S) head=1 ;;\n'
+    printf '    --max-redirect) shift ;;\n'
+    printf '    --user-agent=*) : ;;\n'
     printf '    http://*|https://*) url="$1" ;;\n'
     printf '  esac\n'
     printf '  shift\n'
@@ -128,6 +138,8 @@ mkdir -p "$NET" "$NETW" "$NONET" "$SRV"
     # The real wget creates the -O file even on a 404. Mimics that same husk — if the installer
     # believes an empty file was "received," this is where it should get caught.
     printf 'if [ ! -f "$f" ]; then : > "$out"; echo "wget: 404" >&2; exit 8; fi\n'
+    # -S is the redirect probe: real wget prints the hop on stderr as "  Location: <url>".
+    printf 'if [ "${head:-0}" = 1 ]; then printf "  Location: %%s\\n" "$(cat "$f")" >&2; exit 0; fi\n'
     printf 'if [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi\n'
 } > "$NETW/wget"
 chmod +x "$NET/curl" "$NETW/wget"
@@ -163,8 +175,12 @@ done
 # ── upload the fake release to the server ────────────────────────────────────
 API="$SRV/api.github.com/repos/$SLUG/releases"
 DLD="$SRV/github.com/$SLUG/releases/download/$TAG"
-mkdir -p "$API" "$DLD"
+REL="$SRV/github.com/$SLUG/releases"
+mkdir -p "$API" "$DLD" "$REL"
 printf '{"url":"x","tag_name": "%s", "name":"%s","draft":false}\n' "$TAG" "$TAG" > "$API/latest"
+# The redirect target of /releases/latest. This is the path the installer takes first, because
+# the API is capped at 60 unauthenticated calls per hour per IP (measured 403 on 2026-08-06).
+printf 'https://github.com/%s/releases/tag/%s\n' "$SLUG" "$TAG" > "$REL/latest"
 cp "$DIST/fleetmux-$TAG.tar.gz" "$DLD/fleetmux-$TAG.tar.gz"
 cp "$DIST/SHA256SUMS"           "$DLD/SHA256SUMS"
 
@@ -198,7 +214,9 @@ assert_eq "$(ex "$XDG_CONFIG_HOME/fleetmux/tmux.conf")" "yes" "the tmux snippet 
 assert_rc 0 cmp -s "$REPOC/bin/fmux" "$TTROOT/p1/bin/fmux"
 
 # What did it go fetch — the default is the latest release tag. It does not fall through to main.
-assert_eq "$(cnt "$NETLOG" 'api.github.com/repos/'"$SLUG"'/releases/latest')" "1" "by default it asks for the latest release tag"
+assert_eq "$(cnt "$NETLOG" 'github.com/'"$SLUG"'/releases/latest')" "1" "by default it resolves the latest release tag"
+assert_eq "$(cnt "$NETLOG" 'api.github.com')" "0" \
+    "★it does not touch the GitHub API — that path is capped at 60 calls/hour per IP and 403s once spent"
 assert_eq "$(cnt "$NETLOG" "releases/download/$TAG/fleetmux-$TAG.tar.gz")" "1" "it fetches that tag's release asset"
 assert_eq "$(cnt "$NETLOG" "releases/download/$TAG/SHA256SUMS")" "1" "it fetches SHA256SUMS too"
 assert_eq "$(cnt "$NETLOG" 'main')" "0" "main is never fetched from anywhere"
@@ -317,6 +335,15 @@ assert_eq "$RC" "1" "--yes also halts when the tool is missing"
 assert_eq "$(ex "$TTROOT/p6b")" "no" "does not install even with --yes"
 
 # ── ⑦ if it cannot determine the tag, it halts — it does not fall through to main ──
+# Both sources have to be taken down: the redirect (primary) and the API (fallback). Taking
+# down only one proves nothing, because the other still answers.
+mv "$REL/latest" "$REL/latest.off"
+: > "$NETLOG"
+run_remote "$NET" --prefix "$TTROOT/p7r" --preset safe
+assert_eq "$RC" "0" "★with the redirect down it falls back to the API and still installs"
+assert_eq "$(cnt "$NETLOG" 'api.github.com')" "1" "the fallback is what answered"
+assert_eq "$(ex "$TTROOT/p7r/bin/fmux")" "yes" "the fallback path installs a real binary"
+
 mv "$API/latest" "$API/latest.off"
 : > "$NETLOG"
 run_remote "$NET" --prefix "$TTROOT/p7" --preset safe
@@ -334,6 +361,7 @@ run_remote "$NET" --prefix "$TTROOT/p7b" --preset safe
 assert_eq "$RC" "1" "it also halts on a response with no tag_name"
 assert_eq "$(cnt "$NETLOG" 'releases/download')" "0" "it fetches nothing there either"
 printf '{"url":"x","tag_name": "%s", "name":"%s"}\n' "$TAG" "$TAG" > "$API/latest"
+mv "$REL/latest.off" "$REL/latest"
 
 # ── ⑧ the fetch tool — falls back to wget, halts if neither exists ──────────
 : > "$NETLOG"
@@ -367,7 +395,10 @@ assert_eq "$(ex "$TTROOT/p9b")" "no" "does not mistake an empty file for an arch
 RC=0
 OUT=$(PATH="$STUB:$NET:$SEAL" bash "$ALONE/install.sh" --prefix "$TTROOT/p10" < /dev/null 2>&1) || RC=$?
 assert_eq "$RC" "1" "with the stub network serving only the test slug, the default-slug run fails rather than installing something bogus"
-assert_eq "$(cnt "$NETLOG" 'gabury1/fleetmux')" "1" "★the default slug is wired — with FMUX_SLUG unset the request goes to the published repo"
+assert_eq "$(cnt "$NETLOG" 'github.com/gabury1/fleetmux/releases/latest')" "1" \
+    "★the default slug is wired — with FMUX_SLUG unset the redirect probe goes to the published repo"
+assert_eq "$(cnt "$NETLOG" 'api.github.com/repos/gabury1/fleetmux')" "1" \
+    "and the API fallback goes to that same repo, not somewhere else"
 assert_eq "$(cnt "$NETLOG" 'OWNER')" "0" "no placeholder address survives anywhere in the installer"
 assert_eq "$(ex "$TTROOT/p10")" "no" "nothing is installed when the fetch fails"
 

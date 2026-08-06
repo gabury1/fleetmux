@@ -321,13 +321,51 @@ fetch() {
     return 0
 }
 
-# The latest release tag. rc 1 if it can't be determined — **it never falls back to main.**
+# The latest release tag. rc 1 if it cannot be determined — **it never falls back to main.**
 # The moment main is broken, every new install breaking along with it is exactly why a tag is
-# the default. The parser is a single sed (many machines don't have jq). Splits on commas and
-# pulls "tag_name":"…" out of the line.
+# the default.
+#
+# Two ways, in this order, and the order is the point:
+#   ① the /releases/latest redirect. Plain HTTPS: GitHub answers with a redirect to
+#      /releases/tag/<tag>, so the tag is in the final URL. No API, and **no rate limit.**
+#   ② the API, as a fallback.
+#
+# ① is first because ② has a hard ceiling: the GitHub API allows 60 unauthenticated calls
+# per hour **per IP**, and returns 403 once that is spent. Measured 2026-08-06 — a macOS
+# machine got 403 on its first install while another host on a different IP got 200 at the
+# same moment. Behind a corporate NAT one busy colleague can burn the quota for everyone,
+# and the failure looks like a broken release rather than a spent quota. An install path
+# must not depend on a shared, invisible budget.
+# A User-Agent is sent on ② because the GitHub API rejects requests without one.
 latest_tag() {
-    local f="$TMPD/latest.json" t=''
-    fetch "https://api.github.com/repos/$SLUG/releases/latest" "$f" || return 1
+    local f="$TMPD/latest.json" t='' url=''
+    # ① redirect — no API, no rate limit
+    case "$DL" in
+        curl) url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' --max-time 60 \
+                    "https://github.com/$SLUG/releases/latest" 2>/dev/null) || url='' ;;
+        wget) url=$(wget -q -S --max-redirect 10 -O /dev/null \
+                    "https://github.com/$SLUG/releases/latest" 2>&1 \
+                    | sed -n 's/^[[:space:]]*Location:[[:space:]]*\([^[:space:]]*\).*/\1/p' \
+                    | tail -1) || url='' ;;
+    esac
+    case "$url" in
+        */releases/tag/*)
+            t=${url##*/releases/tag/}
+            t=${t%%[?#]*}
+            ;;
+    esac
+    if [ -n "$t" ]; then printf '%s' "$t"; return 0; fi
+
+    # ② API fallback. The parser is a single sed (many machines do not have jq): split on
+    #    commas, pull "tag_name":"…" out of the line.
+    case "$DL" in
+        curl) curl -fsSL --max-time 60 -A 'fleetmux-install' -o "$f" \
+                   "https://api.github.com/repos/$SLUG/releases/latest" 2>/dev/null || return 1 ;;
+        wget) wget -q -T 60 --user-agent='fleetmux-install' -O "$f" \
+                   "https://api.github.com/repos/$SLUG/releases/latest" 2>/dev/null || return 1 ;;
+        *)    return 1 ;;
+    esac
+    [ -s "$f" ] || return 1
     t=$(tr ',' '\n' < "$f" \
         | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
         | head -1)
