@@ -81,4 +81,20 @@ assert_eq "$(printf '%s\n' "$out" | grep -c '^snapshot .*invalid value' || true)
 assert_eq "$("$FMUXBIN" config list 2>/dev/null | grep -c 'invalid value' || true)" "0" \
     "a fresh install with only defaults has no invalid-value markers at all"
 
+
+# ── a key typed as the terminal sends it ────────────────────────────────────
+# Measured 2026-08-06 in the settings screen: pressing Option+Left put the bytes ESC b into the
+# field. That terminal takes the chord for word-jump and never forwards the key, so the value was
+# an escape sequence and binding it could never have worked. The old message printed the empty
+# token it split out ("'' is not a tmux key name"), which named nothing the person had done.
+out=$("$FMUXBIN" config set key_summon_fast "$(printf '\033b')" 2>&1) || true
+assert_contains "$out" 'escape sequence' "★an escape sequence is named as such, not reported as an empty token"
+assert_contains "$out" 'never passes the key to tmux' "and it says why binding it could not have worked"
+assert_eq "$(printf '%s' "$out" | grep -c "'' " || true)" "0" "it does not report an empty quoted token"
+assert_eq "$("$FMUXBIN" config get key_summon_fast)" "" "the rejected value is not written"
+
+out=$("$FMUXBIN" config set key_summon_fast 'S-Up @@@' 2>&1) || true
+assert_contains "$out" "'@@@'" "a plain bad name is quoted back so you can see which one"
+assert_contains "$out" 'S-Up, C-Left' "and the message shows the shape of a real key name"
+
 fmux_test_done

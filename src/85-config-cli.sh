@@ -93,8 +93,21 @@ fmux_conf_validate() {
         key_summon)
             fmux_conf_is_tmux_key "$v" || { echo "key_summon must be a tmux key name (e.g. F, C-Left)" >&2; return 1; } ;;
         key_summon_fast)
+            # A key typed straight into the prompt often arrives as the escape sequence the
+            # terminal sends for it, not as a tmux key name — measured 2026-08-06: pressing
+            # Option+Left in one terminal put the two bytes ESC b into the field, because that
+            # terminal takes the chord for word-jump and never forwards the key at all.
+            # That is worth saying out loud: it is also the reason binding it could never work.
+            case "$v" in
+                *[[:cntrl:]]*)
+                    echo "that value contains an escape sequence, not a key name — your terminal" >&2
+                    echo "  sent its own bytes for that chord and never passes the key to tmux," >&2
+                    echo "  so binding it could not work. Type the name instead, e.g. S-Up, C-Left, F." >&2
+                    return 1 ;;
+            esac
             for ov in $v; do
-                fmux_conf_is_tmux_key "$ov" || { echo "'$ov' in key_summon_fast is not a tmux key name" >&2; return 1; }
+                fmux_conf_is_tmux_key "$ov" \
+                    || { echo "'$ov' in key_summon_fast is not a tmux key name (e.g. S-Up, C-Left, M-b, F)" >&2; return 1; }
             done ;;
         key_*)
             for ov in $FMUX_CONF_RESERVED; do
