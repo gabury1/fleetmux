@@ -4,16 +4,19 @@ Keep the agent screen you already use. One status line, one keystroke, nothing e
 
 ![fmux — the fleet at a glance](demo/demo.gif)
 
-*The status bar already told you: `parser` is waiting on a human, one session is working,
-`docs` finished while you were away. One keystroke opens the list; the preview shows what
-you last asked that session.*
+*One session, full width. The bottom line says `parser` is waiting on a human, one session is
+working, and `docs` finished while you were away. One keystroke opens the list; the preview
+shows what you last asked that session.*
 
-The usual answer to "which agent is waiting on me" is a dashboard: another window, another
-layout, one more thing to look at instead of the session you were working in. `fmux` does not
-give you a screen. It puts one line in the tmux status bar you already have — which sessions
-are **working**, which are **waiting for your approval**, which **finished while you were
-away** — and one keystroke that takes you to any of them. Your agent's own screen is
-untouched.
+Running several agents usually means splitting the screen: four agents, four panes. Then your
+eyes never settle, the text keeps getting smaller, and after an hour or two it is your eyes
+that give out first — not the machine, and not the agents.
+
+But there is only one reason to split the screen at all: you want to know which session needs
+you. `fmux` starts there. Keep one session at full width and let one line in the tmux status
+bar you already have speak for the rest — which are **working**, which are **waiting for your
+approval**, which **finished while you were away** — with one keystroke to reach any of them.
+Your agent's own screen is untouched.
 
 Being that thin has a second payoff: it runs anywhere tmux does, including the headless box
 your agents actually live on. It brings the whole fleet back after that box reboots,
@@ -29,16 +32,16 @@ One bash file. No dashboard, no app, no runtime.
   files                  tool session (yazi)
 ```
 
-## Why not just read the screen?
+## Where the marks come from
 
-The first version scraped the terminal. It failed three times:
+The first version scraped the terminal, and it failed three times:
 
 1. the "working" line has many shapes — `(26s · ↓ 763 tokens)`, `· Channeling… (11s · thinking with xhigh effort)`
 2. an idle session's status bar ticks (rate-limit %), so a screen hash keeps changing
 3. merely attaching re-wraps the pane, changing the hash again
 
-**A screen is a rendering, not a fact.** So fmux stopped guessing and let the agent
-report its own state, through Claude Code / Codex **hooks**:
+**A screen is a rendering, not a fact** — so it is no longer what decides a mark. The agent
+reports its own state through Claude Code / Codex **hooks**:
 
 ```
 [claude|codex] ──hook event──▶ fmux --hook <state> ──▶ ~/.cache/fmux/hook-<session-id>
@@ -51,6 +54,21 @@ report its own state, through Claude Code / Codex **hooks**:
 Hooks run as children of the agent process, so they inherit `$TMUX_PANE` — which
 means each event knows exactly which tmux session it came from. That mapping is
 free here and painful any other way.
+
+But a hook is a message that may never arrive, or may arrive meaning something else, and both
+happen in practice:
+
+- **A turn that never runs.** `UserPromptSubmit` has already written `working`, then `Stop`
+  never comes, and the mark would stay on forever.
+- **A notification that is not a question.** `/login` fires one. fmux reads any notification
+  that is not the plain "waiting for your input" notice as ⏸ — deliberately, so a new kind of
+  approval prompt is never missed — and `/login` lands in that net.
+
+So a mark is put up on the hook's word alone, and taken down only on evidence. Past a silence
+threshold, `✻` asks the CPU counters (`/proc`, no forks) and `⏸` asks the screen, since
+"blocked on a human" and "idle" are both 0% CPU. Ignorance always counts as *still working*:
+an undecidable CPU verdict keeps the mark, so a session that just started never blinks out.
+The screen is back — not as the thing that decides a mark, but as the thing that can retire one.
 
 The same payload carries the prompt you just typed, so the `UserPromptSubmit` hook
 also parks it in `~/.cache/fmux/last-<session-id>` (4096 bytes, control characters
