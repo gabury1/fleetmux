@@ -1,9 +1,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>fleetmux — a tmux cockpit for a fleet of AI agents</title>
-<meta name="description" content="See which of your Claude Code / Codex sessions are working, which are waiting on you, and which finished while you were away — without opening a single one.">
+<title>fleetmux — a tmux cockpit for agents that live on your server</title>
+<meta name="description" content="Your agents run on a box you are not sitting at. See which sessions are working, which are waiting on you, and which finished while you were away — without opening a single one.">
 <meta property="og:title" content="fleetmux">
-<meta property="og:description" content="A tmux cockpit for running a fleet of AI coding agents.">
+<meta property="og:description" content="A tmux cockpit for AI coding agents that live on a server, not on your laptop.">
 <style>
   :root{
     --bg:#0f1319; --panel:#151b23; --line:#232c38;
@@ -61,10 +61,10 @@
 <div class="wrap">
 <header>
   <h1>fleet<span class="m">mux</span></h1>
-  <p class="tag" data-lang="en">A tmux cockpit for running a fleet of AI coding agents.</p>
-  <p class="tag" data-lang="ko">AI 코딩 에이전트 함대를 위한 tmux 조종석.</p>
-  <p class="sub" data-lang="en">One bash file. No runtime to install.</p>
-  <p class="sub" data-lang="ko">bash 파일 하나. 깔아야 할 런타임 없음.</p>
+  <p class="tag" data-lang="en">A tmux cockpit for AI coding agents that live on a server, not on your laptop.</p>
+  <p class="tag" data-lang="ko">노트북이 아니라 서버에 사는 AI 코딩 에이전트를 위한 tmux 조종석.</p>
+  <p class="sub" data-lang="en">One bash file. Survives a reboot. Reachable from your phone.</p>
+  <p class="sub" data-lang="ko">bash 파일 하나. 재부팅을 견디고, 폰에서 닿는다.</p>
   <div class="cta">
     <a class="btn primary" href="https://github.com/gabury1/fleetmux">GitHub</a>
     <a class="btn" href="https://github.com/gabury1/fleetmux/releases/latest"><span data-lang="en">Latest release</span><span data-lang="ko">최신 릴리스</span></a>
@@ -175,8 +175,8 @@
   var root = document.documentElement;
   root.classList.add('ko');
   root.lang = 'ko';
-  document.title = 'fleetmux — AI 에이전트 함대를 위한 tmux 조종석';
+  document.title = 'fleetmux — 서버에 사는 에이전트를 위한 tmux 조종석';
   var desc = document.querySelector('meta[name=description]');
-  if (desc) desc.content = '어느 Claude Code / Codex 세션이 돌고 있고, 어느 게 나를 기다리고 있고, 어느 게 자리 비운 사이 끝났는지 — 하나도 열어보지 않고 안다.';
+  if (desc) desc.content = '에이전트는 내가 앉아 있지 않은 기계에서 돈다. 어느 세션이 돌고 있고, 어느 게 나를 기다리고 있고, 어느 게 자리 비운 사이 끝났는지 — 하나도 열어보지 않고 안다.';
 })();
 </script>
