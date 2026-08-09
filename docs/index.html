@@ -128,27 +128,30 @@
 </section>
 
 <section>
-  <h2><span data-lang="en">When you come back</span><span data-lang="ko">자리 비운 사이에</span></h2>
-  <p class="lede" data-lang="en">The box reboots at 4am. You are not there.</p>
-  <p class="lede" data-lang="ko">새벽 네 시에 박스가 재부팅된다. 나는 없다.</p>
-  <p data-lang="en">Add one <code>@reboot</code> cron line and the fleet comes back on its own — every session
-  in its own directory, every agent resuming its own conversation, not a fresh shell that lost the
-  thread. The installer prints that line for you and never edits your crontab itself.</p>
-  <p data-lang="ko"><code>@reboot</code> 크론 한 줄만 넣어두면 함대가 알아서 돌아온다 — 세션마다 원래
-  디렉토리로, 에이전트마다 원래 대화로. 맥락을 잃어버린 빈 셸이 아니라. 설치 스크립트는 그 줄을
-  찍어주기만 하고 crontab 을 직접 고치지는 않는다.</p>
-  <p class="note" data-lang="en">That last part is the hard one. <code>claude --resume</code> only finds a
+  <h2><span data-lang="en">At home on a server</span><span data-lang="ko">서버에 올려두고 쓰기 좋게</span></h2>
+  <p class="lede" data-lang="en">One bash file with no runtime can just live on the box your agents actually run on
+  — a Pi, a VPS, the workstation you ssh into. Two things follow from that.</p>
+  <p class="lede" data-lang="ko">런타임 없는 bash 파일 하나라, 에이전트가 실제로 도는 기계에 그냥 올려둘 수 있다.
+  파이든, VPS든, ssh 로 들어가는 작업용 머신이든. 여기서 두 가지가 따라온다.</p>
+  <p data-lang="en"><strong>It comes back after a reboot.</strong> One <code>@reboot</code> cron line rebuilds the
+  fleet: every session in its own directory, every agent resuming its own conversation, not a fresh
+  shell that lost the thread.</p>
+  <p data-lang="ko"><strong>재부팅해도 돌아온다.</strong> <code>@reboot</code> 크론 한 줄이 함대를 다시 세운다.
+  세션은 원래 디렉토리에, 에이전트는 원래 대화에. 맥락을 잃어버린 빈 셸이 아니라.</p>
+  <p class="note" data-lang="en">Conversation identity is the hard part. <code>claude --resume</code> only finds a
   conversation from the folder it was born in, and that is usually not the session's working
-  directory. So fmux records the two separately, and restores them separately.</p>
-  <p class="note" data-lang="ko">마지막 게 어려운 부분이다. <code>claude --resume</code> 은 그 대화가 태어난
-  폴더에서만 대화를 찾는데, 그건 대개 세션의 작업 디렉토리가 아니다. 그래서 fmux 는 둘을 따로
-  기록하고 따로 복원한다.</p>
-  <p class="note" data-lang="en">And by the time you check in from your phone, Claude Code's remote-control bridge
-  has usually dropped — it times out at 25 minutes, on compaction, and when idle, and reconnecting is
-  manual. A second cron line watches for that and reattaches, so the session is there when you look.</p>
-  <p class="note" data-lang="ko">그리고 폰으로 들여다볼 때쯤이면 Claude Code 의 원격 제어 브리지는 대체로
-  끊겨 있다 — 25분 타임아웃, 컴팩션, 유휴에 끊기고, 다시 붙이는 건 수동이다. 두 번째 크론 줄이 그걸
-  지켜보다가 다시 붙여둔다. 그래서 볼 때 거기 있다.</p>
+  directory, so fmux records the two separately and restores them separately.</p>
+  <p class="note" data-lang="ko">어려운 건 대화를 다시 찾는 쪽이다. <code>claude --resume</code> 은 그 대화가 태어난
+  폴더에서만 대화를 찾는데 그건 대개 세션의 작업 디렉토리가 아니라서, fmux 는 둘을 따로 기록하고
+  따로 복원한다.</p>
+  <p data-lang="en"><strong>Remote Control stays attached.</strong> Claude Code's bridge drops on a 25-minute
+  timeout, on compaction, and when idle, and reconnecting is manual. A second cron line watches for
+  that and reattaches, so a session is reachable from your phone when you look.</p>
+  <p data-lang="ko"><strong>원격 제어가 끊긴 채로 있지 않는다.</strong> Claude Code 의 브리지는 25분 타임아웃,
+  컴팩션, 유휴에 끊기고 다시 붙이는 건 수동이다. 크론 한 줄을 더 넣어두면 그걸 지켜보다 다시 붙여준다.
+  폰으로 열었을 때 세션이 거기 있는 이유다.</p>
+  <p class="note" data-lang="en">The installer prints both cron lines and never edits your crontab itself.</p>
+  <p class="note" data-lang="ko">크론 두 줄은 설치 스크립트가 찍어주기만 한다. crontab 을 직접 고치지는 않는다.</p>
 </section>
 
 <section>
