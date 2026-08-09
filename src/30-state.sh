@@ -174,6 +174,7 @@ FMUX_CPU_MINWIN=${FMUX_CPU_MINWIN:-3}          # seconds. A window shorter than 
 FMUX_CPU_MINWIN_COARSE=${FMUX_CPU_MINWIN_COARSE:-20}  # seconds. The floor when counter resolution is 1 second (=100cs)
 FMUX_CPU_MAXWIN=${FMUX_CPU_MAXWIN:-60}         # seconds. A window longer than this is diluted and untrustworthy → undecidable
 FMUX_CPU_ROTATE=${FMUX_CPU_ROTATE:-3}          # seconds. Sample rotation interval (if called earlier than this, the file isn't touched)
+FMUX_STUCK_AFTER=${FMUX_STUCK_AFTER:-180}      # seconds. How long a `working` hook may stay silent before the status bar asks CPU for a second opinion
 
 # macOS/BSD fallback: `ps -p <pid> -o time=` → centiseconds. Sets FMUX_CPU_CS and FMUX_CPU_Q.
 #   `ps -o %cpu=` is not used — on Linux it's a **lifetime average** (measured: a session that

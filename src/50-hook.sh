@@ -30,7 +30,7 @@
 #   the glyphs would have thrown away the meaning they already carry; the background is the part
 #   that was missing.
 fmux_fleet_agg() {
-    local f st ts pid w=0 k=0 out="" now sid wids="" wnames="" wshown=0 nm line
+    local f st ts pid w=0 k=0 out="" now sid wids="" wnames="" wshown=0 nm line cbusy
     now=$(date +%s)
     for f in "$STATE"/hook-*; do
         [ -f "$f" ] || continue
@@ -51,21 +51,41 @@ fmux_fleet_agg() {
                 wids="$wids ${f##*/hook-}" ;;
             working)
                 sid=${f##*/hook-}
-                # If the hook is working, **count it unconditionally** — there's no 3rd-tier
-                #   witness (screen) here. Even if CPU answers rc1 (definitely idle), we don't
-                #   subtract it. Measured: a claude waiting on a tool-call response oscillates
-                #   between 3-22 cs/s and keeps crossing the threshold of 6 (24% of a 3-second
-                #   window falls below threshold). If the status bar, which runs every 5
-                #   seconds, turns the badge off based on one single window, the ✻n of a
-                #   genuinely working session flickers — that's the exact bug we were trying to
-                #   fix. Un-sticking is left entirely to --list, where the screen witness stands
-                #   (false negative > false positive: ✻n is just a count badge, so counting one
-                #   extra is cheap, while undercounting can miss an absent fleet entirely).
-                k=$((k + 1))
+                # A fresh `working` hook is counted **unconditionally** — CPU is not consulted at
+                #   all. Measured: a claude waiting on a tool-call response oscillates between
+                #   3-22 cs/s and keeps crossing the threshold of 6 (24% of a 3-second window
+                #   falls below it). The status bar redraws every 5 seconds, so subtracting on a
+                #   single window would make the ✻n of a genuinely working session flicker.
+                #
+                # But "unconditionally, forever" was wrong, and it showed up in real use: a
+                #   prompt was submitted to a session and the turn never ran, so UserPromptSubmit
+                #   had already fired `working` and Stop never came. The badge held ✻ for that
+                #   session indefinitely while --list, which has the anti-stuck guard, correctly
+                #   showed nothing. A status bar that disagrees with the popup is worse than one
+                #   that is occasionally late: the whole point of the badge is that you do not
+                #   have to open anything to trust it.
+                #
+                # So the guard applies only once the hook has been silent for FMUX_STUCK_AFTER
+                #   (180s) — three orders away from the 3-second window the flicker argument is
+                #   about. Even then it drops the session only on a **definite** idle verdict:
+                #   fmux_cpu_busy rc 0 = working and rc 2 = undecidable both keep counting, so a
+                #   session with no sample yet (or a nonsense window) is never made to disappear.
+                #   Ignorance counts as working; only evidence removes.
+                # The screen tier that --list has as its 3rd witness is deliberately not here —
+                #   it costs forks on a path that runs every 5 seconds, and 180s of silence plus
+                #   a definite CPU verdict is already conservative enough for a count.
+                if [ $(( now - ts )) -le "$FMUX_STUCK_AFTER" ]; then
+                    k=$((k + 1))
+                else
+                    cbusy=0; fmux_cpu_busy "$sid" "$pid" "$now" || cbusy=$?
+                    [ "$cbusy" = 1 ] || k=$((k + 1))
+                fi
                 # *The sampler must stay here* — the status bar rotating the sample here every
                 #   5 seconds is the axis of the CPU delta design. Without this line, there
                 #   would be no sample at all for the popup (--list) to use when opened,
                 #   fmux_cpu_busy would be permanently rc2, and criterion C would die entirely.
+                #   It also has to run **after** the check above, which reads the sample this
+                #   call is about to rotate.
                 fmux_cpu_sample "$sid" "$pid" "$now" ;;
         esac
     done
