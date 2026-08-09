@@ -125,23 +125,27 @@
 </section>
 
 <section>
-  <h2><span data-lang="en">Why not just read the screen?</span><span data-lang="ko">그냥 화면을 읽으면 안 되나?</span></h2>
-  <p data-lang="en">Because that was the first version, and it was wrong three separate ways. Spinner wording
-  changes between releases. An idle session still repaints its status line. Attaching to a
-  session reflows it and every heuristic shifts underneath you.</p>
-  <p data-lang="ko">첫 버전이 그거였고, 세 군데에서 각각 틀렸다. 스피너 문구는 릴리스마다 바뀐다.
-  놀고 있는 세션도 상태줄은 계속 다시 그린다. 세션에 붙는 순간 화면이 재배치되면서
-  모든 휴리스틱이 발밑에서 어긋난다.</p>
-  <p class="lede" data-lang="en">The screen is a rendering, not the content.</p>
-  <p class="lede" data-lang="ko">화면은 내용이 아니라 렌더링 결과다.</p>
-  <p class="note" data-lang="en">So state comes from the agent itself. Claude Code and Codex hooks report
-  <code>working</code> / <code>idle</code> / <code>waiting</code> as they happen, and fmux draws
-  what they said. The hooks are injected through a PATH shim that only fires inside tmux — your
-  global config is never touched, and deleting one file removes every trace.</p>
-  <p class="note" data-lang="ko">그래서 상태는 에이전트 본인한테서 받는다. Claude Code·Codex 훅이
-  <code>working</code> / <code>idle</code> / <code>waiting</code> 을 그때그때 알려주고,
-  fmux 는 들은 대로 그린다. 훅은 tmux 안에서만 발동하는 PATH shim 으로 주입된다 —
-  전역 설정은 건드리지 않고, 파일 하나 지우면 흔적이 전부 사라진다.</p>
+  <h2><span data-lang="en">When you come back</span><span data-lang="ko">자리 비운 사이에</span></h2>
+  <p class="lede" data-lang="en">The box reboots at 4am. You are not there.</p>
+  <p class="lede" data-lang="ko">새벽 네 시에 박스가 재부팅된다. 나는 없다.</p>
+  <p data-lang="en">Add one <code>@reboot</code> cron line and the fleet comes back on its own — every session
+  in its own directory, every agent resuming its own conversation, not a fresh shell that lost the
+  thread. The installer prints that line for you and never edits your crontab itself.</p>
+  <p data-lang="ko"><code>@reboot</code> 크론 한 줄만 넣어두면 함대가 알아서 돌아온다 — 세션마다 원래
+  디렉토리로, 에이전트마다 원래 대화로. 맥락을 잃어버린 빈 셸이 아니라. 설치 스크립트는 그 줄을
+  찍어주기만 하고 crontab 을 직접 고치지는 않는다.</p>
+  <p class="note" data-lang="en">That last part is the hard one. <code>claude --resume</code> only finds a
+  conversation from the folder it was born in, and that is usually not the session's working
+  directory. So fmux records the two separately, and restores them separately.</p>
+  <p class="note" data-lang="ko">마지막 게 어려운 부분이다. <code>claude --resume</code> 은 그 대화가 태어난
+  폴더에서만 대화를 찾는데, 그건 대개 세션의 작업 디렉토리가 아니다. 그래서 fmux 는 둘을 따로
+  기록하고 따로 복원한다.</p>
+  <p class="note" data-lang="en">And by the time you check in from your phone, Claude Code's remote-control bridge
+  has usually dropped — it times out at 25 minutes, on compaction, and when idle, and reconnecting is
+  manual. A second cron line watches for that and reattaches, so the session is there when you look.</p>
+  <p class="note" data-lang="ko">그리고 폰으로 들여다볼 때쯤이면 Claude Code 의 원격 제어 브리지는 대체로
+  끊겨 있다 — 25분 타임아웃, 컴팩션, 유휴에 끊기고, 다시 붙이는 건 수동이다. 두 번째 크론 줄이 그걸
+  지켜보다가 다시 붙여둔다. 그래서 볼 때 거기 있다.</p>
 </section>
 
 <section>
@@ -155,6 +159,10 @@
   그게 온당한 순서고, README 에도 그 경로가 적혀 있다. 설치 스크립트는 의존성을 먼저 확인하고,
   crontab 을 고치지 않고, 이미 남의 것인 키나 파일은 가져가지 않는다.
   요구사항은 tmux ≥ 3.2, fzf ≥ 0.64, bash. 리눅스·macOS 지원, 윈도우는 WSL2.</p>
+  <p class="note" data-lang="en">The agent hooks arrive through a PATH shim that only fires inside tmux. Your
+  global Claude Code config is never touched, and deleting one file removes every trace.</p>
+  <p class="note" data-lang="ko">에이전트 훅은 tmux 안에서만 발동하는 PATH shim 으로 주입된다. 전역 Claude Code
+  설정은 건드리지 않고, 파일 하나 지우면 흔적이 전부 사라진다.</p>
 </section>
 
 <footer>
