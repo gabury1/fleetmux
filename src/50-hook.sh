@@ -30,7 +30,7 @@
 #   the glyphs would have thrown away the meaning they already carry; the background is the part
 #   that was missing.
 fmux_fleet_agg() {
-    local f st ts pid w=0 k=0 out="" now sid wids="" wnames="" wshown=0 nm line cbusy
+    local f st ts pid w=0 k=0 out="" now sid wids="" wstale="" wnames="" wshown=0 nm line cbusy
     now=$(date +%s)
     for f in "$STATE"/hook-*; do
         [ -f "$f" ] || continue
@@ -48,7 +48,11 @@ fmux_fleet_agg() {
                 # a human touches it**. If we only show a count, you'd have to open the popup
                 # to find out "who?", and that one open is itself the delay.
                 # (✓ already carries a name. It was backwards that the more urgent ⏸ didn't.)
-                wids="$wids ${f##*/hook-}" ;;
+                # The id is tagged with its age here: a stale ⏸ has to be re-checked against the
+                # screen further down, and that check needs a session name we do not have yet.
+                sid=${f##*/hook-}
+                if [ $(( now - ts )) -gt "$FMUX_STALE_WAIT" ]; then wstale="$wstale $sid"; fi
+                wids="$wids $sid" ;;
             working)
                 sid=${f##*/hook-}
                 # A fresh `working` hook is counted **unconditionally** — CPU is not consulted at
@@ -101,6 +105,25 @@ fmux_fleet_agg() {
                     case "$line" in "\$$sid "*) nm=${line#* }; break ;; esac
                 done <<< "$wnames"
                 [ -n "$nm" ] || continue
+                # Anti-"stuck" guard, the same one --list has had (80-view.sh). Not every
+                #   Notification means "a human is being asked something": `/login` fires one
+                #   too, and this tool cannot read the payload of a notification it has never
+                #   seen the wording of. So the verdict is not made on the message at all — it
+                #   is made on the screen, which either has an approval dialog on it or does
+                #   not. That catches /login and every future notification alike, without
+                #   anyone having to guess a phrase.
+                # Only stale ⏸ pays for it. A genuine wait keeps its hook fresh-ish and, more
+                #   to the point, this runs every 5 seconds — one capture-pane per stale
+                #   waiting session is the whole budget, and a fleet normally has none.
+                # The screen is the only witness here: CPU cannot tell "blocked on a human"
+                #   from "idle", both being 0.
+                case " $wstale " in
+                    *" $sid "*)
+                        if ! tmux capture-pane -p -t "=$nm:" 2>/dev/null \
+                             | grep -qaE "$WAITING_PAT"; then
+                            w=$((w - 1)); continue
+                        fi ;;
+                esac
                 # Write up to three, then +n for the rest — the status bar is narrow, and tmux truncates the whole thing if it overflows.
                 if [ "$wshown" -lt 3 ]; then
                     out="$out#[fg=colour215,bg=colour235,bold] ⏸ $nm #[default] "
@@ -114,7 +137,12 @@ fmux_fleet_agg() {
                 && out="$out#[fg=colour215,bg=colour235,bold] +$((w - wshown)) #[default] "
         fi
         # If we couldn't get a single name (no server, or the query failed), fall back to showing just the count as before.
-        [ "$wshown" = 0 ] && out="$out#[fg=colour215,bg=colour235,bold] ⏸ $w #[default] "
+        #   `w > 0` has to be re-tested here, not just at the top of the block: the screen guard
+        #   above decrements w, so a fleet whose every ⏸ turned out to be stale arrives here with
+        #   w = 0 and would print a literal "⏸ 0" — a badge claiming a wait that it just decided
+        #   does not exist.
+        [ "$wshown" = 0 ] && [ "$w" -gt 0 ] \
+            && out="$out#[fg=colour215,bg=colour235,bold] ⏸ $w #[default] "
     fi
     [ "$k" -gt 0 ] && out="$out#[fg=yellow,bg=colour235,bold] ✻$k #[default] "
     printf '%s' "$out"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# --status counting — the anti-stuck guard on ✻.
+# --status counting — the anti-stuck guards on ✻ and ⏸.
 #
 # Why this test exists: the status bar used to count a `working` hook forever, as long as the
 # hook's pid was alive. That is fine while the agent keeps firing hooks, and it is what stops the
@@ -97,5 +97,58 @@ fi
 reset; hook working "$STALE"; cpu_idle
 assert_eq "$(FMUX_STUCK_AFTER=99999 marks)" "✻1" 'FMUX_STUCK_AFTER is honoured — raising it keeps a stale hook counted'
 
+# ── ⏸ — the same guard, on the other mark ─────────────────────────────────
+# `waiting` has no CPU tier: "blocked on a human" and "idle" are both 0% CPU. The screen is the
+# only witness, and it is the same WAITING_PAT --list uses.
+#
+# The case that forced this: `/login` fires a Notification. fmux reads any notification that is
+# not the "waiting for your input" idle notice as ⏸ — deliberately, so that a new kind of approval
+# prompt is never missed — and /login lands in that net. The payload wording of a notification we
+# have never captured cannot be filtered on, so the verdict is taken off the message entirely and
+# put on the screen, which either has a dialog on it or does not.
+#
+# This needs a tmux that answers capture-pane, so the sealed stub is replaced from here on. Its
+# refusal log is already asserted above, before the swap.
 assert_no_tmux_mutation
+
+SCREEN="$FMUXROOT/screen.txt"
+MYBIN="$FMUXROOT/mybin"; mkdir -p "$MYBIN"
+cat > "$MYBIN/tmux" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+    list-sessions)  printf '$s1 sess-one\n' ;;
+    capture-pane)   cat "$FMUX_TEST_SCREEN" ;;
+    *)              exit 1 ;;
+esac
+STUB
+chmod +x "$MYBIN/tmux"
+PATH="$MYBIN:$PATH"; export PATH FMUX_TEST_SCREEN="$SCREEN"
+
+wait_hook() { printf 'waiting %s %s\n' "$1" "$PID" > "$STATE/hook-s1"; }
+pause()     { "$FMUXBIN" --status 2>/dev/null | grep -o '⏸[^ ]*' | head -1; }
+
+# ⑦ A fresh ⏸ is trusted with no screen check — the badge must appear the instant the hook lands,
+#    not one guard later.
+reset; wait_hook "$FRESH"; : > "$SCREEN"
+assert_eq "$(pause)" "⏸" 'a fresh waiting hook is shown without consulting the screen'
+
+# ⑧ A stale ⏸ whose screen still holds the dialog is a real wait — someone walked away mid-prompt.
+#    This is the expensive direction to get wrong: dropping it means an agent waits forever unseen.
+reset; wait_hook "$STALE"; printf 'Do you want to proceed?\n' > "$SCREEN"
+assert_eq "$(pause)" "⏸" 'a stale waiting hook stays shown while the approval dialog is on screen'
+
+# ⑨ The /login case. Stale, and the screen has no dialog on it.
+reset; wait_hook "$STALE"; printf 'Login successful. Remote Control disconnected.\n' > "$SCREEN"
+assert_eq "$(pause)" "" 'a stale waiting hook with no dialog on screen is dropped (the /login false positive)'
+
+# ⑩ The decrement must not leak a bare count. w is decremented by ⑨'s path, and the name-less
+#    fallback at the end of the block used to print "⏸ $w" unconditionally — with every ⏸ filtered
+#    out, that renders "⏸ 0": a badge announcing a wait it just decided was not there.
+reset; wait_hook "$STALE"; printf 'nothing here\n' > "$SCREEN"
+assert_eq "$("$FMUXBIN" --status 2>/dev/null | grep -c '⏸')" "0" 'filtering every ⏸ out prints no badge at all, not "⏸ 0"'
+
+# ⑪ The threshold is read, not hard-coded.
+reset; wait_hook "$STALE"; : > "$SCREEN"
+assert_eq "$(FMUX_STALE_WAIT=99999 pause)" "⏸" 'FMUX_STALE_WAIT is honoured — raising it keeps a stale ⏸ shown'
+
 fmux_test_done
