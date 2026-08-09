@@ -1,9 +1,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>fleetmux — a tmux cockpit for agents that live on your server</title>
-<meta name="description" content="Your agents run on a box you are not sitting at. See which sessions are working, which are waiting on you, and which finished while you were away — without opening a single one.">
+<title>fleetmux — keep your agent screen, add one status line</title>
+<meta name="description" content="Keep the Claude Code / Codex screen you already use. One line in the tmux status bar says which session is working, which is waiting on you, and which finished while you were away — and one keystroke takes you there.">
 <meta property="og:title" content="fleetmux">
-<meta property="og:description" content="A tmux cockpit for AI coding agents that live on a server, not on your laptop.">
+<meta property="og:description" content="No new UI. Your agent's own screen, one status line, one key to move between sessions.">
 <style>
   :root{
     --bg:#0f1319; --panel:#151b23; --line:#232c38;
@@ -61,10 +61,10 @@
 <div class="wrap">
 <header>
   <h1>fleet<span class="m">mux</span></h1>
-  <p class="tag" data-lang="en">A tmux cockpit for AI coding agents that live on a server, not on your laptop.</p>
-  <p class="tag" data-lang="ko">노트북이 아니라 서버에 사는 AI 코딩 에이전트를 위한 tmux 조종석.</p>
-  <p class="sub" data-lang="en">One bash file. Survives a reboot. Reachable from your phone.</p>
-  <p class="sub" data-lang="ko">bash 파일 하나. 재부팅을 견디고, 폰에서 닿는다.</p>
+  <p class="tag" data-lang="en">Keep the agent screen you already use. fmux adds one status line and one keystroke — nothing else to look at.</p>
+  <p class="tag" data-lang="ko">쓰던 에이전트 화면 그대로. fmux 가 더하는 건 상태줄 한 줄과 단축키 하나뿐이다.</p>
+  <p class="sub" data-lang="en">One bash file. No dashboard, no app, no runtime.</p>
+  <p class="sub" data-lang="ko">bash 파일 하나. 대시보드도, 앱도, 런타임도 없다.</p>
   <div class="cta">
     <a class="btn primary" href="https://github.com/gabury1/fleetmux">GitHub</a>
     <a class="btn" href="https://github.com/gabury1/fleetmux/releases/latest"><span data-lang="en">Latest release</span><span data-lang="ko">최신 릴리스</span></a>
@@ -186,8 +186,8 @@
   var root = document.documentElement;
   root.classList.add('ko');
   root.lang = 'ko';
-  document.title = 'fleetmux — 서버에 사는 에이전트를 위한 tmux 조종석';
+  document.title = 'fleetmux — 쓰던 화면 그대로, 상태줄 한 줄만';
   var desc = document.querySelector('meta[name=description]');
-  if (desc) desc.content = '에이전트는 내가 앉아 있지 않은 기계에서 돈다. 어느 세션이 돌고 있고, 어느 게 나를 기다리고 있고, 어느 게 자리 비운 사이 끝났는지 — 하나도 열어보지 않고 안다.';
+  if (desc) desc.content = '쓰던 Claude Code / Codex 화면 그대로. tmux 상태줄 한 줄이 어느 세션이 돌고 있고, 어느 게 나를 기다리고 있고, 어느 게 자리 비운 사이 끝났는지 알려주고, 단축키 하나면 거기로 간다.';
 })();
 </script>
