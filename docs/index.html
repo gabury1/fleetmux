@@ -45,81 +45,138 @@
   .note{color:var(--dim);font-size:14.5px}
   footer{margin:70px 0 40px;padding-top:24px;border-top:1px solid var(--line);
          color:var(--dim);font-size:13.5px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .lang{font-size:13px;color:var(--dim);text-decoration:none;border-bottom:1px dotted var(--line)}
+  .lang:hover{color:var(--teal)}
   @media (max-width:560px){h1{font-size:34px}header{padding:48px 0 26px}}
+
+  /* Language switch. English is the document default, so a client with no JS —
+     and any crawler — sees English and never a duplicated page. The Korean nodes
+     only ever get their display restored, never forced, so each element keeps
+     whatever display type it had (span stays inline, p stays block). */
+  [data-lang="ko"]{display:none}
+  html.ko [data-lang="ko"]{display:revert}
+  html.ko [data-lang="en"]{display:none}
 </style>
 
 <div class="wrap">
 <header>
   <h1>fleet<span class="m">mux</span></h1>
-  <p class="tag">A tmux cockpit for running a fleet of AI coding agents.</p>
-  <p class="sub">One bash file. No runtime to install.</p>
+  <p class="tag" data-lang="en">A tmux cockpit for running a fleet of AI coding agents.</p>
+  <p class="tag" data-lang="ko">AI 코딩 에이전트 함대를 위한 tmux 조종석.</p>
+  <p class="sub" data-lang="en">One bash file. No runtime to install.</p>
+  <p class="sub" data-lang="ko">bash 파일 하나. 깔아야 할 런타임 없음.</p>
   <div class="cta">
     <a class="btn primary" href="https://github.com/gabury1/fleetmux">GitHub</a>
-    <a class="btn" href="https://github.com/gabury1/fleetmux/releases/latest">Latest release</a>
+    <a class="btn" href="https://github.com/gabury1/fleetmux/releases/latest"><span data-lang="en">Latest release</span><span data-lang="ko">최신 릴리스</span></a>
   </div>
 
   <figure>
     <img src="demo.gif" alt="The status bar shows a session waiting for approval; one keystroke opens the fleet list and the preview shows the last prompt.">
-    <figcaption>The status bar already told you. One keystroke opens the list — and lands you on the session that was blocked on a human.</figcaption>
+    <figcaption data-lang="en">The status bar already told you. One keystroke opens the list — and lands you on the session that was blocked on a human.</figcaption>
+    <figcaption data-lang="ko">상태바가 이미 알려주고 있었다. 한 타건으로 목록이 열리고, 사람을 기다리던 그 세션에 바로 내려앉는다.</figcaption>
   </figure>
 </header>
 
 <section>
-  <h2>The problem</h2>
-  <p class="lede">Run five agents at once and the expensive one is not the slow session — it is
+  <h2><span data-lang="en">The problem</span><span data-lang="ko">문제</span></h2>
+  <p class="lede" data-lang="en">Run five agents at once and the expensive one is not the slow session — it is
   the one that finished asking you a question forty minutes ago and has been idle ever since.</p>
-  <p class="note">You cannot see that from outside the session, so you go in and look. Five times.
+  <p class="lede" data-lang="ko">에이전트를 다섯 개 굴려 보면, 제일 비싼 세션은 느린 세션이 아니다.
+  40분 전에 질문을 던져놓고 그때부터 아무것도 안 하고 있는 세션이다.</p>
+  <p class="note" data-lang="en">You cannot see that from outside the session, so you go in and look. Five times.
   Then you do it again in ten minutes.</p>
+  <p class="note" data-lang="ko">그건 세션 밖에서는 안 보이니까 들어가서 확인한다. 다섯 번.
+  그리고 10분 뒤에 또 한다.</p>
 </section>
 
 <section>
-  <h2>What you get</h2>
+  <h2><span data-lang="en">What you get</span><span data-lang="ko">쓰면 생기는 것</span></h2>
   <div class="grid">
     <div class="card">
-      <h3><span class="mark w">⏸</span> waiting on you</h3>
-      <p>The one that matters. It is named in the status bar, so you know <em>which</em> session
+      <h3><span class="mark w">⏸</span><span data-lang="en"> waiting on you</span><span data-lang="ko"> 나를 기다리는 중</span></h3>
+      <p data-lang="en">The one that matters. It is named in the status bar, so you know <em>which</em> session
       is blocked without opening anything.</p>
+      <p data-lang="ko">제일 중요한 상태. 상태바에 <em>이름까지</em> 뜨기 때문에, 아무것도 열지 않고도
+      어느 세션이 막혀 있는지 안다.</p>
     </div>
     <div class="card">
-      <h3><span class="mark r">✻</span> working</h3>
-      <p>Actually running right now — judged from agent hooks and CPU, not from guessing at
+      <h3><span class="mark r">✻</span><span data-lang="en"> working</span><span data-lang="ko"> 작업 중</span></h3>
+      <p data-lang="en">Actually running right now — judged from agent hooks and CPU, not from guessing at
       what the screen looks like.</p>
+      <p data-lang="ko">지금 실제로 돌고 있다는 뜻. 화면 모양을 보고 추측하는 게 아니라
+      에이전트 훅과 CPU로 판정한다.</p>
     </div>
     <div class="card">
-      <h3><span class="mark d">✓</span> finished while away</h3>
-      <p>Unread results sit at the top of the list and clear themselves the moment you visit.</p>
+      <h3><span class="mark d">✓</span><span data-lang="en"> finished while away</span><span data-lang="ko"> 자리 비운 사이 끝남</span></h3>
+      <p data-lang="en">Unread results sit at the top of the list and clear themselves the moment you visit.</p>
+      <p data-lang="ko">안 읽은 결과가 목록 맨 위에 올라오고, 한 번 들르는 순간 알아서 사라진다.</p>
     </div>
     <div class="card">
-      <h3>survives a reboot</h3>
-      <p><code>fmux --restore</code> brings the whole fleet back — every session in its own
+      <h3><span data-lang="en">survives a reboot</span><span data-lang="ko">재부팅을 견딘다</span></h3>
+      <p data-lang="en"><code>fmux --restore</code> brings the whole fleet back — every session in its own
       directory, each agent resuming its own conversation.</p>
+      <p data-lang="ko"><code>fmux --restore</code> 하나로 함대가 통째로 돌아온다. 세션마다 원래 디렉토리로,
+      에이전트마다 원래 대화로.</p>
     </div>
   </div>
 </section>
 
 <section>
-  <h2>Why not just read the screen?</h2>
-  <p>Because that was the first version, and it was wrong three separate ways. Spinner wording
+  <h2><span data-lang="en">Why not just read the screen?</span><span data-lang="ko">그냥 화면을 읽으면 안 되나?</span></h2>
+  <p data-lang="en">Because that was the first version, and it was wrong three separate ways. Spinner wording
   changes between releases. An idle session still repaints its status line. Attaching to a
   session reflows it and every heuristic shifts underneath you.</p>
-  <p class="lede">The screen is a rendering, not the content.</p>
-  <p class="note">So state comes from the agent itself. Claude Code and Codex hooks report
+  <p data-lang="ko">첫 버전이 그거였고, 세 군데에서 각각 틀렸다. 스피너 문구는 릴리스마다 바뀐다.
+  놀고 있는 세션도 상태줄은 계속 다시 그린다. 세션에 붙는 순간 화면이 재배치되면서
+  모든 휴리스틱이 발밑에서 어긋난다.</p>
+  <p class="lede" data-lang="en">The screen is a rendering, not the content.</p>
+  <p class="lede" data-lang="ko">화면은 내용이 아니라 렌더링 결과다.</p>
+  <p class="note" data-lang="en">So state comes from the agent itself. Claude Code and Codex hooks report
   <code>working</code> / <code>idle</code> / <code>waiting</code> as they happen, and fmux draws
   what they said. The hooks are injected through a PATH shim that only fires inside tmux — your
   global config is never touched, and deleting one file removes every trace.</p>
+  <p class="note" data-lang="ko">그래서 상태는 에이전트 본인한테서 받는다. Claude Code·Codex 훅이
+  <code>working</code> / <code>idle</code> / <code>waiting</code> 을 그때그때 알려주고,
+  fmux 는 들은 대로 그린다. 훅은 tmux 안에서만 발동하는 PATH shim 으로 주입된다 —
+  전역 설정은 건드리지 않고, 파일 하나 지우면 흔적이 전부 사라진다.</p>
 </section>
 
 <section>
-  <h2>Install</h2>
+  <h2><span data-lang="en">Install</span><span data-lang="ko">설치</span></h2>
   <pre>curl -fsSL https://raw.githubusercontent.com/gabury1/fleetmux/main/install.sh | bash</pre>
-  <p class="note">Or read it first, which is the reasonable thing to do with any
+  <p class="note" data-lang="en">Or read it first, which is the reasonable thing to do with any
   <code>curl | sh</code> — the README shows that path too. The installer checks its
   dependencies, never edits your crontab, and never takes a key or a file that is already
   someone else's. Requires tmux ≥ 3.2, fzf ≥ 0.64, bash. Linux and macOS; Windows via WSL2.</p>
+  <p class="note" data-lang="ko">아니면 먼저 열어서 읽어도 된다. 어떤 <code>curl | sh</code> 든
+  그게 온당한 순서고, README 에도 그 경로가 적혀 있다. 설치 스크립트는 의존성을 먼저 확인하고,
+  crontab 을 고치지 않고, 이미 남의 것인 키나 파일은 가져가지 않는다.
+  요구사항은 tmux ≥ 3.2, fzf ≥ 0.64, bash. 리눅스·macOS 지원, 윈도우는 WSL2.</p>
 </section>
 
 <footer>
   <span>MIT · <a href="https://github.com/gabury1/fleetmux">github.com/gabury1/fleetmux</a></span>
-  <span>Built for a Raspberry Pi running ten agents at once.</span>
+  <span>
+    <a class="lang" href="?lang=ko" data-lang="en">한국어</a>
+    <a class="lang" href="?lang=en" data-lang="ko">English</a>
+  </span>
+  <span data-lang="en">Built for a Raspberry Pi running ten agents at once.</span>
+  <span data-lang="ko">에이전트 열 개를 동시에 굴리는 라즈베리파이에서 태어났다.</span>
 </footer>
 </div>
+
+<script>
+// ?lang=ko switches the page. Anything else — including no parameter at all —
+// leaves the English default alone, so a shared link without the parameter
+// always lands on the same page for everyone.
+(function () {
+  var want = new URLSearchParams(location.search).get('lang');
+  if (want !== 'ko') return;
+  var root = document.documentElement;
+  root.classList.add('ko');
+  root.lang = 'ko';
+  document.title = 'fleetmux — AI 에이전트 함대를 위한 tmux 조종석';
+  var desc = document.querySelector('meta[name=description]');
+  if (desc) desc.content = '어느 Claude Code / Codex 세션이 돌고 있고, 어느 게 나를 기다리고 있고, 어느 게 자리 비운 사이 끝났는지 — 하나도 열어보지 않고 안다.';
+})();
+</script>
