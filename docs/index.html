@@ -220,7 +220,7 @@
   <div class="walk">
     <div class="tabs">
       <input type="radio" name="walk" id="w1" checked>
-      <label for="w1"><span class="n">01</span><span data-lang="en">Open fmux</span><span data-lang="ko">fmux 켜기</span></label>
+      <label for="w1"><span class="n">01</span><span data-lang="en">Get in</span><span data-lang="ko">들어가기</span></label>
       <input type="radio" name="walk" id="w2">
       <label for="w2"><span class="n">02</span><span data-lang="en">Start a session</span><span data-lang="ko">새 세션 만들기</span></label>
       <input type="radio" name="walk" id="w3">
@@ -232,13 +232,17 @@
     </div>
 
     <div class="panel" id="p1">
-      <h3><span data-lang="en">One key, from anywhere</span><span data-lang="ko">어디서든 한 키</span></h3>
-      <p data-lang="en">Press <span class="key">Shift + ↑</span>. No prefix, no chord — the popup opens over
-      whatever you were doing, lists every session, and previews what you last asked the one under
-      the cursor.</p>
-      <p data-lang="ko"><span class="key">Shift + ↑</span> 를 누르면 돼요. prefix 도, 두 번 누르는 것도 없이
-      하던 화면 위로 팝업이 열립니다. 세션이 전부 나오고, 커서가 놓인 세션에는 마지막으로 뭘
-      시켰는지가 같이 보여요.</p>
+      <h3><span data-lang="en">Type <code>fmux</code> once. After that it is one key.</span><span data-lang="ko">처음 한 번만 <code>fmux</code>, 그 뒤로는 한 키</span></h3>
+      <p data-lang="en">From a plain shell, run <code>fmux</code>. It lists your sessions and attaches you to the
+      one you pick — that is how you get in from outside tmux.</p>
+      <p data-lang="ko">터미널에서 <code>fmux</code> 를 치면 세션 목록이 나오고, 고른 세션에 붙습니다.
+      tmux 밖에서 들어오는 길이에요.</p>
+      <p data-lang="en">Once you are inside, you never type it again: <span class="key">Shift + ↑</span> opens the
+      same popup over whatever you were doing — no prefix, no chord — and previews what you last
+      asked the session under the cursor.</p>
+      <p data-lang="ko">일단 안에 들어오면 다시 칠 일이 없어요. <span class="key">Shift + ↑</span> 하나면
+      하던 화면 위로 같은 팝업이 열립니다. prefix 도, 두 번 누르는 것도 없이요. 커서가 놓인 세션에는
+      마지막으로 뭘 시켰는지가 같이 보이고요.</p>
       <p class="note" data-lang="en">If your terminal already uses that key, <code>fmux config set key_summon_fast</code>
       takes any other name — or leave it out entirely and use <span class="key">prefix + F</span>.</p>
       <p class="note" data-lang="ko">터미널이 그 키를 이미 쓰고 있으면 <code>fmux config set key_summon_fast</code>
