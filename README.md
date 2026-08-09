@@ -112,6 +112,13 @@ fmux --restore --dry    # just show the plan
 `--resume`, never `--continue`: `--continue` picks "the latest chat in this folder",
 which makes same-cwd sessions clone each other. Ask us how we know.
 
+**Why `cwd` and `conversation home` are two separate fields.** `claude --resume <id>` only
+finds a conversation from the folder it was born in, and that is usually *not* where the tmux
+session sits — a worker started in `~/work/_myproject` can own a transcript filed under
+`~/.claude/projects/-home-user/`. Restore with the session cwd alone and you land in a shell
+saying "No conversation found". So the two are recorded apart: the session is created at its
+own cwd, and the resume is run from the conversation's home.
+
 ## Keeping Remote Control alive
 
 > **Linux only.** This one feature needs `/proc/<pid>/stat` (`src/60-rc.sh`) to tie a

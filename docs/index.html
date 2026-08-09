@@ -130,30 +130,20 @@
 
 <section>
   <h2><span data-lang="en">At home on a server</span><span data-lang="ko">서버에 올려두고 쓰기 좋게</span></h2>
-  <p class="lede" data-lang="en">One bash file with no runtime can just live on the box your agents actually run on
-  — a Pi, a VPS, the workstation you ssh into. Two things follow from that.</p>
-  <p class="lede" data-lang="ko">런타임이 필요 없는 bash 파일 하나라, 에이전트가 실제로 도는 기계에 그냥 올려둘 수 있어요.
-  파이든 VPS든, ssh 로 들어가는 작업용 머신이든요. 여기서 두 가지가 따라옵니다.</p>
-  <p data-lang="en"><strong>It comes back after a reboot.</strong> One <code>@reboot</code> cron line rebuilds the
-  fleet: every session in its own directory, every agent resuming its own conversation, not a fresh
-  shell that lost the thread.</p>
-  <p data-lang="ko"><strong>재부팅해도 돌아옵니다.</strong> <code>@reboot</code> 크론 한 줄이면 함대가 다시
-  세워져요. 세션은 원래 디렉토리로, 에이전트는 원래 대화로 돌아옵니다. 맥락을 잃어버린 빈 셸이
-  아니라요.</p>
-  <p class="note" data-lang="en">Conversation identity is the hard part. <code>claude --resume</code> only finds a
-  conversation from the folder it was born in, and that is usually not the session's working
-  directory, so fmux records the two separately and restores them separately.</p>
-  <p class="note" data-lang="ko">어려운 건 대화를 다시 찾는 쪽이에요. <code>claude --resume</code> 은 그 대화가 태어난
-  폴더에서만 대화를 찾는데, 그게 대개 세션의 작업 디렉토리가 아니거든요. 그래서 fmux 는 둘을
-  따로 기록해두고 따로 복원합니다.</p>
-  <p data-lang="en"><strong>Remote Control stays attached.</strong> Claude Code's bridge drops on a 25-minute
-  timeout, on compaction, and when idle, and reconnecting is manual. A second cron line watches for
-  that and reattaches, so a session is reachable from your phone when you look.</p>
-  <p data-lang="ko"><strong>원격 제어가 끊긴 채로 있지 않아요.</strong> Claude Code 의 브리지는 25분 타임아웃이나
-  컴팩션, 유휴 상태에서 끊기는데 다시 붙이는 건 수동이에요. 크론 한 줄을 더 넣어두면 그걸 지켜보다
-  알아서 다시 붙여줍니다. 폰으로 열었을 때 세션이 거기 있는 이유예요.</p>
-  <p class="note" data-lang="en">The installer prints both cron lines and never edits your crontab itself.</p>
-  <p class="note" data-lang="ko">크론 두 줄은 설치 스크립트가 화면에 찍어주기만 해요. crontab 을 직접 고치지는 않습니다.</p>
+  <p class="lede" data-lang="en">A single bash file with no runtime goes wherever tmux does — including the machine
+  your agents actually live on, which is rarely the one in front of you.</p>
+  <p class="lede" data-lang="ko">런타임 없는 bash 파일 하나라 tmux 가 도는 곳이면 어디든 올라가요. 에이전트가 실제로
+  사는 기계에도요. 그게 눈앞의 기계인 경우는 드무니까요.</p>
+  <p data-lang="en">So it is built for a box you are not sitting at. Reboot it and the fleet comes back — every
+  session in its own directory, every agent on its own conversation. Check in from your phone and the
+  Remote Control link is still attached, because fmux reconnects the ones that quietly drop.</p>
+  <p data-lang="ko">그래서 내가 앞에 없는 기계를 전제로 만들었어요. 재부팅해도 함대가 돌아옵니다. 세션은 원래
+  디렉토리로, 에이전트는 원래 대화로요. 폰으로 열어봐도 원격 제어가 붙어 있고요. 조용히 끊기는 것들을
+  fmux 가 다시 붙여두거든요.</p>
+  <p class="note" data-lang="en">Both run off cron lines the installer prints for you — it never edits your crontab
+  itself.</p>
+  <p class="note" data-lang="ko">둘 다 크론으로 도는데, 그 두 줄은 설치 스크립트가 찍어주기만 해요. crontab 을 직접
+  고치지는 않습니다.</p>
 </section>
 
 <section>
