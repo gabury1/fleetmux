@@ -272,7 +272,8 @@ path_line() {   # The one line that adds to PATH — fish has different syntax
 FMUX="$REPO/bin/fmux"
 
 # ── the name "tt" ───────────────────────────────────────────────────────────
-# The shim (libexec/claude) confirms we exist via `command -v tt`, so this name is required.
+# The shim (libexec/claude) confirms we exist via `command -v fmux`, so this name is only a
+# convenience alias — nothing breaks if it is missing.
 # But the most common way to hang a personal tool off ~/.local/bin is a **symlink** — a
 # teammate may already be using tt for something else. The old guard was `[ -e ] && [ ! -L ]`,
 # which protected regular files but replaced someone else's symlink with no warning and no

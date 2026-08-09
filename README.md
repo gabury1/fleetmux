@@ -75,8 +75,10 @@ Delete the wrapper and every trace of fmux's involvement is gone. Aliases like
 `cc='claude'` are covered too — an alias is text substitution, and the `PATH`
 lookup happens after it.
 
-The same directory holds a `codex` wrapper. The shim only fires when `tt` is on
-`PATH` — the installer links `~/.local/bin/tt → fmux` for exactly that reason.
+The same directory holds a `codex` wrapper. The shim only fires when `fmux` itself is on
+`PATH` (`command -v fmux`) — outside tmux, or before you have finished installing, it is a
+transparent pass-through. The installer also links `~/.local/bin/tt → fmux` as a short alias;
+nothing depends on that name any more.
 
 ## Surviving a reboot
 
@@ -231,7 +233,7 @@ The snippet is regenerated automatically whenever you change `key_summon`,
 
 | mark | meaning |
 |---|---|
-| **bold** / dim | talked within `recent_hours` (default 6h) / quiet |
+| **bold** / dim | talked within `recent_hours` (default 1h) / quiet |
 | accent color | tool session (yazi, lazydocker…) — sorted alphabetically at the bottom |
 | ● ✻ ⏸ ✓ ⊘ | attached · working · awaiting you · unseen result · remote control dropped |
 
@@ -239,10 +241,11 @@ The snippet is regenerated automatically whenever you change `key_summon`,
 finished while you were away — one line, meant for a tmux status bar.
 
 > **The snippet wires this for you** (`status_badges`, on by default). It goes at the very
-> front of `status-left`, ahead of everything else — it is the most urgent thing on that
-> line, and anything appended to the end is also the first thing tmux truncates. Your own
-> `status-left` is kept, formats and all, and `status-left-length` is raised if it is below
-> 120 (the default, 10, does not fit one badge). Turn it off with
+> front of `status-right`, ahead of the clock and everything else — it is the most urgent thing
+> on that line, and anything appended to the end is also the first thing tmux truncates. Your own
+> `status-right` is kept, formats and all, and both `status-right-length` and `status-left-length`
+> are raised if they are below 120 (the `status-right` default, 40, does not fit the badges).
+> Turn it off with
 > `fmux config set status_badges off` — that also takes the fragment back out of a running
 > server, from both halves of the status line.
 
