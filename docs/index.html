@@ -49,6 +49,74 @@
      that has to stop a skimming eye. */
   .turn{color:var(--fg);font-size:19px;line-height:1.8;margin:0;
         border-left:2px solid var(--teal);padding:3px 0 3px 20px}
+  /* ── Walkthrough: tabs that stick out to the left of the panel ──────────
+     Radio inputs, no JS: the checked tab styles itself and reveals its panel
+     through sibling selectors, so this works with scripting disabled and every
+     step is reachable by keyboard (arrow keys move between radios natively).
+     Layout is a two-column grid; below 700px it stacks and the tabs become a
+     horizontal strip, since a 90px-wide spine leaves nothing for the panel. */
+  .walk{display:grid;grid-template-columns:220px 1fr;margin-top:26px}
+  .walk input{position:absolute;opacity:0;pointer-events:none}
+  /* The tab column overlaps the panel by 1px and sits above it, so the checked
+     tab's right edge lands *on* the panel border instead of beside it. Without
+     the z-index the panel paints over the tabs and the bookmark disappears. */
+  .walk .tabs{display:flex;flex-direction:column;gap:8px;padding-top:14px;
+              position:relative;z-index:1;margin-right:-1px}
+  .walk label{display:flex;gap:11px;align-items:baseline;cursor:pointer;
+              background:var(--panel);border:1px solid var(--line);
+              border-radius:9px 0 0 9px;padding:12px 14px 12px 15px;
+              color:var(--dim);font-size:14.5px;line-height:1.35;
+              transition:color .12s,background .12s,transform .12s}
+  .walk label .n{font:600 12px/1.5 var(--mono);color:var(--line);flex:none}
+  .walk label:hover{color:var(--fg)}
+  /* The checked tab slides left, takes the panel's own background, and drops the
+     border on the side facing it — the two shapes merge into one, which is what
+     makes it read as a bookmark rather than a button. */
+  .walk input:checked + label{background:var(--bg);color:var(--fg);
+              border-color:var(--teal);border-right-color:var(--bg);
+              margin-left:-14px;padding-left:29px;
+              box-shadow:inset 3px 0 0 var(--teal)}
+  .walk input:checked + label .n{color:var(--teal)}
+  .walk input:focus-visible + label{outline:2px solid var(--teal);outline-offset:2px}
+  /* All five panels are pinned to the same grid cell (column 2, row 1) so the
+     section does not change height as you click between them. */
+  .walk .panel{display:none;grid-column:2;grid-row:1;
+               position:relative;z-index:0;background:var(--bg);
+               border:1px solid var(--teal);border-radius:0 11px 11px 11px;
+               padding:22px 24px;min-height:290px}
+  /* The radios live inside .tabs, so the panels are not their siblings — :has()
+     on the container is what connects the two. Every browser that ships CSS
+     nesting-era selectors has it; a browser without :has() falls back to the
+     rule below, which shows all five panels stacked. That is a worse layout but
+     still a readable page, which is the right way for this to fail. */
+  .walk:has(#w1:checked) #p1, .walk:has(#w2:checked) #p2,
+  .walk:has(#w3:checked) #p3, .walk:has(#w4:checked) #p4,
+  .walk:has(#w5:checked) #p5{display:block}
+  @supports not selector(:has(*)){
+    .walk{grid-template-columns:1fr}
+    .walk .tabs{display:none}
+    .walk .panel{display:block;grid-column:1;grid-row:auto;margin-bottom:14px;border-radius:11px}
+  }
+  .walk .panel h3{margin:0 0 10px;font:600 16px/1.4 var(--mono);color:var(--fg)}
+  .walk .panel p{margin:0 0 14px;color:var(--dim);font-size:14.5px}
+  .walk .panel p:last-child{margin-bottom:0}
+  .walk .shot{width:100%;border-radius:8px;border:1px solid var(--line);display:block}
+  /* Placeholder until the real captures are in — states plainly that it is empty
+     rather than pretending to be a loading image. */
+  .walk .shot-todo{border:1px dashed var(--line);border-radius:8px;padding:38px 16px;
+                   text-align:center;color:var(--line);font:13px/1.5 var(--mono)}
+  .key{font:600 12.5px/1 var(--mono);background:var(--panel);color:var(--fg);
+       border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;
+       padding:4px 7px;white-space:nowrap;display:inline-block}
+  @media (max-width:700px){
+    .walk{grid-template-columns:1fr}
+    .walk .tabs{flex-direction:row;flex-wrap:wrap;gap:6px;padding:0 0 10px}
+    .walk label{border-right:1px solid var(--line);border-radius:9px;margin-right:0;
+                padding:9px 12px;font-size:13.5px}
+    .walk input:checked + label{transform:none;border-color:var(--teal)}
+    .walk .panel{grid-column:1;grid-row:2;border-radius:11px;min-height:0;
+                 padding:18px 18px}
+  }
   footer{margin:70px 0 40px;padding-top:24px;border-top:1px solid var(--line);
          color:var(--dim);font-size:13.5px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
   .lang{font-size:13px;color:var(--dim);text-decoration:none;border-bottom:1px dotted var(--line)}
@@ -144,6 +212,93 @@
   itself.</p>
   <p class="note" data-lang="ko">둘 다 크론으로 도는데, 그 두 줄은 설치 스크립트가 찍어주기만 해요. crontab 을 직접
   고치지는 않습니다.</p>
+</section>
+
+<section>
+  <h2><span data-lang="en">How you use it</span><span data-lang="ko">쓰는 법</span></h2>
+
+  <div class="walk">
+    <div class="tabs">
+      <input type="radio" name="walk" id="w1" checked>
+      <label for="w1"><span class="n">01</span><span data-lang="en">Open fmux</span><span data-lang="ko">fmux 켜기</span></label>
+      <input type="radio" name="walk" id="w2">
+      <label for="w2"><span class="n">02</span><span data-lang="en">Start a session</span><span data-lang="ko">새 세션 만들기</span></label>
+      <input type="radio" name="walk" id="w3">
+      <label for="w3"><span class="n">03</span><span data-lang="en">Rename it</span><span data-lang="ko">이름 바꾸기</span></label>
+      <input type="radio" name="walk" id="w4">
+      <label for="w4"><span class="n">04</span><span data-lang="en">Switch, and switch back</span><span data-lang="ko">오가기</span></label>
+      <input type="radio" name="walk" id="w5">
+      <label for="w5"><span class="n">05</span><span data-lang="en">Come back tomorrow</span><span data-lang="ko">나중에 다시 들어가기</span></label>
+    </div>
+
+    <div class="panel" id="p1">
+      <h3><span data-lang="en">One key, from anywhere</span><span data-lang="ko">어디서든 한 키</span></h3>
+      <p data-lang="en">Press <span class="key">Shift + ↑</span>. No prefix, no chord — the popup opens over
+      whatever you were doing, lists every session, and previews what you last asked the one under
+      the cursor.</p>
+      <p data-lang="ko"><span class="key">Shift + ↑</span> 를 누르면 돼요. prefix 도, 두 번 누르는 것도 없이
+      하던 화면 위로 팝업이 열립니다. 세션이 전부 나오고, 커서가 놓인 세션에는 마지막으로 뭘
+      시켰는지가 같이 보여요.</p>
+      <p class="note" data-lang="en">If your terminal already uses that key, <code>fmux config set key_summon_fast</code>
+      takes any other name — or leave it out entirely and use <span class="key">prefix + F</span>.</p>
+      <p class="note" data-lang="ko">터미널이 그 키를 이미 쓰고 있으면 <code>fmux config set key_summon_fast</code>
+      로 다른 키를 줄 수 있어요. 아예 안 쓰고 <span class="key">prefix + F</span> 만 써도 되고요.</p>
+      <div class="shot-todo" data-lang="en">screenshot: the popup, open over a session</div>
+      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 세션 위로 열린 팝업</div>
+    </div>
+
+    <div class="panel" id="p2">
+      <h3><span data-lang="en">Name it, and it starts</span><span data-lang="ko">이름을 주면 뜹니다</span></h3>
+      <p data-lang="en"><span class="key">Ctrl + N</span> inside the popup asks for a name and a command, then creates
+      the tmux session and drops you in it. The agent you start there is picked up by the hooks
+      immediately — no extra step to "register" it.</p>
+      <p data-lang="ko">팝업 안에서 <span class="key">Ctrl + N</span> 을 누르면 이름과 실행할 명령을 물어봐요.
+      답하면 tmux 세션이 만들어지고 바로 그 안으로 들어갑니다. 거기서 띄운 에이전트는 훅이 알아서
+      잡아가요. 따로 등록하는 절차는 없습니다.</p>
+      <div class="shot-todo" data-lang="en">screenshot: the new-session prompt</div>
+      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 새 세션 만들기</div>
+    </div>
+
+    <div class="panel" id="p3">
+      <h3><span data-lang="en">A name you will recognise at 2am</span><span data-lang="ko">나중에 봐도 알아볼 이름으로</span></h3>
+      <p data-lang="en"><span class="key">Ctrl + E</span> renames the session under the cursor. Worth doing: the name is
+      what the status bar shows when that session needs you, so <code>parser</code> tells you where to
+      go and <code>bash-3</code> does not.</p>
+      <p data-lang="ko">커서가 놓인 세션의 이름은 <span class="key">Ctrl + E</span> 로 바꿔요. 해둘 만한 일이에요.
+      그 세션이 나를 부를 때 상태줄에 뜨는 게 이 이름이라, <code>parser</code> 는 어디로 갈지 알려주지만
+      <code>bash-3</code> 은 안 알려주거든요.</p>
+      <div class="shot-todo" data-lang="en">screenshot: renaming a session</div>
+      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 이름 바꾸기</div>
+    </div>
+
+    <div class="panel" id="p4">
+      <h3><span data-lang="en">The same key, from inside</span><span data-lang="ko">들어가서도 같은 키</span></h3>
+      <p data-lang="en"><span class="key">→</span> enters the session under the cursor. Once you are in it, the way
+      back out is the key you came in with — <span class="key">Shift + ↑</span> works from inside a session
+      just as well, so moving between agents is one keystroke each way.</p>
+      <p data-lang="ko">커서가 놓인 세션에는 <span class="key">→</span> 로 들어가요. 들어간 다음에 나오는 방법은
+      들어올 때 쓴 그 키입니다. <span class="key">Shift + ↑</span> 는 세션 안에서도 똑같이 먹어서, 에이전트
+      사이를 오가는 데 양쪽 다 한 타건이에요.</p>
+      <div class="shot-todo" data-lang="en">screenshot: entering a session, then summoning again from inside</div>
+      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 세션에 들어갔다가 안에서 다시 부르기</div>
+    </div>
+
+    <div class="panel" id="p5">
+      <h3><span data-lang="en">They are already there</span><span data-lang="ko">이미 만들어져 있어요</span></h3>
+      <p data-lang="en">Close the terminal, go home, reboot the box. Open fmux tomorrow and the fleet is
+      standing: every session in the directory it belongs to, every agent on the conversation it was
+      having. You do not rebuild it — you find it.</p>
+      <p data-lang="ko">터미널을 닫고, 집에 가고, 기계를 재부팅해도 괜찮아요. 다음 날 fmux 를 열면 함대가
+      그대로 서 있습니다. 세션은 원래 있던 디렉토리에, 에이전트는 하던 대화에요. 다시 세우는 게 아니라
+      찾아 들어가는 겁니다.</p>
+      <p class="note" data-lang="en">That last part is what makes naming worth the five seconds — a fleet you keep
+      is a fleet you have to be able to tell apart.</p>
+      <p class="note" data-lang="ko">이름 붙이는 5초가 여기서 값을 합니다. 계속 두고 쓰는 함대라면 서로 구별이
+      돼야 하니까요.</p>
+      <div class="shot-todo" data-lang="en">screenshot: the fleet after a reboot</div>
+      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 재부팅 뒤의 함대</div>
+    </div>
+  </div>
 </section>
 
 <section>
