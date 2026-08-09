@@ -43,9 +43,12 @@
   .mark{font-family:var(--mono);font-weight:700}
   .mark.w{color:var(--amber)} .mark.r{color:#8ab4f8} .mark.d{color:var(--green)}
   .note{color:var(--dim);font-size:14.5px}
-  /* The one paragraph the reader is meant to feel rather than skim: full-strength
-     text, and one sentence per line so each lands on its own. */
-  .beat{color:var(--fg);font-size:17px;line-height:1.9;margin:0 0 22px}
+  /* Body text that must not read as a footnote: full-strength, unlike .note. */
+  .beat{color:var(--fg);font-size:17px;line-height:1.85;margin:0 0 26px}
+  /* Where the section turns from the problem to the answer — the one paragraph
+     that has to stop a skimming eye. */
+  .turn{color:var(--fg);font-size:19px;line-height:1.8;margin:0;
+        border-left:2px solid var(--teal);padding:3px 0 3px 20px}
   footer{margin:70px 0 40px;padding-top:24px;border-top:1px solid var(--line);
          color:var(--dim);font-size:13.5px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
   .lang{font-size:13px;color:var(--dim);text-decoration:none;border-bottom:1px dotted var(--line)}
@@ -86,18 +89,18 @@
   four panes.</p>
   <p class="lede" data-lang="ko">에이전트를 여러 개 돌릴 때는 보통 창을 나눠서 띄워놓게 되죠. 넷을 띄우면 화면도
   넷으로 쪼개집니다.</p>
-  <p class="beat" data-lang="en">And then your eyes never settle.<br>
-  You keep choosing where to look, and the text keeps getting smaller.<br>
-  After an hour or two it is your eyes that give out first — not the machine, and not the agents.</p>
-  <p class="beat" data-lang="ko">그런데 그렇게 해놓으면 시선이 한 곳에 머물지를 못해요.<br>
-  어디를 볼지 계속 고르게 되고, 글씨는 필연적으로 작아지고요.<br>
-  한두 시간 지나면 기계도 에이전트도 아니고 눈이 먼저 지칩니다.</p>
-  <p class="lede" data-lang="en">But there is only one reason to split the screen at all: you want to know which
-  session needs you. fmux starts there. Keep one session full size, and let a single line at the
-  bottom speak for the rest.</p>
-  <p class="lede" data-lang="ko">그런데 창을 나눈 이유를 따져보면 결국 하나예요. 어느 세션이 나를 기다리는지 알고
-  싶어서죠. fmux 는 거기서 출발했어요. 화면은 나누지 않고 지금 보는 세션 하나를 꽉 채워 쓰고,
-  나머지는 하단 한 줄이 대신 말해주게 하는 겁니다.</p>
+  <p class="beat" data-lang="en">And then your eyes never settle. You keep choosing where to look, and the text
+  keeps getting smaller. After an hour or two it is your eyes that give out first — not the machine,
+  and not the agents.</p>
+  <p class="beat" data-lang="ko">그런데 그렇게 해놓으면 시선이 한 곳에 머물지를 못해요. 어디를 볼지 계속 고르게
+  되고, 글씨는 필연적으로 작아지고요. 한두 시간 지나면 기계도 에이전트도 아니고 눈이 먼저 지칩니다.</p>
+  <p class="turn" data-lang="en">But there is only one reason to split the screen at all: you want to know which
+  session needs you.<br>
+  fmux starts there. Keep one session full size, and let a single line at the bottom speak for the rest.</p>
+  <p class="turn" data-lang="ko">그런데 창을 나눈 이유를 따져보면 결국 하나예요. 어느 세션이 나를 기다리는지 알고
+  싶어서죠.<br>
+  fmux 는 거기서 출발했어요. 화면은 나누지 않고 지금 보는 세션 하나를 꽉 채워 쓰고, 나머지는 하단
+  한 줄이 대신 말해주게 하는 겁니다.</p>
 </section>
 
 <section>
