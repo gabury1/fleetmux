@@ -1,6 +1,6 @@
 # fleetmux
 
-A tmux cockpit for running a fleet of AI coding agents.
+Keep the agent screen you already use. One status line, one keystroke, nothing else to look at.
 
 ![fmux — the fleet at a glance](demo/demo.gif)
 
@@ -8,12 +8,19 @@ A tmux cockpit for running a fleet of AI coding agents.
 `docs` finished while you were away. One keystroke opens the list; the preview shows what
 you last asked that session.*
 
-`fmux` shows you — at a glance, without opening a single session — which of your
-Claude Code / Codex sessions are **working**, which are **waiting for your approval**,
-and which **finished while you were away**. It brings the whole fleet back after a
-reboot, conversations included, and quietly repairs Remote Control links when they drop.
+The usual answer to "which agent is waiting on me" is a dashboard: another window, another
+layout, one more thing to look at instead of the session you were working in. `fmux` does not
+give you a screen. It puts one line in the tmux status bar you already have — which sessions
+are **working**, which are **waiting for your approval**, which **finished while you were
+away** — and one keystroke that takes you to any of them. Your agent's own screen is
+untouched.
 
-One bash file. No runtime to install.
+Being that thin has a second payoff: it runs anywhere tmux does, including the headless box
+your agents actually live on. It brings the whole fleet back after that box reboots,
+conversations included, and quietly reattaches Remote Control links when they drop, so a
+session is there when you look from your phone.
+
+One bash file. No dashboard, no app, no runtime.
 
 ```
   soma1     ● ✻          working right now
