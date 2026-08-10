@@ -100,11 +100,7 @@
   .walk .panel h3{margin:0 0 10px;font:600 16px/1.4 var(--mono);color:var(--fg)}
   .walk .panel p{margin:0 0 14px;color:var(--dim);font-size:14.5px}
   .walk .panel p:last-child{margin-bottom:0}
-  .walk .shot{width:100%;border-radius:8px;border:1px solid var(--line);display:block}
-  /* Placeholder until the real captures are in — states plainly that it is empty
-     rather than pretending to be a loading image. */
-  .walk .shot-todo{border:1px dashed var(--line);border-radius:8px;padding:38px 16px;
-                   text-align:center;color:var(--line);font:13px/1.5 var(--mono)}
+  .walk .shot{width:100%;border-radius:8px;border:1px solid var(--line);display:block;margin-top:16px}
   .key{font:600 12.5px/1 var(--mono);background:var(--panel);color:var(--fg);
        border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;
        padding:4px 7px;white-space:nowrap;display:inline-block}
@@ -209,9 +205,17 @@
   디렉토리로, 에이전트는 원래 대화로요. 폰으로 열어봐도 원격 제어가 붙어 있고요. 조용히 끊기는 것들을
   fmux 가 다시 붙여두거든요.</p>
   <p class="note" data-lang="en">Both run off cron lines the installer prints for you — it never edits your crontab
-  itself.</p>
+  itself. Both are also <strong>Linux-only</strong>: the boot restore waits on the network with
+  <code>getent</code>, and reconnecting Remote Control needs <code>/proc</code> to tell a live agent
+  from a recycled pid. macOS has neither, so there they are no-ops — everything else on this page
+  works. <a href="https://github.com/gabury1/fleetmux#macos--what-works-and-what-does-not">The
+  README has the full table.</a></p>
   <p class="note" data-lang="ko">둘 다 크론으로 도는데, 그 두 줄은 설치 스크립트가 찍어주기만 해요. crontab 을 직접
-  고치지는 않습니다.</p>
+  고치지는 않습니다. 그리고 이 둘은 <strong>리눅스 전용</strong>이에요. 부팅 복원은 <code>getent</code> 로
+  네트워크를 기다리고, 원격 제어 재접속은 <code>/proc</code> 이 있어야 살아 있는 에이전트와 재사용된 pid 를
+  가릅니다. macOS 에는 둘 다 없어서 그냥 아무 일도 안 해요. 이 페이지의 나머지는 다 됩니다.
+  <a href="https://github.com/gabury1/fleetmux#macos--what-works-and-what-does-not">표는 README 에
+  있어요.</a></p>
 </section>
 
 <section>
@@ -243,12 +247,14 @@
       <p data-lang="ko">일단 안에 들어오면 다시 칠 일이 없어요. <span class="key">Shift + ↑</span> 하나면
       하던 화면 위로 같은 팝업이 열립니다. prefix 도, 두 번 누르는 것도 없이요. 커서가 놓인 세션에는
       마지막으로 뭘 시켰는지가 같이 보이고요.</p>
-      <p class="note" data-lang="en">If your terminal already uses that key, <code>fmux config set key_summon_fast</code>
-      takes any other name — or leave it out entirely and use <span class="key">prefix + F</span>.</p>
-      <p class="note" data-lang="ko">터미널이 그 키를 이미 쓰고 있으면 <code>fmux config set key_summon_fast</code>
-      로 다른 키를 줄 수 있어요. 아예 안 쓰고 <span class="key">prefix + F</span> 만 써도 되고요.</p>
-      <div class="shot-todo" data-lang="en">screenshot: the popup, open over a session</div>
-      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 세션 위로 열린 팝업</div>
+      <p class="note" data-lang="en">The installer offers that binding and takes no key unless you accept it, so a
+      non-interactive install leaves it unset. <code>fmux config set key_summon_fast</code> takes any other
+      name — or leave it out entirely and use <span class="key">prefix + F</span>, which always works.</p>
+      <p class="note" data-lang="ko">설치 스크립트가 이 키를 쓸지 물어보고, 답해야만 가져갑니다. 그래서 비대화식으로
+      설치하면 안 걸린 채로 남아요. <code>fmux config set key_summon_fast</code> 로 다른 키를 줄 수 있고,
+      아예 안 쓰고 <span class="key">prefix + F</span> 만 써도 됩니다. 그건 언제나 동작해요.</p>
+      <img class="shot" loading="lazy" data-lang="en" src="shots/01-get-in.png" alt="Typing fmux at a shell, and the session list that opens">
+      <img class="shot" loading="lazy" data-lang="ko" src="shots/01-get-in.png" alt="셸에서 fmux 를 친 순간과, 그 결과로 열린 세션 목록">
     </div>
 
     <div class="panel" id="p2">
@@ -259,8 +265,8 @@
       <p data-lang="ko">팝업 안에서 <span class="key">Ctrl + N</span> 을 누르면 이름과 실행할 명령을 물어봐요.
       답하면 tmux 세션이 만들어지고 바로 그 안으로 들어갑니다. 거기서 띄운 에이전트는 훅이 알아서
       잡아가요. 따로 등록하는 절차는 없습니다.</p>
-      <div class="shot-todo" data-lang="en">screenshot: the new-session prompt</div>
-      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 새 세션 만들기</div>
+      <img class="shot" loading="lazy" data-lang="en" src="shots/02-new.png" alt="The popup asking for a name for a new session">
+      <img class="shot" loading="lazy" data-lang="ko" src="shots/02-new.png" alt="팝업이 새 세션 이름을 묻는 화면">
     </div>
 
     <div class="panel" id="p3">
@@ -271,8 +277,8 @@
       <p data-lang="ko">커서가 놓인 세션의 이름은 <span class="key">Ctrl + E</span> 로 바꿔요. 해둘 만한 일이에요.
       그 세션이 나를 부를 때 상태줄에 뜨는 게 이 이름이라, <code>parser</code> 는 어디로 갈지 알려주지만
       <code>bash-3</code> 은 안 알려주거든요.</p>
-      <div class="shot-todo" data-lang="en">screenshot: renaming a session</div>
-      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 이름 바꾸기</div>
+      <img class="shot" loading="lazy" data-lang="en" src="shots/03-rename.png" alt="Renaming the session bash-3 to parser from inside the popup">
+      <img class="shot" loading="lazy" data-lang="ko" src="shots/03-rename.png" alt="팝업에서 bash-3 세션의 이름을 parser 로 바꾸는 화면">
     </div>
 
     <div class="panel" id="p4">
@@ -283,8 +289,8 @@
       <p data-lang="ko">커서가 놓인 세션에는 <span class="key">→</span> 로 들어가요. 들어간 다음에 나오는 방법은
       들어올 때 쓴 그 키입니다. <span class="key">Shift + ↑</span> 는 세션 안에서도 똑같이 먹어서, 에이전트
       사이를 오가는 데 양쪽 다 한 타건이에요.</p>
-      <div class="shot-todo" data-lang="en">screenshot: entering a session, then summoning again from inside</div>
-      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 세션에 들어갔다가 안에서 다시 부르기</div>
+      <img class="shot" loading="lazy" data-lang="en" src="shots/04-switch.png" alt="The popup open over a session, with that session absent from the list">
+      <img class="shot" loading="lazy" data-lang="ko" src="shots/04-switch.png" alt="세션 화면 위로 팝업이 열려 있고, 그 세션은 목록에 없는 화면">
     </div>
 
     <div class="panel" id="p5">
@@ -299,8 +305,16 @@
       is a fleet you have to be able to tell apart.</p>
       <p class="note" data-lang="ko">이름 붙이는 5초가 여기서 값을 합니다. 계속 두고 쓰는 함대라면 서로 구별이
       돼야 하니까요.</p>
-      <div class="shot-todo" data-lang="en">screenshot: the fleet after a reboot</div>
-      <div class="shot-todo" data-lang="ko">스크린샷 자리 — 재부팅 뒤의 함대</div>
+      <img class="shot" loading="lazy" data-lang="en" src="shots/05-later.png" alt="Killing the tmux server, restoring the fleet, and listing it again">
+      <img class="shot" loading="lazy" data-lang="ko" src="shots/05-later.png" alt="tmux 서버를 죽이고 함대를 복원해 다시 목록을 확인하는 화면">
+      <p class="note" data-lang="en">The fleet in this shot is tool sessions, not agents — restoring an agent
+      relaunches it with <code>claude --resume</code> and then waits to verify it came up, which needs a
+      Claude install the shooting sandbox deliberately does not have.
+      <a href="https://github.com/gabury1/fleetmux/blob/main/docs/shots/README.md">What is real in these five pictures.</a></p>
+      <p class="note" data-lang="ko">이 사진 속 함대는 에이전트가 아니라 도구 세션이에요. 에이전트를 복원하면
+      <code>claude --resume</code> 으로 다시 띄우고 제대로 떴는지 확인까지 기다리는데, 그러려면 촬영용
+      샌드박스에 일부러 두지 않은 Claude 설치가 필요하거든요.
+      <a href="https://github.com/gabury1/fleetmux/blob/main/docs/shots/README.md">다섯 장에서 무엇이 진짜인지.</a></p>
     </div>
   </div>
 </section>
