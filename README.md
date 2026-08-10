@@ -2,6 +2,8 @@
 
 Keep the agent screen you already use. One status line, one keystroke, nothing else to look at.
 
+**[What it looks like →](https://gabury1.github.io/fleetmux/)** · [한국어](https://gabury1.github.io/fleetmux/?lang=ko)
+
 ![fmux — the fleet at a glance](demo/demo.gif)
 
 *One session, full width. The bottom line says `parser` is waiting on a human, one session is
