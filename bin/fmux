@@ -4126,10 +4126,19 @@ EOF
     exit 0
 fi
 
-# Exclude the current session from the list — the popup binding tells us via --from '#S',
-# a plain shell run asks tmux directly
+# Exclude the current session from the list. The popup binding passes --from '#S', and a plain
+# shell run has no argument at all, so both paths end up asking tmux.
+#
+# Why '#S' has to be thrown away rather than trusted (measured 2026-08-10): **display-popup does
+# not expand formats in its shell-command.** The title (-T) does, which is why the popup is
+# labelled correctly and this looked fine for months, but the command's arguments arrive verbatim
+# — a probe bound exactly like the installed snippet received the two characters `#S`.
+# That literal is worse than nothing: it filled CUR, so the `-z` guard below skipped the fallback
+# that would have got the right answer, and no session was ever excluded. Dropping a value that
+# still contains a format placeholder puts the fallback back in charge.
 CUR=""
 [ "${1:-}" = "--from" ] && CUR="${2:-}"
+case "$CUR" in *'#'*) CUR="" ;; esac    # unexpanded format → not a session name
 [ -z "$CUR" ] && [ -n "${TMUX:-}" ] && CUR=$(tmux display-message -p '#S' 2>/dev/null || true)
 export FMUX_CUR="$CUR"
 

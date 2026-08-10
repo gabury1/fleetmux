@@ -166,4 +166,35 @@ rm -f "$STATE/manifest"
 assert_contains "$(cat "$STATE/manifest" 2>/dev/null || true)" "fmuxsw1" \
     "even with rc=off, one --cron tick rewrites the manifest"
 
+# ── --from with an unexpanded format ────────────────────────────────────────
+# The popup is bound as `display-popup … fmux --from '#S'`, and **display-popup does not expand
+# formats in its shell-command** (measured 2026-08-10 with a probe bound exactly like the
+# installed snippet: the argument arrived as the two characters `#S`). The title, -T, *is*
+# expanded, which is why the popup is labelled correctly and this went unnoticed for months.
+#
+# A literal `#S` is worse than no argument. It filled CUR, so the `-z "$CUR"` guard skipped the
+# fallback that asks tmux directly, and FMUX_CUR came out as `#S` — a name no session has, so the
+# session you were sitting in was never excluded from its own list. The fix drops any value still
+# holding a format placeholder, which hands the job back to the fallback.
+#
+# FMUX_CUR is the entire observable effect (80-view.sh:201 reads it and nothing else does), so the
+# assertion has to see that variable. The list path exports it and then execs fzf, so instead of
+# running the whole binary this pulls the eight-line block out of the artifact and evaluates it —
+# from bin/fmux, never src/, so a "fixed but not rebuilt" tree fails here.
+cur_for() {              # cur_for <args…> → the FMUX_CUR that block would export
+    local blk
+    blk=$(sed -n '/^# Exclude the current session from the list/,/^export FMUX_CUR/p' "$FMUXBIN")
+    [ -n "$blk" ] || { echo "BLOCK-NOT-FOUND"; return; }
+    env -u TMUX bash -c "$blk"'; printf %s "$FMUX_CUR"' _ "$@"
+}
+
+assert_eq "$(cur_for --from '#S')" "" \
+    "a literal '#S' — display-popup does not expand formats — is discarded, not used as a name"
+assert_eq "$(cur_for --from '#{session_name}')" "" \
+    "any unexpanded format is discarded, not just #S"
+assert_eq "$(cur_for --from 'worker-1')" "worker-1" \
+    "a real session name passed by --from is kept"
+assert_eq "$(cur_for)" "" \
+    "no --from and no tmux: FMUX_CUR is empty, so nothing is excluded"
+
 fmux_test_done
