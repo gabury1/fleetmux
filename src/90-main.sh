@@ -353,21 +353,19 @@ EOF
     exit 0
 fi
 
-# Exclude the current session from the list. The popup binding passes --from '#S', and a plain
-# shell run has no argument at all, so both paths end up asking tmux.
+# Which session we were opened from. Nothing filters on it any more — the list keeps the current
+# session — but it is still the cheapest proof that at least one session exists, which the
+# empty-state bootstrap below relies on.
 #
-# Why '#S' has to be thrown away rather than trusted (measured 2026-08-10): **display-popup does
-# not expand formats in its shell-command.** The title (-T) does, which is why the popup is
-# labelled correctly and this looked fine for months, but the command's arguments arrive verbatim
-# — a probe bound exactly like the installed snippet received the two characters `#S`.
-# That literal is worse than nothing: it filled CUR, so the `-z` guard below skipped the fallback
-# that would have got the right answer, and no session was ever excluded. Dropping a value that
-# still contains a format placeholder puts the fallback back in charge.
+# The popup binding passes --from '#S', and that placeholder arrives **unexpanded**:
+# display-popup does not run formats through its shell-command (the title, -T, does — which is why
+# the popup is labelled correctly and this went unnoticed). A probe bound exactly like the
+# installed snippet received the two characters `#S` (measured 2026-08-10). So a value still
+# holding a placeholder is thrown away, and the fallback asks tmux directly.
 CUR=""
 [ "${1:-}" = "--from" ] && CUR="${2:-}"
 case "$CUR" in *'#'*) CUR="" ;; esac    # unexpanded format → not a session name
 [ -z "$CUR" ] && [ -n "${TMUX:-}" ] && CUR=$(tmux display-message -p '#S' 2>/dev/null || true)
-export FMUX_CUR="$CUR"
 
 # Snapshot the fleet every time the popup opens — this removes "commit" as a separate action
 #   (the author's suggestion). Things the hook's auto-recording can't catch (an external
@@ -379,11 +377,11 @@ export FMUX_CUR="$CUR"
 # Empty-state bootstrap: create one and enter it directly, but **only when there are
 #   no sessions to go to at all** — tt is tmux's front door.
 #   The test is not "does the list have a row" but "**is there at least one session**".
-#   The two differ: 80-view.sh drops FMUX_CUR (the currently attached session) from the list,
-#   so **if there is exactly one live session and it is the one we're attached to**, the
-#   list comes up empty — the path where the "no sessions yet" onboarding prompt shows up
-#   even though a session is alive and well. So if CUR is set (= we were opened from inside
-#   some session = at least 1 session exists), we never leak into the bootstrap.
+#   CUR being set means we were opened from inside a session, which by itself proves at least
+#   one exists — so that alone keeps us out of the bootstrap even if --list were to come back
+#   empty for any other reason. (The list no longer drops the current session, so the specific
+#   case this used to guard — one live session, and it is the one you are in — cannot arise
+#   any more. The guard stays because it is cheaper and more direct than trusting --list.)
 #   No filter is needed here because no non-session row ever ends up in the list — it used
 #   to be filtered out with grep -v on a settings row, and that very filter is what broke
 #   this check. An empty list means there is no session to go to, plain and simple.

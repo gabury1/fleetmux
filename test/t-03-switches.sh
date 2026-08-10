@@ -172,29 +172,37 @@ assert_contains "$(cat "$STATE/manifest" 2>/dev/null || true)" "fmuxsw1" \
 # installed snippet: the argument arrived as the two characters `#S`). The title, -T, *is*
 # expanded, which is why the popup is labelled correctly and this went unnoticed for months.
 #
-# A literal `#S` is worse than no argument. It filled CUR, so the `-z "$CUR"` guard skipped the
-# fallback that asks tmux directly, and FMUX_CUR came out as `#S` — a name no session has, so the
-# session you were sitting in was never excluded from its own list. The fix drops any value still
-# holding a format placeholder, which hands the job back to the fallback.
+# Nothing filters the list on this value any more — the session you are in stays on it. What CUR
+# still decides is the empty-state bootstrap: a set CUR proves at least one session exists, so a
+# literal `#S` would count as proof from a shell that is not inside tmux at all. Hence the
+# placeholder is discarded and the fallback asks tmux directly.
 #
-# FMUX_CUR is the entire observable effect (80-view.sh:201 reads it and nothing else does), so the
-# assertion has to see that variable. The list path exports it and then execs fzf, so instead of
-# running the whole binary this pulls the eight-line block out of the artifact and evaluates it —
-# from bin/fmux, never src/, so a "fixed but not rebuilt" tree fails here.
-cur_for() {              # cur_for <args…> → the FMUX_CUR that block would export
+# The block is pulled out of the artifact and evaluated, because CUR never leaves the process —
+# the list path uses it and then execs fzf. Sliced from bin/fmux, never src/, so a "fixed but not
+# rebuilt" tree fails here.
+cur_for() {              # cur_for <args…> → the CUR that block would compute
     local blk
-    blk=$(sed -n '/^# Exclude the current session from the list/,/^export FMUX_CUR/p' "$FMUXBIN")
+    blk=$(sed -n '/^# Which session we were opened from/,/^\[ -z "\$CUR" \]/p' "$FMUXBIN")
     [ -n "$blk" ] || { echo "BLOCK-NOT-FOUND"; return; }
-    env -u TMUX bash -c "$blk"'; printf %s "$FMUX_CUR"' _ "$@"
+    env -u TMUX bash -c "$blk"'; printf %s "$CUR"' _ "$@"
 }
 
 assert_eq "$(cur_for --from '#S')" "" \
-    "a literal '#S' — display-popup does not expand formats — is discarded, not used as a name"
+    "a literal '#S' — display-popup does not expand formats — is discarded, not taken as a name"
 assert_eq "$(cur_for --from '#{session_name}')" "" \
     "any unexpanded format is discarded, not just #S"
 assert_eq "$(cur_for --from 'worker-1')" "worker-1" \
     "a real session name passed by --from is kept"
 assert_eq "$(cur_for)" "" \
-    "no --from and no tmux: FMUX_CUR is empty, so nothing is excluded"
+    "no --from and no tmux: CUR is empty"
+
+# ── the current session stays on the list ───────────────────────────────────
+# It was filtered out until 2026-08-10 — a rule nobody had noticed, because the filter never
+# fired (see above). Fixing the placeholder turned it on and the row vanished from the popup,
+# which is when it turned out to be unwanted: the list is read far more often than it is used to
+# travel, and a fleet with one row missing cannot answer "how many are up" at a glance.
+# Selecting your own session is a no-op, so keeping it costs nothing.
+assert_eq "$(grep -c 'FMUX_CUR' "$FMUXBIN")" "1" \
+    "only the explanatory comment mentions FMUX_CUR — no code filters the list on it"
 
 fmux_test_done

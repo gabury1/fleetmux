@@ -198,7 +198,15 @@ if [ "${1:-}" = "--list" ]; then
             printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$grp" "$unread" "${ts:-0}" "${sid#\$}" "$attached" "$name"
         done | sort -t$'\t' -k1,1rn -k2,2rn -k3,3rn -k6,6 \
         | while IFS=$'\t' read -r grp unread ts sid attached name; do
-            [ "$name" = "${FMUX_CUR:-}" ] && continue
+            # The session you are sitting in stays on the list. It used to be filtered out here,
+            # on the reasoning that every row should be somewhere you can go — but the list is
+            # read far more often than it is used to travel, and a fleet with one row missing
+            # cannot answer "how many are up" or "where am I" at a glance. Selecting your own
+            # session is a no-op, so leaving it in costs nothing.
+            #   (In practice the filter never fired: display-popup does not expand '#S' in a
+            #   shell-command, so FMUX_CUR held two literal characters and matched no session.
+            #   Fixing that expansion on 2026-08-10 turned the filter on for the first time and
+            #   the row vanished — which is how anyone noticed the rule existed at all.)
             [ "$attached" = - ] && attached=""    # release the sentinel — from here on it's an empty display string
             if [ "$grp" = 0 ]; then   # tool session: teal, bottom group, no state decoration
                 printf '%s\t\033[38;5;%sm%s\033[0m \033[36m%s\033[0m\t%s\n' "$name" "$acc" "$name" "$attached" "$sid"

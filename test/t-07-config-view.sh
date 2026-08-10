@@ -262,10 +262,11 @@ if command -v setsid >/dev/null 2>&1; then
     assert_eq "$got" "no" "no settings row in that picker — only sessions go in"
 
     # (c) ★M2 — exactly one live session, and it is **the one currently attached**.
-    #   80-view.sh excludes FMUX_CUR from the list, so --list comes back empty. Judging by "is there
-    #   a row in the list" would leak to bootstrap here and show "no sessions yet" onboarding —
-    #   while a session plainly exists. The real test is "is there at least one session at all":
-    #   if CUR exists, there is at least one session, so the picker should come up.
+    #   The judgment is "is there at least one session at all", not "is there a row in the list":
+    #   if CUR is set we were opened from inside a session, which proves one exists, so the picker
+    #   comes up. (This used to matter more — the list dropped the attached session until
+    #   2026-08-10, so a lone session made --list come back empty and the bootstrap fired while a
+    #   session was plainly alive. The list keeps it now, but CUR is still the more direct proof.)
     #   (There used to be a `grep -v` filtering out the settings row right here, and that is what
     #   broke this judgment.)
     rm -f "$FMUX_FZF_DIR/count" "$FMUX_FZF_DIR"/in.*    # also clear in.* — must not pass on leftovers from the prior case
