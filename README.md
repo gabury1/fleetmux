@@ -1,8 +1,15 @@
-# fleetmux
+<h1 align="center">fleetmux</h1>
 
-Keep the agent screen you already use. One status line, one keystroke, nothing else to look at.
+<p align="center">
+  Keep the agent screen you already use.<br>
+  One status line, one keystroke, nothing else to look at.
+</p>
 
-**[What it looks like →](https://gabury1.github.io/fleetmux/)** · [한국어](https://gabury1.github.io/fleetmux/?lang=ko)
+<p align="center">
+  <a href="https://gabury1.github.io/fleetmux/"><img alt="See it in action" src="https://img.shields.io/badge/See%20it%20in%20action-4ec9b0?style=for-the-badge"></a>
+  &nbsp;
+  <a href="https://gabury1.github.io/fleetmux/?lang=ko"><img alt="한국어" src="https://img.shields.io/badge/%ED%95%9C%EA%B5%AD%EC%96%B4-232c38?style=for-the-badge"></a>
+</p>
 
 ![fmux — the fleet at a glance](demo/demo.gif)
 
