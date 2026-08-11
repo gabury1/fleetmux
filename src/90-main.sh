@@ -430,8 +430,29 @@ fi
 # The footer prints the settings key — dropping the ⚙ row from the list means discoverability
 #   is repaid here instead. Both the binding and the display text come from the same
 #   FMUX_KEY_SETTINGS, so changing the key updates the screen too — the two can never drift.
+# fzf has to be found *here*, not just at install time. The installer runs in your interactive
+# shell, where fzf is on PATH; the popup runs a fresh shell that may never read the rc file that
+# put it there — a Homebrew prefix, ~/.local/bin, a version manager. Then fzf is missing at the
+# one moment it is needed, the command dies instantly, and tmux takes the popup down with the
+# "command not found" still on it. Reported as "Shift+Up flashes and disappears" (2026-08-11);
+# the same fmux run by hand worked, because that shell had read the rc.
+FZF=$(fmux_conf_get fzf_path)
+[ -n "$FZF" ] || FZF=fzf
+if ! command -v "$FZF" >/dev/null 2>&1; then
+    printf '\n  fzf is not on PATH in here.\n\n' >&2
+    printf '  It is on yours — this popup opens a shell that did not read the file that adds it.\n' >&2
+    printf '  Point fmux at it directly, which does not depend on any shell startup:\n\n' >&2
+    printf '    fmux config set fzf_path /full/path/to/fzf\n\n' >&2
+    printf '  Find that path from a normal terminal with:  command -v fzf\n' >&2
+    if : 2>/dev/null < /dev/tty; then
+        printf '\n  Press any key to close.' >&2
+        read -rsn1 _ </dev/tty 2>/dev/null || read -r _ </dev/tty 2>/dev/null || true
+    fi
+    exit 1
+fi
+
 session=$("$SELF" --list 2>>"$STATE/hook.log" \
-    | fzf --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
+    | "$FZF" --ansi --reverse --cycle --prompt='❯ ' --pointer='▶' --info=hidden --multi \
           --delimiter=$'\t' --with-nth=2 \
           --footer="? help · $(fmux_key_label "$FMUX_KEY_SETTINGS") settings" \
           --bind "?:execute($SELFQ --help --pause </dev/tty >/dev/tty 2>&1)" \
@@ -464,7 +485,7 @@ case "${fzf_rc:-0}" in
     *)
         printf '\n  fzf exited %s — it could not start.\n\n' "${fzf_rc}" >&2
         printf '  fmux needs fzf 0.64 or newer (it uses --footer) and tmux 3.2 or newer.\n' >&2
-        printf '    fzf   %s\n' "$(fzf --version 2>&1 | head -1 || echo '?')" >&2
+        printf '    fzf   %s\n' "$("$FZF" --version 2>&1 | head -1 || echo '?')" >&2
         printf '    tmux  %s\n' "$(tmux -V 2>&1 || echo '?')" >&2
         printf '\n  The error itself is above this line, if fzf printed one.\n' >&2
         # Hold the popup open. Without a wait tmux closes it the instant this exits and the

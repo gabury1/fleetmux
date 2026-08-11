@@ -15,7 +15,7 @@ FMUX_CONF="${FMUX_CONF_FILE:-$FMUX_CONF_DIR/config}"
 #   ③ numbers and colour.
 #   ④ the eight "not wired" key rows last. They are honest placeholders, but a row that does
 #      nothing has no business sitting between two that do.
-FMUX_CONF_KEYS='key_summon_fast key_summon status_badges rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings'
+FMUX_CONF_KEYS='key_summon_fast key_summon status_badges rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max fzf_path key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings'
 
 # Defaults. Unknown key → rc 1 — this function also doubles as the "is this a known key" check.
 fmux_conf_default() {
@@ -43,6 +43,12 @@ fmux_conf_default() {
         #   Shift+arrow is the only no-prefix single keystroke that passes through all three of
         #   macOS, Linux, and Windows Terminal.)
         key_summon_fast) printf '' ;;
+        # Empty means "whatever PATH finds", which is right almost always. It exists for the
+        # case where it is not: the popup opens a shell that never read the rc file putting fzf
+        # on PATH — a Homebrew prefix, ~/.local/bin, a version manager — so fzf is missing at the
+        # one moment it matters, while the same fmux typed by hand works fine. An absolute path
+        # does not care what any startup file did.
+        fzf_path)        printf '' ;;
         *) return 1 ;;
     esac
     return 0

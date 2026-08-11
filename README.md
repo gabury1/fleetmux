@@ -316,6 +316,7 @@ the env var for `recent_hours` is `FMUX_RECENT_HOURS`, and so on.
 | `unseen_minutes` | `10` | `--status`: how long a `✓name` badge stays in the status bar |
 | `accent` | `73` | 256-color number for tool-session names and `--help` headings |
 | `log_max` | `1048576` | rotation threshold for `~/.cache/fmux/hook.log` and `boot.log` |
+| `fzf_path` | *(empty)* | the popup: which `fzf` to run. Empty means "whatever `PATH` finds" — set it only if the popup says it cannot find fzf ([Q6](#q6-the-popup-opens-and-closes-again-immediately)) |
 | `key_summon` | `F` | the tmux snippet: `bind <key>` (after the prefix) |
 | `key_summon_fast` | *(empty)* | the tmux snippet: `bind -n <key>` for each name in the list |
 
@@ -694,6 +695,29 @@ refused to restore on purpose — a fleet of network-less agents would look "alr
 running" forever and block your manual retry. If the log says the manifest is
 `older than 7 days`, nothing has been writing it: the minute cron line was probably
 never installed.
+
+### Q6. The popup opens and closes again immediately
+
+Something inside it exited at once. Almost always that is fzf not being on `PATH` **in there**:
+`display-popup` starts a fresh shell, and if your fzf comes from a line in `~/.zshrc` or
+`~/.bashrc` — a Homebrew prefix, `~/.local/bin`, a version manager — that shell never read it.
+Running `fmux` by hand works, because that shell did.
+
+The popup used to close on top of the error, so there was nothing to read. It now stays open and
+says so. If you are on an older build, reproduce it somewhere the message survives:
+
+```bash
+fmux --from "$(tmux display-message -p '#S')"   # inside tmux, no popup
+```
+
+The fix does not depend on any startup file:
+
+```bash
+fmux config set fzf_path "$(command -v fzf)"    # run this from a normal terminal
+```
+
+The same shape catches the other causes: an fzf older than 0.64 (fmux uses `--footer`), or a
+`fzf` on `PATH` that is not really fzf. The popup names the version it found.
 
 ## Scripting surface
 

@@ -60,7 +60,7 @@ assert_contains "$SRC" '"${1:-}" = "config"' "the fmux config entry point actual
 # README lists "keys that are wired" separately from "keys that only get saved." If that
 # split disagrees with what the code decides (the not-wired marker in fmux config list), the
 # doc is selling a toggle that does nothing.
-WIRED='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max key_summon key_summon_fast'
+WIRED='rc snapshot snapshot_on_exit boot_restore status_badges recent_hours unseen_minutes accent log_max fzf_path key_summon key_summon_fast'
 UNWIRED='key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings'
 
 list=$("$FMUXBIN" config list 2>/dev/null) || list=''

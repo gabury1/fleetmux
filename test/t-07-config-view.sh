@@ -73,7 +73,7 @@ export PATH="$FMUXROOT/bin:$PATH"
 out=$("$FMUXBIN" --config-list)
 plain=$(printf '%s\n' "$out" | sed "$FMUX_DEANSI")
 
-assert_eq "$(printf '%s\n' "$plain" | grep -c .)" "19" "all 19 known keys come out, one per line"
+assert_eq "$(printf '%s\n' "$plain" | grep -c .)" "20" "all 20 known keys come out, one per line"
 assert_contains "$plain" "rc${TAB}rc " "field 1 is the key name"
 assert_contains "$plain" "remote-control" "a description is attached"
 
@@ -113,7 +113,7 @@ done
 #   This count is the **watchdog** for that automatic judgment: the day key remapping (T7) wires
 #   an eighth key, this must fail first — both "wired but the marker didn't update" and "not wired
 #   but the marker vanished" both hinge on this one line.
-assert_eq "$(printf '%s\n' "$plain" | grep -vc "not wired")" "11" "exactly 11 keys are wired right now"
+assert_eq "$(printf '%s\n' "$plain" | grep -vc "not wired")" "12" "exactly 12 keys are wired right now"
 
 # ── ② --config-toggle ──────────────────────────────────────────────────────
 : > "$CONF"
