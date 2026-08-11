@@ -4228,7 +4228,42 @@ session=$("$SELF" --list 2>>"$STATE/hook.log" \
           --bind "ctrl-e:execute($SELFQ --do-rename {1} </dev/tty >/dev/tty 2>&1)+clear-query+reload($SELFQ --list)" \
           --bind "ctrl-x:execute($SELFQ --do-kill {1} </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)" \
           --bind "ctrl-b:execute($SELFQ --do-broadcast {+1} </dev/tty >/dev/tty 2>&1)+deselect-all+clear-query" \
-          --bind "$FMUX_KEY_SETTINGS:execute($SELFQ --config-view </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)") || exit 0
+          --bind "$FMUX_KEY_SETTINGS:execute($SELFQ --config-view </dev/tty >/dev/tty 2>&1)+reload($SELFQ --list)") || fzf_rc=$?
+
+# Tell "the user pressed Esc" apart from "fzf refused to start".
+#   fzf exits 1 when nothing matched and 130 when it was interrupted — both are ordinary ways to
+#   close the popup. Anything else means it never drew a list: an option this build of fzf does not
+#   know, a terminal it cannot use, a binary that is not really fzf.
+#   Until now every one of those was `|| exit 0`, so the command ended cleanly and tmux closed the
+#   popup on top of the error message. The whole symptom a person can report is "it flashes and
+#   disappears" — there is nothing to read and nothing in a log, because fzf writes to the screen
+#   that just went away (reported by a teammate on 2026-08-11).
+#   So on an unexpected code we hold the popup open and say what happened. A popup that stays is
+#   the only place this message can be read.
+case "${fzf_rc:-0}" in
+    0|1|130) ;;
+    *)
+        printf '\n  fzf exited %s — it could not start.\n\n' "${fzf_rc}" >&2
+        printf '  fmux needs fzf 0.64 or newer (it uses --footer) and tmux 3.2 or newer.\n' >&2
+        printf '    fzf   %s\n' "$(fzf --version 2>&1 | head -1 || echo '?')" >&2
+        printf '    tmux  %s\n' "$(tmux -V 2>&1 || echo '?')" >&2
+        printf '\n  The error itself is above this line, if fzf printed one.\n' >&2
+        # Hold the popup open. Without a wait tmux closes it the instant this exits and the
+        # message above is gone again — which is the bug being fixed, not a cosmetic touch.
+        # No /dev/tty when run from a script or a pipe; then there is nothing to hold open and
+        # the message has already gone to stderr, so just leave.
+        #   `[ -c /dev/tty ]` is not the test: the node exists on a machine with no controlling
+        #   terminal too, and only opening it says whether this process has one.
+        #   Redirection order matters: `2>/dev/null` has to come *before* the open, or the shell
+        #   prints "No such device or address" itself before it is silenced (same trap as the
+        #   hook-file reads in 80-view.sh).
+        if : 2>/dev/null < /dev/tty; then
+            printf '  Press any key to close.' >&2
+            read -rsn1 _ </dev/tty 2>/dev/null || read -r _ </dev/tty 2>/dev/null || true
+        fi
+        exit 1 ;;
+esac
+[ "${fzf_rc:-0}" = 0 ] || exit 0
 
 session=$(printf '%s\n' "$session" | grep -v '^─' || true)   # treat separator lines as unselectable
 [ -z "$session" ] && exit 0

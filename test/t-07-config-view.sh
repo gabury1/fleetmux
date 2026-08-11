@@ -394,5 +394,52 @@ else
     printf '  --   no script available to attach a pty — skipping this section\n'
 fi
 
+# ── ⑤ fzf refusing to start must not close the popup silently ────────────────
+# Reported by a teammate on 2026-08-11: "Shift+Up, it flashes and disappears." That is what an
+# fzf that cannot start looks like from the outside — it writes its complaint to the screen, the
+# command ends, and tmux takes the popup down with the message still on it. Nothing reaches a log,
+# because the only thing that failed wrote to a terminal that no longer exists.
+#
+# The cause was one character of error handling: `fzf … || exit 0`. Every non-zero code — an
+# option this fzf has never heard of, a terminal it cannot drive — was treated exactly like Esc.
+# So the fix is not about fzf at all; it is about telling "the user closed it" apart from "it
+# never opened", and holding the popup open for the second kind.
+#
+# 1 (no match) and 130 (interrupt) stay silent: those are ordinary ways to leave the list.
+FAILDIR="$FMUXROOT/fzfrc"; mkdir -p "$FAILDIR"
+cat > "$FMUXROOT/bin/fzf" <<'SHIM'
+#!/usr/bin/env bash
+printf 'unknown option: --footer\n' >&2
+exit "${FMUX_FAKE_FZF_RC:-2}"
+SHIM
+chmod +x "$FMUXROOT/bin/fzf"
+export PATH="$FMUXROOT/bin:$REALPATH_SAVED"
+
+run_popup() {            # run_popup <rc fzf should exit with> → what the user sees
+    FMUX_FAKE_FZF_RC="$1" "$FMUXBIN" --from probe-session </dev/null 2>&1 || true
+}
+
+out=$(run_popup 2)
+assert_contains "$out" "could not start" \
+    "an fzf that refuses to start says so — the popup does not just vanish"
+assert_contains "$out" "unknown option: --footer" \
+    "fzf's own complaint survives to the screen, above our message"
+assert_contains "$out" "0.64" \
+    "the message names the version fmux needs, since that is the usual cause"
+
+# Esc and empty-match are not errors. If these ever start printing the banner, every popup close
+# would end with a wall of text — the opposite failure, and a much more annoying one.
+for rc in 1 130; do
+    out=$(run_popup "$rc")
+    case "$out" in
+        *"could not start"*)
+            FMUX_RUN=$((FMUX_RUN + 1)); FMUX_FAIL=$((FMUX_FAIL + 1))
+            printf '  FAIL rc %s is an ordinary close and must stay quiet\n' "$rc" ;;
+        *)
+            FMUX_RUN=$((FMUX_RUN + 1))
+            printf '  ok   rc %s (ordinary close) stays quiet\n' "$rc" ;;
+    esac
+done
+
 export PATH="$REALPATH_SAVED"
 fmux_test_done
