@@ -180,25 +180,30 @@ assert_contains "$RM" 'Why a single keystroke is what the installer offers' \
     "README has a paragraph on why a single keystroke"
 assert_contains "$RM" 'fmux config unset key_summon_fast   # rewrites the snippet' \
     "README states how to turn it off"
-assert_contains "$RM" 'installing the config file alone steals nothing' \
-    "README states the config default is still empty"
+assert_contains "$RM" 'Default **`S-Up`**' \
+    "README states the config default is S-Up"
 # The screen (fmux --help) must say the same thing — the old key must not be taught only here.
 HELP=$("$FMUXBIN" --help 2>&1) || HELP=''
-assert_contains "$HELP" 'S-Up' "fmux --help documents S-Up"
+# The help screen spells the key out for a human — "Shift + Up", not the tmux name "S-Up".
+# That is deliberate (fmux_key_human), so this asserts the rendered form.
+assert_contains "$HELP" 'Shift + Up' "fmux --help teaches the default summon key, spelled out"
 assert_contains "$HELP" 'takes that key from everything in' "fmux --help also states what it takes away"
 assert_eq "$(printf '%s' "$HELP" | grep -c "key_summon_fast 'C-Left M-Left'" || true)" "0" \
     "the old suggestion (C-Left M-Left) does not linger in fmux --help"
 
 # The config default must stay split off — the default must not follow the suggestion just
 # because the suggestion changed.
-assert_eq "$("$FMUXBIN" config get key_summon_fast)" "" "the config default key_summon_fast is still empty"
+assert_eq "$("$FMUXBIN" config get key_summon_fast)" "S-Up" "the config default key_summon_fast is S-Up"
 
 # The snippet generator must have **no static candidate list** (deploy gate B3). If it did, even
 # the default (safe) preset would unbind those keys — erasing bindings we never made, i.e.
 # someone else's. README promises right next to it that it "steals no key until you say so."
 assert_eq "$(grep -c 'FMUX_TMUX_UNBIND_CANDIDATES' src/*.sh install.sh | grep -v ':0$' | wc -l | tr -d ' ')" "0" \
     "no static candidate list of no-prefix keys exists in the code"
-assert_contains "$RM" 'steals no key' "README's promise text is unchanged"
+# The old wording promised "steals no key until you say so", which stopped being true on
+# 2026-08-11 when S-Up became the default. What still has to hold is the narrower rule the
+# unbind list depends on: fmux only ever unbinds a key it bound itself.
+assert_contains "$RM" 'unbind -n -q' "README still explains that only our own key is unbound"
 
 # ── (4)-b does the doc disclose its own verification status (deploy gate B10) ──────────────
 # This repo has never once run on macOS or WSL. Writing that table as flat assertion would let
@@ -309,8 +314,9 @@ assert_contains "$RM"  'dscl . -read' "README documents that fallback"
 
 # ── (8) --yes does not steal a key (deploy gate I3) ─────────────────────────────────────────
 # README:106's "steals no key until you say so" and install.sh's --yes used to disagree.
-assert_contains "$INST_SH" '--yes goes to safe, stealing no key' "install.sh states that"
-assert_contains "$INST_SH" 'elif [ "$ASSUME_YES" = 1 ]; then' "that branch actually exists in the code"
+assert_contains "$INST_SH" 'no one to ask' "install.sh says it kept the default where it could not ask"
+assert_contains "$INST_SH" 'elif [ "$ASSUME_YES" = 1 ] || [ "$ASK_TTY" = 0 ]; then' \
+    "that branch actually exists in the code"
 assert_contains "$RM" 'does **not** accept the detected key preset' "README states the boundary of --yes"
 
 # ── (9) Troubleshooting section ─────────────────────────────────────────────────────────────

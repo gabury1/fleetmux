@@ -91,7 +91,10 @@ out=$("$FMUXBIN" config set key_summon_fast "$(printf '\033b')" 2>&1) || true
 assert_contains "$out" 'escape sequence' "★an escape sequence is named as such, not reported as an empty token"
 assert_contains "$out" 'never passes the key to tmux' "and it says why binding it could not have worked"
 assert_eq "$(printf '%s' "$out" | grep -c "'' " || true)" "0" "it does not report an empty quoted token"
-assert_eq "$("$FMUXBIN" config get key_summon_fast)" "" "the rejected value is not written"
+# Rejected means nothing changed — the value stays whatever it was, which with no config file is
+# the code default (S-Up since 2026-08-11). Asserting "" here would have been asserting that a
+# rejected write silently clears the key.
+assert_eq "$("$FMUXBIN" config get key_summon_fast)" "S-Up" "the rejected value is not written — the default stands"
 
 out=$("$FMUXBIN" config set key_summon_fast 'S-Up @@@' 2>&1) || true
 assert_contains "$out" "'@@@'" "a plain bad name is quoted back so you can see which one"

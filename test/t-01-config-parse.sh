@@ -10,7 +10,10 @@ mkdir -p "$(dirname "$CONF")"
 assert_eq "$("$FMUXBIN" config get rc)"             "on"      "rc defaults to on"
 assert_eq "$("$FMUXBIN" config get recent_hours)"   "1"       "recent_hours defaults to 1"
 assert_eq "$("$FMUXBIN" config get key_summon)"     "F"       "key_summon defaults to F"
-assert_eq "$("$FMUXBIN" config get key_summon_fast)" ""       "key_summon_fast defaults to empty"
+# S-Up is the default as of 2026-08-11. It was empty before, so that installing the config file
+# alone never took a key from anyone — but that caution meant a fresh install had no summon key at
+# all, and the first teammate to try it found the one key this tool is about doing nothing.
+assert_eq "$("$FMUXBIN" config get key_summon_fast)" "S-Up" "key_summon_fast defaults to S-Up"
 assert_eq "$("$FMUXBIN" config source rc)"          "default" "source is default"
 
 # ② A value from the file beats the default

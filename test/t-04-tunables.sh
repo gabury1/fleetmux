@@ -232,10 +232,19 @@ assert_eq "$(printf '%s' "$h" | grep -c 'Option+←' || true)" "0" "it doesn't t
 # not competing with a two-keystroke alternative.
 assert_eq "$(printf '%s' "$h" | grep -c 'prefix + ' || true)" "0" \
     "★the help screen does not teach the prefix route — one summon key, stated once"
-assert_contains "$h" "no summon key"       "says so when no prefix-less key is bound"
-assert_contains "$h" "key_summon_fast"     "writes how to turn it on right there"
+# The default is S-Up (since 2026-08-11), so the help screen teaches it out of the box — the
+# state this used to assert, "no summon key", now only happens if you unset it on purpose.
+assert_contains "$h" "Shift + Up"          "the default summon key is on the help screen, spelled out"
 assert_contains "$h" "talked within 1h"    "reads and prints the default recent_hours"
 assert_contains "$h" "or 10 min"           "reads and prints the default unseen_minutes"
+
+# …and that branch still works when someone does unset it. Losing this would mean a user who took
+# the key back gets a help screen that teaches a key they no longer have.
+printf 'key_summon_fast=\n' > "$CONF"
+hn=$("$FMUXBIN" --help 2>/dev/null)
+assert_contains "$hn" "no summon key"      "says so when the key has been unset"
+assert_contains "$hn" "key_summon_fast"    "and writes how to turn it back on, right there"
+: > "$CONF"
 
 printf 'key_summon=T\nkey_summon_fast=C-Left M-Left\nrecent_hours=3\nunseen_minutes=45\n' > "$CONF"
 h=$("$FMUXBIN" --help 2>/dev/null)

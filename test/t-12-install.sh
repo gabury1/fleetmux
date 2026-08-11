@@ -145,8 +145,8 @@ assert_eq "$(cnt "$TMUXCONF" 'source-file')" "0" "without consent, no source-fil
 assert_eq "$(has "$OUT" 'not a terminal, so we did not ask')" "yes" "says why it did not add it"
 assert_eq "$(has "$OUT" "source-file $SNIP")" "yes" "shows on screen the line it would add instead"
 
-# Falls to the non-stealing side (safe) — no no-prefix binding
-assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "without a terminal, it does not steal a no-prefix key"
+# Keeps the config default (S-Up) — "could not ask" is not the same as "was told no".
+assert_eq "$(grep -c '^bind -n S-Up ' "$SNIP" || true)" "1" "without a terminal, the default S-Up is still bound"
 
 # one line explaining what the shim is + PATH guidance
 assert_eq "$(has "$OUT" 'claude/codex launched inside tmux')" "yes" "explains what the shim does"
@@ -280,10 +280,14 @@ run_inst "$STUB_OK" --yes --preset linux         # ← first put it into the 'st
 assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "2" "repro: --preset linux binds two no-prefix keys"
 run_inst "$STUB_OK" --yes
 assert_eq "$RC" "0" "--yes alone is rc 0"
-assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "--yes does not steal a single no-prefix key"
-assert_eq "$(cnt "$CONF" '^key_summon_fast=')" "0" "no value is left in the config either"
+# Since 2026-08-11 the config default *is* S-Up, so "nobody to ask" keeps it rather than clearing
+# it — writing safe here would turn "I did not ask" into "you said no". The two-key presets are
+# what still require saying it out loud; see the next block.
+assert_eq "$(grep -c '^bind -n S-Up ' "$SNIP" || true)" "1" "--yes keeps the default S-Up"
+assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "1" "and takes nothing beyond it"
 assert_eq "$(grep -c '^bind F ' "$SNIP" || true)" "1" "the prefix summon key (F) stays as-is"
-assert_eq "$(has "$OUT" '--yes goes to safe, stealing no key')" "yes" "says on screen why it is safe"
+assert_eq "$(has "$OUT" 'no one to ask')" "yes" "says on screen that it kept the default"
+assert_eq "$(has "$OUT" './install.sh --preset safe')" "yes" "and how to take no key at all"
 # The stealing path only opens when spelled out explicitly — if that path gets blocked, this
 # change has removed the feature.
 run_inst "$STUB_OK" --yes --preset linux
@@ -307,9 +311,9 @@ assert_eq "$(has "$OUT" "suggested: shift — key_summon_fast='S-Up'")" "yes" "t
 assert_eq "$(has "$OUT" 'this takes the key away from every app in the pane')" "yes" "says right there what it takes"
 assert_eq "$(has "$OUT" "Pick a different key if you're already using it.")" "yes" "recommends a different key to someone already using it"
 assert_eq "$(has "$OUT" 'S-Up/S-Down to tmux window switching')" "yes" "writes down the known risk (window-switching bindings)"
-# The suggestion is only words — where it cannot ask (not a terminal), it still steals nothing.
-assert_eq "$(has "$OUT" 'not a terminal, so we did not ask')" "yes" "says so when it cannot ask"
-assert_eq "$(has "$OUT" 'config set key_summon_fast')" "no" "does not even plan to bind a key where it could not ask"
+# Where it cannot ask it keeps the default and says which one, rather than going silent.
+assert_eq "$(has "$OUT" 'no one to ask')" "yes" "says so when it cannot ask"
+assert_eq "$(has "$OUT" './install.sh --preset safe')" "yes" "and points at the way to take no key at all"
 
 # --preset shift actually binds S-Up (is the suggestion's name a real preset?).
 run_inst "$STUB_OK" --yes --preset shift
@@ -327,11 +331,15 @@ assert_eq "$(grep -c '^bind F ' "$SNIP" || true)" "1" "the prefix summon key sta
 assert_eq "$(grep -c '^bind -n S-Up ' "$SNIP" || true)" "1" "repro: S-Up is currently bound"
 run_inst "$STUB_OK" --yes
 assert_eq "$RC" "0" "--yes alone is rc 0"
-assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "--yes does not steal S-Up either"
-assert_eq "$(grep -c '^unbind -n -q S-Up$' "$SNIP" || true)" "1" "the S-Up that was taken gets returned via unbind"
-assert_eq "$(cnt "$CONF" '^key_summon_fast=')" "0" "no value is left in the config either"
-assert_eq "$(has "$OUT" '--yes goes to safe, stealing no key')" "yes" "says on screen why it is safe"
-assert_eq "$(has "$OUT" './install.sh --yes --preset shift')" "yes" "also says how to get it if wanted"
+assert_eq "$(grep -c '^bind -n S-Up ' "$SNIP" || true)" "1" "--yes leaves the default S-Up in place"
+assert_eq "$(has "$OUT" 'no one to ask')" "yes" "says on screen that it kept the default"
+
+# Asking for no prefix-less key at all still works, and is still the only way to get there
+# without a terminal. `safe` writes an explicit empty value — `config unset` would hand the key
+# back, because the code default is S-Up now.
+run_inst "$STUB_OK" --yes --preset safe
+assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "--preset safe takes no prefix-less key"
+assert_eq "$(cnt "$CONF" '^key_summon_fast=$')" "1" "and says so with an explicit empty value, not by unsetting"
 
 # ── ⑦-e warns before overwriting a line that already uses that key ──────────
 # Does not ask a live tmux server — reads only config files. A dotfile that binds S-Up/S-Down
@@ -380,7 +388,9 @@ if [ -n "$SCRIPTBIN" ] && "$SCRIPTBIN" -qec 'true' /dev/null > /dev/null 2>&1 < 
     run_inst_tty "$STUB_OK" 'safe\nn\n'
     assert_eq "$RC" "0" "even declining is rc 0"
     assert_eq "$(grep -c '^bind -n ' "$SNIP" || true)" "0" "declining leaves no no-prefix key at all"
-    assert_eq "$(cnt "$CONF" '^key_summon_fast=')" "0" "declining leaves no value in the config either"
+    # An explicit empty value, not an absent one: with S-Up as the code default, unsetting would
+    # give the key straight back to someone who just said they did not want it.
+    assert_eq "$(cnt "$CONF" '^key_summon_fast=$')" "1" "declining writes an explicit empty value"
     assert_eq "$(grep -c '^bind F ' "$SNIP" || true)" "1" "declining leaves the prefix approach"
     assert_eq "$(grep -c '^unbind -n -q S-Up$' "$SNIP" || true)" "1" "the S-Up it had taken gets returned"
 

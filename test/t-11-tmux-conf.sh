@@ -18,7 +18,10 @@ count_lines() { printf '%s\n' "$1" | grep -c "$2" || true; }
 # ── ① Default — only the prefix binding appears, no prefix-less binding ──────
 out=$("$FMUXBIN" --tmux-conf)
 assert_contains "$out" "bind F " "the default summon key F comes out as a prefix binding"
-assert_eq "$(count_lines "$out" '^bind -n ')" "0" "there is no prefix-less binding in the default"
+# The default snippet now binds one prefix-less key (S-Up). Exactly one — a second would mean the
+# generator is emitting a key nobody asked for.
+assert_eq "$(count_lines "$out" '^bind -n ')" "1" "the default snippet binds exactly one prefix-less key"
+assert_contains "$out" 'bind -n S-Up' "and that key is S-Up"
 assert_eq "$(count_lines "$out" '^bind F ')" "1" "the prefix binding is exactly one line"
 assert_contains "$out" "$SNIP" "the header tells the path to source-file"
 
@@ -37,7 +40,9 @@ assert_eq "$(count_lines "$out" '^set-hook -g session-closed .run-shell \"')" "1
 # **we're erasing a binding someone else set up** — a direct contradiction of the README's "steals
 # no key until you say so." The old version unconditionally walked a static candidate list
 # (C-Left M-Left M-b C-Right M-Right M-f). This line guards against that regression.
-assert_eq "$(count_lines "$out" '^unbind ')" "0" "no key we didn't bind gets unbound — the default has 0 unbind lines"
+# One unbind, for the one key we bind. The rule this guards is "never unbind a key we did not
+# bind" — the count has to track the bindings, not stay at zero.
+assert_eq "$(count_lines "$out" '^unbind ')" "1" "one unbind line, matching the one key we bind"
 for k in C-Left M-Left M-b C-Right M-Right M-f; do
     assert_eq "$(count_lines "$out" "^unbind .*$k\$")" "0" "the default doesn't unbind someone else's $k"
 done

@@ -164,9 +164,9 @@ but nothing reads them yet — see [Configuration](#configuration).
 Two settings, because **one physical key arrives under different names per terminal**:
 
 - `key_summon` — pressed *after* the tmux prefix. Default `F`. One key.
-- `key_summon_fast` — prefix-less. Default **empty** (fmux steals no key until you say so).
-  It is a *space-separated list*, so you can bind every name the same physical key
-  may arrive as.
+- `key_summon_fast` — prefix-less. Default **`S-Up`**, so the one keystroke this tool is about
+  works the moment you install it. It is a *space-separated list*, so you can bind every name the
+  same physical key may arrive as.
 
 ```bash
 fmux config set key_summon_fast S-Up            # rewrites the tmux snippet on the spot
@@ -224,11 +224,13 @@ before anything running inside sees it. Accept `S-Up` and vim, your shell's line
 editing and fzf stop receiving Shift+← *in tmux panes*. That is a real cost, which is
 why it is an offer you answer, never something that happens quietly.
 
-**What still never happens quietly.** The config default for `key_summon_fast` stays
-**empty**: installing the config file alone steals nothing. `./install.sh --yes` and
-any non-interactive run also go to `safe` — automatic approval must not take somebody
-else's key. A prefix-less key is bound only when a human answers the prompt, or writes
-`--preset` on the command line.
+**Why it is the default anyway.** It was empty until 2026-08-11, on the reasoning that a
+prefix-less binding should only happen after a human says yes. What that produced in practice was
+a fresh install where the key the tool is *about* did nothing, and a teammate who had to go and
+find `key_summon_fast` before the thing worked at all. The caution was protecting a key almost
+nobody had bound, at the cost of the feature for everybody. So `S-Up` ships bound, and taking it
+back is one line — the snippet emits `unbind -n` for it, so the key returns to whatever it did
+before.
 
 **How to turn it off.**
 
@@ -318,7 +320,7 @@ the env var for `recent_hours` is `FMUX_RECENT_HOURS`, and so on.
 | `log_max` | `1048576` | rotation threshold for `~/.cache/fmux/hook.log` and `boot.log` |
 | `fzf_path` | *(empty)* | the popup: which `fzf` to run. Empty means "whatever `PATH` finds" — set it only if the popup says it cannot find fzf ([Q6](#q6-the-popup-opens-and-closes-again-immediately)) |
 | `key_summon` | `F` | the tmux snippet: `bind <key>` (after the prefix) |
-| `key_summon_fast` | *(empty)* | the tmux snippet: `bind -n <key>` for each name in the list |
+| `key_summon_fast` | `S-Up` | the tmux snippet: `bind -n <key>` for each name in the list |
 
 ### Keys that are stored but not read yet
 
@@ -500,8 +502,7 @@ says *command not found*.
 `shift` one. Binding a prefix-less key is a global change to your tmux — it takes that
 key away from whatever else was using it — so it happens only when you name a preset
 yourself or answer the prompt. "Accept the defaults" must never mean "take my keys".
-Without `--preset`, `--yes` leaves `key_summon_fast` empty, exactly as the default
-promises. The same holds for any run where stdin is not a terminal.
+Without `--preset`, `--yes` keeps the default `S-Up`. The same holds for any run where stdin is not a terminal.
 
 Eight steps (remote mode prints a step 0 in front of them — fetch and verify the
 archive): dependencies → `~/.local/bin/fmux` (+ the `tt` symlink) → hook shims in
@@ -624,15 +625,8 @@ export PATH="$HOME/.local/libexec/fmux:$HOME/.local/bin:$PATH"
 
 ### Q2. The summon key does nothing
 
-Most likely nothing is bound: `key_summon_fast` is empty by default, on purpose — fmux
-takes no key until you say so. Turn it on and re-source:
-
-```bash
-fmux config set key_summon_fast S-Up            # works on macOS, Linux and WSL alike
-fmux config set key_summon_fast 'C-Left M-Left'   # Linux-only alternative; macOS: 'M-b'
-```
-
-Then check three things:
+`S-Up` is bound by default, so the usual cause is that the binding never reached your tmux
+server rather than that it does not exist. Check three things:
 
 1. `~/.tmux.conf` (or `~/.config/tmux/tmux.conf`) contains
    `source-file ~/.config/fleetmux/tmux.conf` as its own line. `~` is fine; so is an

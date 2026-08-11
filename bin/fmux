@@ -89,15 +89,22 @@ fmux_conf_default() {
         key_help)        printf '?' ;;
         key_settings)    printf 'ctrl-o' ;;
         key_summon)      printf 'F' ;;
-        # The default for the no-prefix summon key **stays empty**. With only the config file
-        # installed, it must not silently steal someone else's key — a no-prefix binding grabs
-        # that key from every app in that pane (vim, shell, fzf). That must only happen after a
-        # human has said "yes" once.
-        #   So policy splits in two: **the config default is empty, the installer's suggestion is
-        #   S-Up**. (The install.sh preset section writes at length on why S-Up. Summary:
-        #   Shift+arrow is the only no-prefix single keystroke that passes through all three of
-        #   macOS, Linux, and Windows Terminal.)
-        key_summon_fast) printf '' ;;
+        # The no-prefix summon key. This used to default to empty, so that installing the config
+        # file alone never took a key from anybody — a no-prefix binding grabs that key from every
+        # app in the pane (vim, shell, fzf), and that felt like something a person should say yes
+        # to first.
+        #   Measured against what actually happened: a teammate installed it, found the one key
+        #   the tool is about did nothing, and had to go set it by hand (2026-08-11). The caution
+        #   cost every new user the feature, to protect a key almost nobody had bound.
+        #   So the default is S-Up. Why that key and not another: Shift+arrow is the only
+        #   no-prefix single keystroke that reaches tmux on macOS, Linux and Windows Terminal
+        #   alike — Ctrl+arrow is taken by Mission Control, Alt+arrow by Windows Terminal, and
+        #   Ctrl+letter by shell line editing, vim and fzf. install.sh writes this out at length.
+        #   Taking it back is one line, and the popup's help screen says which line:
+        #     fmux config unset key_summon_fast
+        #   The snippet emits `unbind -n` for the old key when you do, so it goes back to whatever
+        #   it did before.
+        key_summon_fast) printf 'S-Up' ;;
         # Empty means "whatever PATH finds", which is right almost always. It exists for the
         # case where it is not: the popup opens a shell that never read the rc file putting fzf
         # on PATH — a Homebrew prefix, ~/.local/bin, a version manager — so fzf is missing at the

@@ -985,23 +985,21 @@ install_preset() {
         preset_value "$PRESET" > /dev/null 2>&1 || die "unknown preset: $PRESET (safe|shift|mac|linux|wsl)"
         want="$PRESET"
         note "preset given as an argument: $want"
-    elif [ "$ASSUME_YES" = 1 ]; then
-        # --yes goes to **safe** (team deploy gate I3). It used to auto-adopt the detected
-        # preset — on Linux, `./install.sh --yes` would silently steal two no-prefix keys
-        # (C-Left M-Left) globally, while the README was promising "steals no key until you say
-        # so." Taking a key is a global change that's a pain to undo, so it doesn't belong in
-        # the category of "accepting a default" — it's only taken when a human **explicitly**
-        # specifies --preset. This rule holds even after the suggestion became S-Up — the
-        # suggestion getting better and it being fine to take without consent are different
-        # statements.
-        want=safe
-        note "--yes goes to safe, stealing no key — a no-prefix key is only taken when explicitly specified"
-        note "  for a single keystroke: ./install.sh --yes --preset $PRESET_SUGGEST   (this machine looks like $guess)"
-    elif [ "$ASK_TTY" = 0 ]; then
-        # A no-prefix binding steals someone's key. Where we can't ask, default to not stealing.
-        want=safe
-        note "not a terminal, so we did not ask — going with safe, which steals no key"
-        note "  for a single keystroke: ./install.sh --preset $PRESET_SUGGEST   (this machine looks like $guess)"
+    elif [ "$ASSUME_YES" = 1 ] || [ "$ASK_TTY" = 0 ]; then
+        # Nobody to ask — either --yes was given or there is no terminal. Both used to land on
+        # `safe`, back when the config default was empty and the rule was "a prefix-less key is
+        # only ever taken when a human says yes out loud" (team deploy gate I3). What that
+        # produced was installs where the one key this tool is about did nothing, and the reason
+        # was invisible: nothing was broken, a default was simply absent.
+        #   The config default is S-Up now, so leaving the key alone *is* the same answer as
+        #   accepting the suggestion. Writing `safe` here would be the surprising act — it would
+        #   turn "I did not ask" into "you said no".
+        #   The original worry was about the *other* presets: `linux` binds C-Left and M-Left,
+        #   two keys, and taking those without being asked is a different thing entirely. Those
+        #   still require --preset.
+        want="$PRESET_SUGGEST"
+        note "no one to ask — keeping the default key_summon_fast='$(preset_value "$PRESET_SUGGEST")'"
+        note "  to take no prefix-less key at all: ./install.sh --preset safe"
     else
         note "choices:"
         note "shift  S-Up — the suggestion above (default)"
@@ -1044,8 +1042,11 @@ install_preset() {
 
     # config set/unset rewrite the snippet themselves (fmux_conf_resnip in 85-config-cli.sh).
     if [ -z "$v" ]; then
-        "$FMUX" config unset key_summon_fast > /dev/null || die "could not clear key_summon_fast"
-        did "removed config key_summon_fast (safe)"
+        # `safe` means "take no prefix-less key", and since 2026-08-11 the code default is S-Up —
+        # so `config unset` would hand the key straight back, which is the opposite of what was
+        # asked for. An explicit empty value is the only way to say no and be heard.
+        "$FMUX" config set key_summon_fast '' > /dev/null || die "could not clear key_summon_fast"
+        did "config key_summon_fast='' (safe — no prefix-less key)"
     else
         "$FMUX" config set key_summon_fast "$v" > /dev/null || die "could not set key_summon_fast"
         did "config key_summon_fast='$v'"
