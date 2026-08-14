@@ -131,7 +131,27 @@ if [ "${1:-}" = "--list" ]; then
     #   drops the name (empty fields are forbidden).
     #   Using a control character like 0x1f as the delimiter is blocked — tmux -F escapes it out
     #   as the literal string \037.
-    tmux ls -F $'#{session_id}\t#{session_created}\t#{?session_last_attached,#{session_last_attached},0}\t#{?session_attached,●,-}\t#{session_name}' 2>/dev/null \
+    #   The ask is made **before** the pipeline, not inside it, so its exit code survives. Piping
+    #   `tmux ls` straight into the loop meant its rc was gone by the time anyone could look, and
+    #   every way of failing landed on the same screen: an empty list.
+    #   rc 1 is "no server / no sessions" — an empty list is the correct answer to that.
+    #   rc 127 is "tmux is not on PATH in here", which is not an empty fleet but a failure to ask.
+    #   The popup drew those identically until 2026-08-14, and a Mac hit it for real: the tmux
+    #   server had started without a Homebrew prefix on PATH, so inside the popup tmux could not
+    #   find itself. Whoever is looking reads "I have no sessions" and goes hunting in the wrong
+    #   place. fmux_ensure_tmux (10-util.sh) repairs PATH before this line; this is what says so
+    #   when even that could not.
+    fmux_ls_rc=0
+    fmux_sessraw=$(tmux ls -F $'#{session_id}\t#{session_created}\t#{?session_last_attached,#{session_last_attached},0}\t#{?session_attached,●,-}\t#{session_name}' 2>/dev/null) || fmux_ls_rc=$?
+    case "$fmux_ls_rc" in
+        0|1) ;;
+        *) printf 'fleetmux: cannot list sessions — `tmux ls` exited %s.\n' "$fmux_ls_rc" >&2
+           [ "$fmux_ls_rc" = 127 ] && printf 'fleetmux: tmux is not on PATH here. Point fmux at it: fmux config set tmux_path /full/path/to/tmux\n' >&2
+           exit "$fmux_ls_rc" ;;
+    esac
+    # An empty value must not become one empty line — the loop would read it as a session whose
+    # every field is blank. `printf '%s\n' ""` prints a newline, so the emptiness is checked here.
+    { if [ -n "$fmux_sessraw" ]; then printf '%s\n' "$fmux_sessraw"; fi; } \
         | while IFS=$'\t' read -r sid created la attached name; do
             # Agent sessions (claude/codex, group 1) go on top, tool sessions (yazi/htop etc, group 0) go at the bottom
             grp=0

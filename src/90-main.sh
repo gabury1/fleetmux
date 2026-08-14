@@ -436,6 +436,21 @@ fi
 # one moment it is needed, the command dies instantly, and tmux takes the popup down with the
 # "command not found" still on it. Reported as "Shift+Up flashes and disappears" (2026-08-11);
 # the same fmux run by hand worked, because that shell had read the rc.
+# tmux comes first, and it is the one nobody expects to be missing — fmux is a tmux tool, so
+# surely tmux is there. It is, on the machine; it is not on the PATH this popup inherited.
+# fmux_ensure_tmux (10-util.sh) has already tried to repair that by the time we get here, so
+# reaching this means even reading the path off the running server failed. Without the message
+# the list simply comes back empty and reads as "no sessions" — how this was reported both times.
+if [ "$FMUX_TMUX_OK" != 1 ]; then
+    printf '\n  tmux is not on PATH in here.\n\n' >&2
+    printf '  It is on yours — this popup runs in the tmux server environment, which never read\n' >&2
+    printf '  the file that adds it. Without tmux, fmux cannot list a single session.\n\n' >&2
+    printf '    fmux config set tmux_path /full/path/to/tmux\n\n' >&2
+    printf '  Find that path from a normal terminal with:  command -v tmux\n' >&2
+    fmux_hold_tty
+    exit 1
+fi
+
 FZF=$(fmux_conf_get fzf_path)
 [ -n "$FZF" ] || FZF=fzf
 if ! command -v "$FZF" >/dev/null 2>&1; then
@@ -444,10 +459,7 @@ if ! command -v "$FZF" >/dev/null 2>&1; then
     printf '  Point fmux at it directly, which does not depend on any shell startup:\n\n' >&2
     printf '    fmux config set fzf_path /full/path/to/fzf\n\n' >&2
     printf '  Find that path from a normal terminal with:  command -v fzf\n' >&2
-    if : 2>/dev/null < /dev/tty; then
-        printf '\n  Press any key to close.' >&2
-        read -rsn1 _ </dev/tty 2>/dev/null || read -r _ </dev/tty 2>/dev/null || true
-    fi
+    fmux_hold_tty
     exit 1
 fi
 

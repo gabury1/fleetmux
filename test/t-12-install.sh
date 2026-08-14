@@ -323,6 +323,22 @@ assert_eq "$(grep -c '^bind -n S-Up ' "$SNIP" || true)" "1" "the snippet emits b
 assert_eq "$(grep -c '^unbind -n -q S-Up$' "$SNIP" || true)" "1" "even the key being bound is unbound first (idempotent on reapply)"
 assert_eq "$(grep -c '^bind F ' "$SNIP" || true)" "1" "the prefix summon key stays as-is"
 
+# ── ⑦-c' where tmux is gets written down while it can still be seen ────────
+# This script runs in an interactive shell, where `command -v tmux` answers. The two places fmux
+# runs afterwards do not: a popup gets the tmux server's environment and cron gets /usr/bin:/bin,
+# and on a Mac neither could find tmux — the popup drew an empty session list instead of saying
+# so (2026-08-14). fmux repairs its own PATH at run time (t-19 pins that); this is the shortcut
+# for a prefix nothing can guess, and it is only knowable from here.
+assert_eq "$(has "$(cat "$CONF")" "tmux_path=$STUB_OK/tmux")" "yes" \
+    "★the absolute path of the tmux it checked is recorded in the config"
+assert_eq "$(has "$OUT" "config tmux_path='$STUB_OK/tmux'")" "yes" "and it says that it did"
+
+# Dry-run must stay a dry run. This key is written with the same `config set` as the summon key,
+# so if it ever escaped the is_dry check it would be the one write that a --dry-run performs.
+run_inst "$STUB_OK" --dry-run
+assert_eq "$(has "$OUT" "fmux config set tmux_path '$STUB_OK/tmux'")" "yes" "dry-run says it would record tmux_path"
+assert_eq "$(has "$OUT" "config tmux_path='$STUB_OK/tmux'")" "no" "and does not claim to have done it"
+
 # ── ⑦-d --yes does not auto-adopt the new suggestion either (regression guard) ──
 # The suggestion getting better and it being fine to take without consent are different
 # statements. Nails down the same discipline as ⑦-b again, this time **for the new default

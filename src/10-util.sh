@@ -59,3 +59,98 @@ fmux_log_rotate() {
     return 0
 }
 
+# The absolute path of a running process's executable.
+#   Linux keeps it as the /proc/<pid>/exe symlink. macOS has no /proc, but there its ps reports
+#   comm as the full path — the very difference fmux_comm at the top of this file exists to
+#   flatten. So the two platforms answer this with one function and no uname branch.
+#   FMUX_PROC is the same test-injection door 30-state.sh uses — point it at a fake /proc and the
+#   Linux half of this can be exercised anywhere.
+fmux_exe_of() {
+    local p
+    p=$(readlink "${FMUX_PROC:-/proc}/${1:-0}/exe" 2>/dev/null) || p=""
+    [ -n "$p" ] || p=$(ps -p "${1:-0}" -o comm= 2>/dev/null) || p=""
+    # Only an absolute path is an answer. Linux ps would hand back a bare "tmux" here, which
+    # would send the caller straight back to the PATH that already failed it.
+    case "$p" in /*) printf '%s' "$p" ;; *) return 1 ;; esac
+}
+
+# ── tmux has to be findable from wherever fmux was started ──────────────────
+# fmux shells out to tmux from ~150 places, and every one of them goes through PATH. The PATH
+# fmux runs with is not the PATH you have:
+#   · a popup inherits the **tmux server's** environment, and a server started straight from a
+#     terminal app (Ghostty, iTerm) never read your shell rc — so a Homebrew prefix is missing
+#   · cron hands you /usr/bin:/bin and nothing else
+# On a Mac that leaves `tmux` itself off PATH inside the popup. Every call dies with 127, and
+# because the list path discarded stderr, the popup drew an **empty session list** — which reads
+# as "you have no sessions", not as a failure (reported 2026-08-14).
+#
+# It is the same failure as the missing fzf (2026-08-11). That fix was written for fzf alone,
+# which is exactly why this one got through: the class is "the popup's PATH is not yours", and
+# naming it "fzf is missing" fixed one member of it.
+#
+# Repairing PATH is what this does — not rewriting the call sites. One export covers all ~150,
+# including the calls that live inside strings and that no call-site rewrite could reach: the
+# fzf binding `ctrl-d:execute-silent(tmux detach-client)`, and the snippet --tmux-conf emits.
+fmux_tmux_find() {
+    local p pid
+    # ① what someone told us explicitly. An absolute path does not care what any startup file did.
+    p=$(fmux_conf_get tmux_path 2>/dev/null) || p=""
+    if [ -n "$p" ] && [ -x "$p" ]; then printf '%s' "$p"; return 0; fi
+    # ② ask the tmux server we are already running inside. $TMUX is
+    #    "<socket>,<server pid>,<session index>", and that pid is a tmux binary by definition —
+    #    so in a popup this needs no config and no guessing, which is the case that was broken.
+    if [ -n "${TMUX:-}" ]; then
+        pid=${TMUX#*,}; pid=${pid%%,*}
+        case "$pid" in
+            ''|*[!0-9]*) ;;
+            *) p=$(fmux_exe_of "$pid") || p=""
+               if [ -n "$p" ] && [ -x "$p" ]; then printf '%s' "$p"; return 0; fi ;;
+        esac
+    fi
+    # ③ the usual prefixes. This is the cron case, where ② has no $TMUX to read.
+    #    FMUX_TMUX_PROBE is the test-injection door (the same idea as FMUX_PROC in 30-state.sh):
+    #    without it, "no tmux anywhere" cannot be staged on a machine that has one at /usr/bin.
+    for p in ${FMUX_TMUX_PROBE-/opt/homebrew/bin/tmux /usr/local/bin/tmux /opt/local/bin/tmux \
+             /home/linuxbrew/.linuxbrew/bin/tmux /usr/pkg/bin/tmux /usr/bin/tmux /bin/tmux}; do
+        if [ -x "$p" ]; then printf '%s' "$p"; return 0; fi
+    done
+    return 1
+}
+
+# Put tmux on PATH if it isn't already. Costs one builtin lookup when things are normal, which
+# is every run on every Linux box — nothing below the first line executes there.
+fmux_ensure_tmux() {
+    command -v tmux >/dev/null 2>&1 && return 0
+    # Bare statement, not a subshell — the contract in 05-config.sh. fmux_tmux_find reads the
+    # config from inside $( ), and without this the parse (and any warning it prints) would
+    # happen there and be thrown away with the subshell.
+    fmux_conf_load
+    local t
+    t=$(fmux_tmux_find) || return 1
+    PATH="${t%/*}:$PATH"
+    export PATH                                  # children need it: $SELF --list, the fzf bindings
+    command -v tmux >/dev/null 2>&1
+}
+
+# Runs for every entry point, because every entry point calls tmux. The flag is what the popup
+# reads to decide whether to explain itself — the callers that don't need tmux (config, --help)
+# never look at it.
+FMUX_TMUX_OK=1
+fmux_ensure_tmux || FMUX_TMUX_OK=0
+
+# Hold a screen open long enough to be read. A popup is its own window that tmux tears down the
+# instant the command returns, so a message printed on the way out is never seen.
+#   `: < /dev/tty` is the test, not `[ -c /dev/tty ]`: the device node exists even when the
+#   process has no controlling terminal, and opening it is the only thing that tells them apart.
+#   The redirect of stderr comes **before** the open, or the shell prints its own failure first.
+#   FMUX_TTY=off means "there is no one here", the same switch and the same meaning install.sh
+#   has (install.sh:153). Without it these branches cannot be tested at all: a suite run from a
+#   terminal can open /dev/tty, so the assertion would sit waiting for a keypress instead of
+#   failing — which is why the "fzf is missing" branch went untested until now.
+fmux_hold_tty() {
+    if [ "${FMUX_TTY:-}" != off ] && : 2>/dev/null < /dev/tty; then
+        printf '\n  Press any key to close.' >&2
+        read -rsn1 _ </dev/tty 2>/dev/null || read -r _ </dev/tty 2>/dev/null || true
+    fi
+}
+

@@ -15,7 +15,7 @@ FMUX_CONF="${FMUX_CONF_FILE:-$FMUX_CONF_DIR/config}"
 #   ③ numbers and colour.
 #   ④ the eight "not wired" key rows last. They are honest placeholders, but a row that does
 #      nothing has no business sitting between two that do.
-FMUX_CONF_KEYS='key_summon_fast key_summon status_badges rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max fzf_path key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings'
+FMUX_CONF_KEYS='key_summon_fast key_summon status_badges rc snapshot snapshot_on_exit boot_restore recent_hours unseen_minutes accent log_max fzf_path tmux_path key_new key_rename key_kill key_reload key_detach key_broadcast key_help key_settings'
 
 # Defaults. Unknown key → rc 1 — this function also doubles as the "is this a known key" check.
 fmux_conf_default() {
@@ -56,6 +56,12 @@ fmux_conf_default() {
         # one moment it matters, while the same fmux typed by hand works fine. An absolute path
         # does not care what any startup file did.
         fzf_path)        printf '' ;;
+        # Same story as fzf_path, one level down: fmux reaches tmux through PATH too, and the
+        # popup's PATH is the tmux **server's**, not yours. Unlike fzf this one is usually
+        # repaired without being told — fmux_tmux_find (10-util.sh) can read the path back off
+        # the running server — so setting this is the last resort, for a prefix nothing can
+        # guess.
+        tmux_path)       printf '' ;;
         *) return 1 ;;
     esac
     return 0

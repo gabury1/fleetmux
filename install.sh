@@ -1054,6 +1054,33 @@ install_preset() {
     ok "key_summon_fast='$v' (the snippet was rewritten too)"
 }
 
+# Write down where tmux lives, while we can still see it.
+#   This script runs in your interactive shell, where `command -v tmux` answers. The two places
+#   fmux runs later are not that shell: a popup gets the tmux server's environment, and cron gets
+#   /usr/bin:/bin. On a Mac with Homebrew, neither can find tmux, and fmux drew an empty session
+#   list rather than saying so (2026-08-14).
+#   fmux repairs its own PATH at run time (fmux_tmux_find, 10-util.sh) and gets this right on its
+#   own in almost every case. This line is for the prefix nothing can guess — nix, asdf, a build
+#   in your home directory — where cron would otherwise keep failing into >/dev/null.
+#   It is recorded, not trusted: fmux checks the path is still executable before using it and
+#   falls through to its other routes if it is not, so a line that goes stale costs nothing.
+#   No step banner — this is part of the config the step above writes, not a step of its own.
+record_tmux_path() {
+    local tpath
+    tpath=$(command -v tmux 2>/dev/null) || tpath=""
+    case "$tpath" in
+        /*) ;;
+        *) return 0 ;;                       # relative or empty — nothing worth writing down
+    esac
+    if is_dry; then plan "fmux config set tmux_path '$tpath'"; return 0; fi
+    if "$FMUX" config set tmux_path "$tpath" > /dev/null 2>&1; then
+        did "config tmux_path='$tpath'"
+    else
+        # Never fatal. fmux finds tmux by itself at run time; this was only the shortcut.
+        warn "could not record tmux_path='$tpath' — fmux will look for tmux on its own"
+    fi
+}
+
 # ── 6) agent skill ────────────────────────────────────────────────────────
 SKILL_SRC=''
 SKILL_DST=''
@@ -1218,6 +1245,7 @@ install_bin
 install_shims
 install_snippet
 install_preset
+record_tmux_path
 install_skill
 show_cron
 summary

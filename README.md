@@ -319,6 +319,7 @@ the env var for `recent_hours` is `FMUX_RECENT_HOURS`, and so on.
 | `accent` | `73` | 256-color number for tool-session names and `--help` headings |
 | `log_max` | `1048576` | rotation threshold for `~/.cache/fmux/hook.log` and `boot.log` |
 | `fzf_path` | *(empty)* | the popup: which `fzf` to run. Empty means "whatever `PATH` finds" — set it only if the popup says it cannot find fzf ([Q6](#q6-the-popup-opens-and-closes-again-immediately)) |
+| `tmux_path` | *(empty)* | which `tmux` to run. Empty means "whatever `PATH` finds", and fmux repairs that itself when it can — set it only for a prefix nothing can guess ([Q7](#q7-the-popup-opens-but-the-session-list-is-empty)) |
 | `key_summon` | `F` | the tmux snippet: `bind <key>` (after the prefix) |
 | `key_summon_fast` | `S-Up` | the tmux snippet: `bind -n <key>` for each name in the list |
 
@@ -712,6 +713,39 @@ fmux config set fzf_path "$(command -v fzf)"    # run this from a normal termina
 
 The same shape catches the other causes: an fzf older than 0.64 (fmux uses `--footer`), or a
 `fzf` on `PATH` that is not really fzf. The popup names the version it found.
+
+### Q7. The popup opens, but the session list is empty
+
+You have sessions; the popup shows none, and nothing is printed. This is Q6 one level down —
+the same `PATH` story, about `tmux` itself.
+
+A popup does not get your `PATH`. It gets the **tmux server's**, and a server started straight
+from a terminal app (Ghostty, iTerm) never read your shell rc — so on a Mac `/opt/homebrew/bin`
+is missing from it. `fmux` then cannot run `tmux ls`, and an unanswered question used to draw
+the same screen as "no sessions". `cron` has the identical problem with `--cron`: it runs with
+`/usr/bin:/bin`.
+
+Check what the server actually has:
+
+```bash
+tmux show-environment -g PATH
+```
+
+fmux now repairs this by itself — it reads the tmux binary's path back off the running server
+(`$TMUX` carries the server pid) and puts that directory on `PATH` before doing anything else.
+If it still cannot find one, the popup says so instead of drawing an empty list. For a prefix
+nothing can guess, say it outright:
+
+```bash
+fmux config set tmux_path "$(command -v tmux)"   # run this from a normal terminal
+```
+
+Fixing the tmux server's own environment works too, and fixes it for every other tool in the
+pane at the same time — in `~/.tmux.conf`:
+
+```tmux
+set-environment -g PATH "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+```
 
 ## Scripting surface
 
