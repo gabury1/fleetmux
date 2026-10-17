@@ -81,6 +81,39 @@ assert_eq "$(state_of)" "working" "the working hook writes the state"
 hook idle '{}'
 assert_eq "$(state_of)" "idle" "the idle hook writes the state"
 
+# ── ②' compaction returns to the pre-compaction state ──────────────────────
+# Idle compaction ("Compacted while idle") runs outside a response, so no Stop follows. If
+# PostCompact just wrote working, ✻ would stick until the next prompt (hook.log $7, 2026-10-17).
+CF="$STATE/compact-9"
+# Switch to a detached session — had we gone through the idle branch, "✓ done" would fire here.
+export FMUX_FAKE_DISP="\$9${TAB}zzhooktest${TAB}$HOME${TAB}claude${TAB}0"
+rm -f "$HF" "$CF" "$STATE/finished"
+hook idle '{}'
+: > "$FMUX_TMUX_LOG"
+hook compact-pre '{"hook_event_name":"PreCompact"}'
+assert_eq "$(state_of)" "working" "working while compacting"
+hook compact-post '{"hook_event_name":"PostCompact"}'
+assert_eq "$(state_of)" "idle" "idle compaction returns to idle"
+assert_rc 1 test -f "$CF"
+assert_eq "$(grep -c 'done' "$FMUX_TMUX_LOG" || true)" "0" "restoring does not pop \"✓ done\""
+assert_rc 1 test -s "$STATE/finished"
+
+rm -f "$HF" "$CF"
+hook working '{}'
+hook compact-pre '{"hook_event_name":"PreCompact"}'
+hook compact-post '{"hook_event_name":"PostCompact"}'
+assert_eq "$(state_of)" "working" "auto-compact mid-response stays working"
+
+rm -f "$HF" "$CF"
+hook idle '{}'
+hook compact-post '{"hook_event_name":"PostCompact"}'
+assert_eq "$(state_of)" "working" "Post without Pre falls back to working, as before"
+
+hook compact-pre '{"hook_event_name":"PreCompact"}'
+hook clear '{}'
+assert_rc 1 test -f "$CF"
+export FMUX_FAKE_DISP="\$9${TAB}zzhooktest${TAB}$HOME${TAB}claude${TAB}1"
+
 # ── ③ the hook keeps updating the manifest even with snapshot=off (gate B9) ────
 printf 'snapshot=off\n' > "$CONF"
 rm -f "$STATE/manifest"

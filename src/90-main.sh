@@ -235,8 +235,8 @@ if [ "${1:-}" = "--hooks-json" ]; then
     done << 'EOF'
 UserPromptSubmit working
 PostToolUse working
-PreCompact working
-PostCompact working
+PreCompact compact-pre
+PostCompact compact-post
 Stop idle
 Notification waiting
 SessionStart boot

@@ -552,9 +552,11 @@ fmux_sweep_hooks() {
     #   dead session's prompt at the top of a new session's preview — an accident already
     #   suffered with hook-*/cpu-*.
     #   (a tmp file being written is .last-<id>.<pid>, so it doesn't get caught by this glob)
-    for hf in "$STATE"/last-*; do
+    #   The state parked during compaction (compact-<id>) uses the same check — a dead
+    #   session's leftover must not dress the PostCompact of a new session that inherited the id.
+    for hf in "$STATE"/last-* "$STATE"/compact-*; do
         [ -f "$hf" ] || continue
-        id=${hf##*/last-}
+        id=${hf##*/}; id=${id#*-}
         case "$live" in
             *" $id="*)
                 created=${live#*" $id="}; created=${created%% *}

@@ -5,7 +5,7 @@
 #   ① **Add-on principle.** If the file is missing, corrupted, or the session id cannot be
 #      obtained, the preview falls back to the old output **byte for byte**. There must be no
 #      path where this feature breaks the control tower.
-#   ② **Event gating.** --hooks-json bundles UserPromptSubmit/PostToolUse/PreCompact/PostCompact,
+#   ② **Event gating.** --hooks-json bundles UserPromptSubmit/PostToolUse,
 #      and --codex-hooks bundles UserPromptSubmit/PreToolUse/PostToolUse, all under a single
 #      `--hook working`. So looking at $2 alone cannot tell whether it is a prompt submission.
 #      Without gating, PostToolUse's tool_input.prompt (the Task tool's instruction) would
