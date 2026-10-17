@@ -1093,9 +1093,11 @@ fmux_sweep_hooks() {
     #   dead session's prompt at the top of a new session's preview — an accident already
     #   suffered with hook-*/cpu-*.
     #   (a tmp file being written is .last-<id>.<pid>, so it doesn't get caught by this glob)
-    for hf in "$STATE"/last-*; do
+    #   The state parked during compaction (compact-<id>) uses the same check — a dead
+    #   session's leftover must not dress the PostCompact of a new session that inherited the id.
+    for hf in "$STATE"/last-* "$STATE"/compact-*; do
         [ -f "$hf" ] || continue
-        id=${hf##*/last-}
+        id=${hf##*/}; id=${id#*-}
         case "$live" in
             *" $id="*)
                 created=${live#*" $id="}; created=${created%% *}
@@ -1153,7 +1155,7 @@ fmux_jv() {
 #      (which is why we discard them below).
 #   ④ There's no notion of depth → it mistakes PostToolUse's tool_input.prompt (the Task
 #      tool's subagent instruction) for a prompt. This isn't theoretical: --hooks-json
-#      bundles UserPromptSubmit/PostToolUse/PreCompact/PostCompact **all under a single
+#      bundles UserPromptSubmit/PostToolUse **all under a single
 #      `--hook working`**, and --codex-hooks likewise bundles UserPromptSubmit/PreToolUse/
 #      PostToolUse under working. Looking at $2 alone can't tell you whether this is a
 #      prompt submission, so every tool call becomes a false positive.
@@ -1314,7 +1316,7 @@ FMUX_LASTP_AWK='
     }'
 
 # Called from the hook path. Only actually does work when it's UserPromptSubmit.
-#   ⚠ The bash pre-gate is the crux — PostToolUse/PreToolUse/PreCompact bounce back here
+#   ⚠ The bash pre-gate is the crux — PostToolUse/PreToolUse bounce back here
 #     on a single string comparison, so they add zero forks (keeping the hook path's cost
 #     rule). The awk fork happens once per prompt a human types, i.e. independent of the
 #     number of tool calls.
@@ -1875,6 +1877,7 @@ fmux_fleet_agg() {
 # Agent hook receiver: called by claude/codex hooks on every event — a more accurate state
 #   source than scraping the screen.
 #   claude: working(UserPromptSubmit/PostToolUse) / idle(Stop) / waiting(Notification) / clear(SessionEnd)
+#           compact-pre(PreCompact) / compact-post(PostCompact)
 #   codex : working(UserPromptSubmit/PreToolUse) / idle(Stop) / waiting-codex(PermissionRequest)
 # The hook runs inside the agent process's environment, so it knows its own session via
 #   $TMUX_PANE (solves the session-mapping problem).
@@ -1949,13 +1952,35 @@ if [ "${1:-}" = "--hook" ]; then
             now=$(date +%s)
             echo "$st $now $cpid" > "$hf"
             # Save the last prompt — working is a single branch **shared** by
-            #   UserPromptSubmit, PostToolUse, PreCompact, PostCompact (and for codex, also
-            #   PreToolUse). So looking at $st alone here can't tell us whether this was a
+            #   UserPromptSubmit, PostToolUse (and for codex, also PreToolUse). So looking at $st alone here can't tell us whether this was a
             #   prompt submission -> gating is done inside the function via the payload's
             #   hook_event_name. If it's not a prompt submission, it returns immediately with
             #   zero forks. Fails silently if it fails — the state file has already been
             #   written above (this is a side-effect-only addition).
             fmux_last_prompt_save "$sid" "$payload" "$now" ;;
+        compact-pre)
+            # Compaction runs inside a response (auto-compact) but also outside one (idle
+            #   compaction, "Compacted while idle"). Outside a response no Stop follows — if
+            #   PreCompact just wrote working, ✻ would stick until the next prompt (measured in
+            #   hook.log for $7 on 2026-10-17). So park the pre-compaction state word in a side
+            #   file (compact-<id>) and then write working.
+            #   The prefix differs, so the hook-*/last-* globs don't catch it.
+            prev=$(cut -d' ' -f1 "$hf" 2>/dev/null || true)
+            case "$prev" in
+                idle|working|waiting) echo "$prev" > "$STATE/compact-${sid#\$}" ;;
+                *) rm -f "$STATE/compact-${sid#\$}" ;;
+            esac
+            echo "working $(date +%s) $cpid" > "$hf" ;;
+        compact-post)
+            # Restore the parked state. Auto-compact mid-response parked working, so it stays
+            #   working. With no side file (Pre was missed, or the session predates this) we
+            #   fall back to working, as before.
+            #   ⚠ Restoring idle deliberately skips the idle branch — "✓ done" fires only when a
+            #   response ends (Stop). Idle compaction isn't work the user asked for.
+            prev=$(cat "$STATE/compact-${sid#\$}" 2>/dev/null || true)
+            rm -f "$STATE/compact-${sid#\$}"
+            case "$prev" in idle|working|waiting) ;; *) prev=working ;; esac
+            echo "$prev $(date +%s) $cpid" > "$hf" ;;
         idle)
             prev=$(cut -d' ' -f1 "$hf" 2>/dev/null || true)
             echo "idle $(date +%s) $cpid" > "$hf"
@@ -1982,8 +2007,9 @@ if [ "${1:-}" = "--hook" ]; then
             # fmux_sweep_hooks comment).
             #   The last prompt is removed here too, in the same place — the session is over,
             #   and "what did I ask it to do" shouldn't linger and show up in the next
-            #   session's preview (same judgment as sweep).
-            rm -f "$hf" "$STATE/cpu-${sid#\$}" "$STATE/last-${sid#\$}" ;;
+            #   session's preview (same judgment as sweep). Same for the state parked during
+            #   compaction (compact-<id>).
+            rm -f "$hf" "$STATE/cpu-${sid#\$}" "$STATE/last-${sid#\$}" "$STATE/compact-${sid#\$}" ;;
         boot)
             # Agent boot self-report — immediately classifies this as an agent session +
             #   runs any pending /rename
@@ -4150,8 +4176,8 @@ if [ "${1:-}" = "--hooks-json" ]; then
     done << 'EOF'
 UserPromptSubmit working
 PostToolUse working
-PreCompact working
-PostCompact working
+PreCompact compact-pre
+PostCompact compact-post
 Stop idle
 Notification waiting
 SessionStart boot

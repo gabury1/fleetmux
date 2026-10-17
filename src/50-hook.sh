@@ -152,6 +152,7 @@ fmux_fleet_agg() {
 # Agent hook receiver: called by claude/codex hooks on every event — a more accurate state
 #   source than scraping the screen.
 #   claude: working(UserPromptSubmit/PostToolUse) / idle(Stop) / waiting(Notification) / clear(SessionEnd)
+#           compact-pre(PreCompact) / compact-post(PostCompact)
 #   codex : working(UserPromptSubmit/PreToolUse) / idle(Stop) / waiting-codex(PermissionRequest)
 # The hook runs inside the agent process's environment, so it knows its own session via
 #   $TMUX_PANE (solves the session-mapping problem).
@@ -226,13 +227,35 @@ if [ "${1:-}" = "--hook" ]; then
             now=$(date +%s)
             echo "$st $now $cpid" > "$hf"
             # Save the last prompt — working is a single branch **shared** by
-            #   UserPromptSubmit, PostToolUse, PreCompact, PostCompact (and for codex, also
-            #   PreToolUse). So looking at $st alone here can't tell us whether this was a
+            #   UserPromptSubmit, PostToolUse (and for codex, also PreToolUse). So looking at $st alone here can't tell us whether this was a
             #   prompt submission -> gating is done inside the function via the payload's
             #   hook_event_name. If it's not a prompt submission, it returns immediately with
             #   zero forks. Fails silently if it fails — the state file has already been
             #   written above (this is a side-effect-only addition).
             fmux_last_prompt_save "$sid" "$payload" "$now" ;;
+        compact-pre)
+            # Compaction runs inside a response (auto-compact) but also outside one (idle
+            #   compaction, "Compacted while idle"). Outside a response no Stop follows — if
+            #   PreCompact just wrote working, ✻ would stick until the next prompt (measured in
+            #   hook.log for $7 on 2026-10-17). So park the pre-compaction state word in a side
+            #   file (compact-<id>) and then write working.
+            #   The prefix differs, so the hook-*/last-* globs don't catch it.
+            prev=$(cut -d' ' -f1 "$hf" 2>/dev/null || true)
+            case "$prev" in
+                idle|working|waiting) echo "$prev" > "$STATE/compact-${sid#\$}" ;;
+                *) rm -f "$STATE/compact-${sid#\$}" ;;
+            esac
+            echo "working $(date +%s) $cpid" > "$hf" ;;
+        compact-post)
+            # Restore the parked state. Auto-compact mid-response parked working, so it stays
+            #   working. With no side file (Pre was missed, or the session predates this) we
+            #   fall back to working, as before.
+            #   ⚠ Restoring idle deliberately skips the idle branch — "✓ done" fires only when a
+            #   response ends (Stop). Idle compaction isn't work the user asked for.
+            prev=$(cat "$STATE/compact-${sid#\$}" 2>/dev/null || true)
+            rm -f "$STATE/compact-${sid#\$}"
+            case "$prev" in idle|working|waiting) ;; *) prev=working ;; esac
+            echo "$prev $(date +%s) $cpid" > "$hf" ;;
         idle)
             prev=$(cut -d' ' -f1 "$hf" 2>/dev/null || true)
             echo "idle $(date +%s) $cpid" > "$hf"
@@ -259,8 +282,9 @@ if [ "${1:-}" = "--hook" ]; then
             # fmux_sweep_hooks comment).
             #   The last prompt is removed here too, in the same place — the session is over,
             #   and "what did I ask it to do" shouldn't linger and show up in the next
-            #   session's preview (same judgment as sweep).
-            rm -f "$hf" "$STATE/cpu-${sid#\$}" "$STATE/last-${sid#\$}" ;;
+            #   session's preview (same judgment as sweep). Same for the state parked during
+            #   compaction (compact-<id>).
+            rm -f "$hf" "$STATE/cpu-${sid#\$}" "$STATE/last-${sid#\$}" "$STATE/compact-${sid#\$}" ;;
         boot)
             # Agent boot self-report — immediately classifies this as an agent session +
             #   runs any pending /rename

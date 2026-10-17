@@ -21,7 +21,7 @@
 #      (which is why we discard them below).
 #   ④ There's no notion of depth → it mistakes PostToolUse's tool_input.prompt (the Task
 #      tool's subagent instruction) for a prompt. This isn't theoretical: --hooks-json
-#      bundles UserPromptSubmit/PostToolUse/PreCompact/PostCompact **all under a single
+#      bundles UserPromptSubmit/PostToolUse **all under a single
 #      `--hook working`**, and --codex-hooks likewise bundles UserPromptSubmit/PreToolUse/
 #      PostToolUse under working. Looking at $2 alone can't tell you whether this is a
 #      prompt submission, so every tool call becomes a false positive.
@@ -182,7 +182,7 @@ FMUX_LASTP_AWK='
     }'
 
 # Called from the hook path. Only actually does work when it's UserPromptSubmit.
-#   ⚠ The bash pre-gate is the crux — PostToolUse/PreToolUse/PreCompact bounce back here
+#   ⚠ The bash pre-gate is the crux — PostToolUse/PreToolUse bounce back here
 #     on a single string comparison, so they add zero forks (keeping the hook path's cost
 #     rule). The awk fork happens once per prompt a human types, i.e. independent of the
 #     number of tool calls.
