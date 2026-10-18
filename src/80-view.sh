@@ -246,7 +246,20 @@ if [ "${1:-}" = "--list" ]; then
                     #   from real usage).
                     # The evidence set is stacked with **OR** — the removal condition is unchanged
                     #   from before this was introduced: "none of the three".
-                    #   ① Hook is fresh (≤20s) → the agent's own confession, most accurate, 0 forks. Stays priority 1.
+                    #   ① Hook is fresh (≤FMUX_STUCK_AFTER) → the agent's own confession, most accurate, 0 forks. Stays priority 1.
+                    #      The window was a hardcoded 20s until 2026-09-05, while the status bar
+                    #      (50-hook.sh) already trusted the same record for 180s. One record, two
+                    #      surfaces, two answers. Worse, the two were not even the same rule: past
+                    #      its window the status bar drops a session only on a **definite** idle
+                    #      verdict ("ignorance counts as working"), whereas here the mark needs a
+                    #      positive witness to survive. So the tighter number was also the one
+                    #      biased toward erasing, which is the direction of the bug being fixed.
+                    #      20s was too tight on its own terms as well: the hook only fires on
+                    #      UserPromptSubmit/PostToolUse, so any turn that thinks longer than 20s
+                    #      without touching a tool fell through by design — the common case, not
+                    #      an edge. Unified on FMUX_STUCK_AFTER; the cost is that a turn cancelled
+                    #      with Esc keeps ✻ for up to 3 minutes, which the status bar has been
+                    #      paying all along, and which is cheap for a session nobody is sitting in.
                     #   ② CPU delta (30-state.sh) → kernel accounting, independent of TUI wording, 0 forks.
                     #      Placed ahead of the screen check because it's cheap (0 forks vs 3) and
                     #      solid, and when it's wrong it errs toward "unknown", so ③ catches it.
@@ -256,7 +269,7 @@ if [ "${1:-}" = "--list" ]; then
                     #      thing that can rescue the case where the CPU signal errs toward a false
                     #      negative (a session starved under load, or a future TUI that stops
                     #      rendering while waiting).
-                    if [ $(( now - ${_hts:-0} )) -le 20 ]; then
+                    if [ $(( now - ${_hts:-0} )) -le "$FMUX_STUCK_AFTER" ]; then
                         mark=$'\033[33m✻\033[0m'
                     else
                         cbusy=0; fmux_cpu_busy "$sid" "${hpid:-0}" "$now" || cbusy=$?

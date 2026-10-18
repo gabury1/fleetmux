@@ -90,12 +90,20 @@ fake_proc() {                  # fake_proc <pid> <utime> <stime>
     printf '%s (claude) S 1 %s %s 0 -1 4194304 111 222 0 0 %s %s 0 0 20 0 12 0 999 0 0\n' \
         "$1" "$1" "$1" "$2" "$3" > "$PROC/$1/stat"
 }
-plant() {                      # plant <fresh|stale> <rc0|rc1|rc2|nohook>
+# Hook ages. Until 2026-09-05 there were only two, and `stale` was 60s — a value that sat in the
+# gap between the popup's hardcoded 20s window and the status bar's FMUX_STUCK_AFTER (180s). That
+# gap was the whole reason the two call sites disagreed, and it is what got unified: the popup now
+# reads the same FMUX_STUCK_AFTER. So the tiers are re-cut around the one remaining boundary.
+#   fresh 5s  · mid 60s  → both inside the window (60s used to be the divergence zone; the cells
+#                          in ⑤ below are the regression test that it no longer is)
+#   stale 240s            → past the window for both, where the stuck-prevention guard runs
+plant() {                      # plant <fresh|mid|stale> <rc0|rc1|rc2|nohook>
     local now hts
     now=$(date +%s)
     case "$1" in
-        fresh) hts=$((now - 5))  ;;   # ≤20s = the agent's own confession is still valid
-        stale) hts=$((now - 60)) ;;   # >20s = the zone where the stuck-prevention guard kicks in
+        fresh) hts=$((now - 5))   ;;  # well inside the window = the agent's own confession still stands
+        mid)   hts=$((now - 60))  ;;  # ★the old divergence zone — must now behave exactly like fresh
+        stale) hts=$((now - 240)) ;;  # past FMUX_STUCK_AFTER for both call sites
     esac
     if [ "$2" = nohook ]; then
         rm -f "$STATE/hook-$SID" "$STATE/cpu-$SID"
@@ -132,8 +140,8 @@ status_count() {               # --status's ✻n → n
 # ── ① the 12-cell grid ───────────────────────────────────────────────────────
 # want_list  : does --list draw ✻ (yes/no)
 # want_status: --status's ✻n (0/1)
-cell() {                       # cell <fresh|stale> <rc0|rc1|rc2> <screen> <want_list> <want_status> <description>
-    local hook="$1" cpu="$2" screen="$3" wl="$4" ws="$5" why="$6" gl gs
+cell() {                       # cell <fresh|mid|stale> <rc0|rc1|rc2> <screen> <want_list> <want_status> <description> [screen-only]
+    local hook="$1" cpu="$2" screen="$3" wl="$4" ws="$5" why="$6" screenonly="${7:-}" gl gs
     export FMUX_SCREEN="$screen"
     plant "$hook" "$cpu"; gl=$(list_mark)
     plant "$hook" "$cpu"; gs=$(status_count)
@@ -144,10 +152,19 @@ cell() {                       # cell <fresh|stale> <rc0|rc1|rc2> <screen> <want
     #   basis of a witness that does not exist would make it erase more aggressively than the
     #   popup, which is the exact reversal of this incident's starting point ("status bar shows
     #   ✻4, list shows no mark").
+    #   ⚠️ One cell is exempt, and it is marked `screen-only` at the call: the case where the
+    #   popup's mark rests on the screen witness **alone** (hook past the window, CPU says a
+    #   definite idle, screen shows a live spinner). The status bar has no screen witness at all,
+    #   so it cannot follow — the inequality is not violated by a rule mismatch but by the popup
+    #   holding a witness the badge structurally lacks. This cell was unreachable for t-10 before
+    #   2026-09-05 only because its `stale` was 60s, which sat inside the badge's window; it has
+    #   always been reachable in production for any hook silent past FMUX_STUCK_AFTER.
     local lnum=0; [ "$gl" = yes ] && lnum=1
     FMUX_RUN=$((FMUX_RUN + 1))
     if [ "$gs" -ge "$lnum" ]; then
         printf '  ok   invariant status-bar(%s) >= popup(%s)\n' "$gs" "$lnum"
+    elif [ "$screenonly" = screen-only ]; then
+        printf '  ok   known gap (screen-only witness): status-bar(%s) < popup(%s) — the badge has no screen tier\n' "$gs" "$lnum"
     else
         FMUX_FAIL=$((FMUX_FAIL + 1))
         printf '  FAIL invariant violated: status-bar(%s) < popup(%s) — %s\n' "$gs" "$lnum" "$why"
@@ -159,7 +176,7 @@ cell() {                       # cell <fresh|stale> <rc0|rc1|rc2> <screen> <want
 cell fresh rc0 "$SC_MATCH" yes 1 'a fresh hook is a confession from the agent itself — unconditionally working'
 cell fresh rc0 "$SC_IDLE"  yes 1 'fresh hook: does not flip even if the screen is idle (rendering cannot beat the confession)'
 cell fresh rc1 "$SC_MATCH" yes 1 'fresh hook: does not flip even if CPU says no'
-cell fresh rc1 "$SC_IDLE"  yes 1 '★fresh hook + CPU idle + screen idle — still not erased within 20s'
+cell fresh rc1 "$SC_IDLE"  yes 1 '★fresh hook + CPU idle + screen idle — still not erased inside the window'
 cell fresh rc2 "$SC_MATCH" yes 1 'fresh hook: CPU indeterminate changes nothing'
 cell fresh rc2 "$SC_IDLE"  yes 1 'fresh hook: ✻ does not disappear even during the warmup window'
 
@@ -167,21 +184,28 @@ cell fresh rc2 "$SC_IDLE"  yes 1 'fresh hook: ✻ does not disappear even during
 #     two call sites diverge.
 cell stale rc0 "$SC_MATCH" yes 1 'if CPU answers working, the screen is not consulted at all'
 cell stale rc0 "$SC_IDLE"  yes 1 '★the original symptom: a long thinking turn with no tool calls — CPU rescues it even when the screen is idle'
-cell stale rc1 "$SC_MATCH" yes 1 '★where block #2 stands: when the screen witness stands, --list keeps ✻. The status bar must count it too'
-cell stale rc1 "$SC_IDLE"  no  1 '★unstuck — --list only erases when all three witnesses say no'
+cell stale rc1 "$SC_MATCH" yes 0 '★the screen witness alone keeps --list ✻ up; the badge cannot follow because it has no screen tier' screen-only
+cell stale rc1 "$SC_IDLE"  no  0 '★unstuck — --list only erases when all three witnesses say no, and here the badge agrees'
 cell stale rc2 "$SC_MATCH" yes 1 'CPU indeterminate (warmup, detached) → the screen stands as the 3rd-priority backstop'
 cell stale rc2 "$SC_IDLE"  no  1 'indeterminate + screen idle → --list erases, and the status bar does not fold "unknown" into "erase"'
 
 # ── ② exactly where the answers diverge, and in which direction ────────────
-# Of the 12 cells, the answers diverge in only two (stale×rc1×screen-idle, stale×rc2×screen-idle).
-# And the direction is always the one where "the status bar counts more." If the opposite
-# direction ever appears, the invariant assertion above fires first.
-# Here we pin down, with the reason, that those two cells are **intentional**: the status bar
-# does not know session names and cannot capture-pane the whole fleet every 5 seconds, so it has
-# no 3rd-priority witness at all.
+# Rewritten 2026-09-05. It used to read "of the 12 cells, only two diverge, and always in the
+# direction where the status bar counts more." Both halves of that changed when the popup's
+# window was unified onto FMUX_STUCK_AFTER, because the old `stale` (60s) had been sitting in the
+# gap between the two windows and was manufacturing a divergence that no longer exists.
+# Past the window the picture is now:
+#   · rc1 → both erase. They agree; this used to be "designed mismatch 1/2".
+#   · rc2 → the popup consults the screen and the badge does not. Still a designed mismatch, and
+#           still in the safe direction (the badge counts more).
+#   · rc1 + a screen that matches → the one cell where the popup counts more. Not a rule
+#           mismatch: the popup is holding a witness the badge structurally lacks (see the
+#           `screen-only` note on the invariant above).
 export FMUX_SCREEN="$SC_IDLE"
-plant stale rc1; assert_eq "$(list_mark)"    "no" 'designed mismatch 1/2 — --list looks at all three witnesses and erases'
-plant stale rc1; assert_eq "$(status_count)" "1"  'designed mismatch 1/2 — the status bar has only two witnesses, so it does not erase'
+plant stale rc2; assert_eq "$(list_mark)"    "no" 'designed mismatch — --list looks at all three witnesses and erases'
+plant stale rc2; assert_eq "$(status_count)" "1"  'designed mismatch — the status bar refuses to fold "unknown" into "erase"'
+plant stale rc1; assert_eq "$(list_mark)"    "no" 'rc1 + screen idle: the popup erases'
+plant stale rc1; assert_eq "$(status_count)" "0"  '★and the badge now erases with it — a definite idle verdict past the window is evidence for both'
 
 # ── ③ block #2 regression — a single rc1 CPU tick does not turn off the status bar ─────────────
 # Measured in practice: claude waiting on a tool-call response swings between 3-22 cs/s, repeatedly
@@ -189,11 +213,14 @@ plant stale rc1; assert_eq "$(status_count)" "1"  'designed mismatch 1/2 — the
 # rc1 would make a genuinely working session's ✻n flicker.
 # Measures whether the count stays steady even when three ticks in a row are all rc1 (the spot
 # solved with 'always count' instead of hysteresis).
+# Uses the `mid` tier (60s), not `stale` — the point being measured is the behaviour **inside**
+# FMUX_STUCK_AFTER, where the flicker argument lives. Past the window a definite rc1 is supposed
+# to drop the count, which is a different rule and is measured in ① above.
 export FMUX_SCREEN="$SC_MATCH"
 n1=0; n2=0; n3=0
-plant stale rc1; n1=$(status_count)
-plant stale rc1; n2=$(status_count)
-plant stale rc1; n3=$(status_count)
+plant mid rc1; n1=$(status_count)
+plant mid rc1; n2=$(status_count)
+plant mid rc1; n3=$(status_count)
 assert_eq "$n1$n2$n3" "111" '★status-bar ✻n does not flicker even when CPU is rc1 for three ticks in a row (1 1 1)'
 
 # ── ④ block #1 regression — a completion line must not act as a screen witness ─────────────────
@@ -212,6 +239,24 @@ assert_eq "$(list_mark)" "no" \
 export FMUX_SCREEN="$SC_MATCH"
 plant stale rc2
 assert_eq "$(list_mark)" "yes" 'even with ⑤ removed, a real spinner screen still keeps ✻ up'
+
+# ── ⑤ the 2026-09-05 window unification ──────────────────────────────────────
+# The popup used to trust a `working` record for a hardcoded 20 seconds while the status bar
+# trusted the same record for FMUX_STUCK_AFTER (180s). One record, two surfaces, two answers —
+# and the tighter of the two was also the one biased toward erasing.
+# It mattered because the hook only fires on UserPromptSubmit/PostToolUse: any turn that thinks
+# for more than 20 seconds without touching a tool fell out of the popup's window **by design**,
+# which is the common case for a reasoning model, not an edge.
+# These cells pin the unification: at 60 seconds, with every other witness saying no, both call
+# sites must still show working. Re-hardcode 20 here and all four go red.
+export FMUX_SCREEN="$SC_IDLE"
+plant mid rc1; assert_eq "$(list_mark)"    "yes" '★60s-old hook + CPU idle + screen idle → --list keeps ✻ (this is the bug that was reported)'
+plant mid rc1; assert_eq "$(status_count)" "1"   '★…and the status bar says the same thing, which it always did'
+plant mid rc2; assert_eq "$(list_mark)"    "yes" '★60s-old hook during CPU warmup → --list keeps ✻ instead of falling through to the screen'
+plant mid rc2; assert_eq "$(status_count)" "1"   '★…and the two surfaces agree here too'
+# The window is a shared constant, not two numbers that happen to be equal.
+assert_rc 1 grep -qa 'now - ${_hts:-0} )) -le 20' "$FMUXBIN"
+assert_rc 0 grep -qa 'now - ${_hts:-0} )) -le "$FMUX_STUCK_AFTER"' "$FMUXBIN"
 
 # ── ⑤ a session with no hook file at all — the one place the divergence is structural ──────────
 # --status counts by scanning hook-*, so it cannot see a hookless session to begin with. --list

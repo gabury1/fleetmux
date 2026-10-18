@@ -59,6 +59,17 @@
 #          still caught fine by ④.
 #      ⛔ Do not add back "hour(h)-unit for". If you must, broaden ④, which requires
 #         present-progressive (-ing).
+#   ⑥ (✻|✶|✳|✢|✽) [^ ()]*(…|\.\.\.)     ← added 2026-09-05
+#      A bare spinner with no timer yet — `✢ Gesticulating…`, measured live on the fleet. ③ is
+#      the alternative that should have caught it, but ③ requires a digit after the ellipsis, so
+#      the first seconds of every turn (before the `(12s` counter appears) read as not-working.
+#      Why this is a separate alternative instead of relaxing ③: ③'s glyph set includes `·` and
+#      `*`, which are also bullet characters. Dropping the digit requirement there would make any
+#      prose bullet ending in an ellipsis a spinner. ⑥ therefore takes **only the five real
+#      spinner glyphs** and leaves ③ byte-identical for the two ambiguous ones.
+#      Checked against every "must not match" case pinned in t-08: the completion lines
+#      (`✻ Baked for 11m 42s`, `✻ Sautéed for 1h 10m 46s`) carry no ellipsis, so none of them
+#      move. Combined with the column-0 rule in fmux_state_window, quoted prose stays out too.
 #
 # Why multibyte characters are written as a literal alternation (✻|✶|…) instead of inside a
 # bracket expression: a 3-byte character inside a bracket expression collapses under the C locale
@@ -66,7 +77,7 @@
 # Alternation is fixed at the character level regardless of locale or grep implementation. Only
 # ERE-only syntax is used — \d \s \b {n,m} (?:) and backreferences are GNU/PCRE extensions and
 # don't work on BSD grep.
-WORKING_PAT='(\([^()]*|· )[Ee]sc to interrupt|\([^()]*[0-9]+[hms] · (↑|↓) ?[0-9.,]+[kKmM]? ?tokens|(✻|✶|✳|✢|✽|·|\*) [^ ()]*(…|\.\.\.) ?\(?[0-9]|(✻|✶|✳|✢|✽|·|\*) [A-Za-z]*ing for [^ ]'
+WORKING_PAT='(\([^()]*|· )[Ee]sc to interrupt|\([^()]*[0-9]+[hms] · (↑|↓) ?[0-9.,]+[kKmM]? ?tokens|(✻|✶|✳|✢|✽|·|\*) [^ ()]*(…|\.\.\.) ?\(?[0-9]|(✻|✶|✳|✢|✽|·|\*) [A-Za-z]*ing for [^ ]|(✻|✶|✳|✢|✽) [^ ()]*(…|\.\.\.)'
 
 # Waiting-screen check — **the sole witness for clearing a stuck ⏸** (the waiting branch in
 # 80-view.sh).
@@ -94,21 +105,58 @@ WORKING_PAT='(\([^()]*|· )[Ee]sc to interrupt|\([^()]*[0-9]+[hms] · (↑|↓) 
 #    and adding it would freeze a running session stuck as waiting.
 WAITING_PAT='Do you want to|Would you like to|Enter to select|Esc to cancel|Press enter to confirm|Yes, proceed'
 
-# Working check: the spinner always shows on "the one line right above the separator above the
-# input box (❯)" — check only that one line.
-# (Checking a chunk of the bottom N lines gets false positives/negatives from leftover
-# conversation text on screen — got burned twice.)
-fmux_working() {
-    awk '
+# Scan depth for the working check — how many lines above the input box (❯) are inspected.
+#
+# Why this exists (2026-09-05): the old rule was "the spinner is always the one line right above
+#   the separator above ❯, so check only that line," and the TUI outgrew it. Claude Code now
+#   draws lines of its own into that slot — a right-aligned banner
+#   (`✔ Update installed · Restart to apply`, `new task? /clear to save 153.9k tokens`) and an
+#   indented tip (`  ⎿  Tip: Dynamic workflows let Claude write a script …`). The old picker
+#   skipped blank lines and nothing else, so it picked the intruder, and every working session
+#   read as idle whenever the hook had gone stale.
+#   The real change is not "a new phrase appeared" but "the gap is no longer a fixed size", so
+#   skipping the specific phrases would only buy time until the next line shape lands.
+#   Measured on the live fleet: 5 of 5 sessions picked the wrong line. The capture in
+#   test/fixtures/screen/WORKING-tip-line-below-spinner.screen reproduces it 20 times out of 20.
+#
+# ⚠️ This reverses the old comment's "checking a chunk of the bottom N lines gets false
+#   positives/negatives from leftover conversation text — got burned twice." That burn was real,
+#   but it happened under the loose pattern that predates WORKING_PAT's ①~④. Re-measured against
+#   the very same captures with today's pattern:
+#     · all 8 idle captures are clean up to 40 lines above ❯ — 0 false positives
+#     · the 2 working captures are caught at depth 3 and 4
+#   So depth stopped being the binding constraint; the tightness of WORKING_PAT is. 8 is double
+#   the measured need. Going wider buys nothing measurable and only adds exposure to conversation
+#   text that quotes a spinner line, which the anonymized fixtures cannot represent.
+#
+# Only column-0 lines are inspected, and this is the half that does most of the work. Measured:
+#   the live spinner (`✶ Marinating… (1m 3s …`) and the completion line (`✻ Baked for 11m 42s`)
+#   both sit at column 0, while everything the agent printed — prose, tool results, the tip line
+#   above — is indented. In the captured regression the window narrows to exactly one line, the
+#   spinner, so the two intruders never reach the pattern at all.
+#   The depth is what covers the case this rule does not: an intruder drawn at column 0. Neither
+#   guard is load-bearing alone, which is the point — the TUI has now reshaped this area twice.
+# Only overridable via environment variable, deliberately not in FMUX_CONF_KEYS — same reasoning
+#   as the FMUX_CPU_* knobs below: this is a tuning knob, not a user setting.
+FMUX_SCAN_LINES=${FMUX_SCAN_LINES:-8}
+
+# The window the working verdict is made on. Kept separate from fmux_working so the test can pin
+# exactly which lines were inspected (t-08 §④) instead of carrying its own copy of this awk —
+# the copy is how a picker change could quietly pass a test that claims to measure the picker.
+fmux_state_window() {
+    awk -v depth="${FMUX_SCAN_LINES:-8}" '
         { L[NR] = $0 }
         /^❯/ { p = NR }
         END {
             if (!p) exit
-            i = p - 1
-            if (i >= 1 && L[i] ~ /^──/) i--
-            while (i >= 1 && L[i] ~ /^[ \t]*$/) i--
-            if (i >= 1) print L[i]
-        }' | grep -qaE "$WORKING_PAT"
+            for (i = p - 1; i >= 1 && p - i <= depth; i--)
+                if (L[i] ~ /^[^ \t]/ && L[i] !~ /^──/) print L[i]
+        }'
+}
+
+# Working check: does any line in that window look like a running spinner?
+fmux_working() {
+    fmux_state_window | grep -qaE "$WORKING_PAT"
 }
 
 # ── CPU-delta-based working check ───────────────────────────────────────────

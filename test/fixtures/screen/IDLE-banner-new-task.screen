@@ -1,0 +1,38 @@
+  It was empty, and I did not touch the workflow.
+
+  ---
+
+  ⚠️ One thing I noticed on the way in: that session left a bug report draft open:
+
+  ▎ another session ran git reset --hard in a shared repo and the uncommitted edits in progress were lost (docs/notes/
+  ▎ draft.md)
+
+  So the multi-session accident happened again. The draft is waiting at 2 to send — whether to send it is your call,
+  but checking whether another session is still attached to the sample-docs repo looks more urgent. The batch has run
+  for over an hour, and another reset now would wipe all of it.
+
+  Want me to check?
+
+✻ Crunched for 1m 22s · done 10:11 PM
+
+❯ what are you talking about
+  ⎿  You've hit your session limit · resets 2am (Asia/Seoul)
+     /usage-credits to finish what you’re working on.
+
+✻ Brewed for 0s · done 12:59 AM
+
+● Remote Control disconnected — signed-in claude.ai account or organization changed on this machine — run
+  /remote-control to start a session for the current account, or /login to switch back, then /remote-control
+
+❯ /remote-control
+
+● Remote Control disconnected — signed-in claude.ai account or organization changed on this machine — run
+  /remote-control to start a session for the current account, or /login to switch back, then /remote-control
+                                                                             new task? /clear to save 153.9k tokens
+─────────────────────────────────────────────────────────────────────────────────────────────────────────── general ─
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ /low-priority to continue now at lower priority · uses your weekly limit
+  «demo» sample                                                                                          /rc failed
+  Opus 5 (1M context) ctx:15% 7d:40%left
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

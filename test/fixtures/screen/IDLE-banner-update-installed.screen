@@ -1,0 +1,43 @@
+
+● The simulator was off. Starting it again.
+
+  Read 1 file, ran 3 shell commands
+
+● The schedule tab is up. The bottom tabs really respond now — you can switch home↔schedule in the simulator.
+
+  ┌────────────────────────────┬─────────────────────────────────┐
+  │          Built             │                                 │
+  ├────────────────────────────┼─────────────────────────────────┤
+  │ draft_shell.dart           │ draft-only shell, all 4 tabs    │
+  ├────────────────────────────┼─────────────────────────────────┤
+  │ schedule_draft_screen.dart │ schedule tab (draft 1 list)     │
+  ├────────────────────────────┼─────────────────────────────────┤
+  │ Route                      │ /draft · /draft/schedule        │
+  └────────────────────────────┴─────────────────────────────────┘
+
+  ⭐ The word "transition point" never appears on screen. Storage holds points but the user reads ranges, so the app bridges the gap. One row 9 AM — 10 PM · 26℃ is really two points.
+
+  Three places where the screen does the work
+
+  - Weekday grouping — storage keeps each day separately, but the screen groups Mon–Fri
+  - Off ranges — storage just has no setpoint_c, but it is drawn as 12 AM — 9 AM · off. Otherwise midnight-to-opening would vanish
+  - Sunday — a day with no rows at all, so it says off all day
+
+  Tapping the "Recent actions" or "Settings" tab shows "not drawn yet" — a blank screen would look broken.
+
+  ⚠️ app.dart on the laptop currently opens at /draft/schedule. Revert it to start from home, or leave it since the tabs get you there.
+
+  analyze clean · 500 tests pass · not committed.
+
+✻ Baked for 7m 57s · done 12:19 PM
+
+※ recap: Redesigning the sample app screens as drafts. Built the home tab (one large zone + a climate graph) and the schedule tab, running in the simulator with tab switching. Next: try it in the simulator
+  and point out what to fix.
+                                                                                                                                                                           ✔ Update installed · Restart to apply
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── sample-app-worker ─
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  «demo» sample-app ⎇ feat/zones*                                                                                                                                                                            /rc
+  Opus 5 (1M context) ctx:41% 5h:98%left 7d:97%left
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+  ⧉  home-redesign · schedule-tab

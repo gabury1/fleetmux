@@ -27,15 +27,20 @@ FIX="$TESTDIR/fixtures/screen"
 eval "$(sed -n '/^WORKING_PAT=/{p;q;}' "$FMUXBIN")"
 eval "$(sed -n '/^WAITING_PAT=/{p;q;}' "$FMUXBIN")"
 eval "$(awk '/^fmux_working\(\) \{/ { f = 1 } f { print } f && /^\}/ { exit }' "$FMUXBIN")"
+# fmux_working delegates the line picking to fmux_state_window, so it has to come along — without
+# it every verdict below would fail on "command not found" rather than on what it measures.
+eval "$(awk '/^fmux_state_window\(\) \{/ { f = 1 } f { print } f && /^\}/ { exit }' "$FMUXBIN")"
 
 assert_rc 0 test -n "${WORKING_PAT:-}"
-FMUX_RUN=$((FMUX_RUN + 1))
-if [ "$(type -t fmux_working 2>/dev/null)" = function ]; then
-    printf '  ok   extracted fmux_working from bin/fmux\n'
-else
-    FMUX_FAIL=$((FMUX_FAIL + 1))
-    printf '  FAIL failed to extract fmux_working from bin/fmux — the extraction awk cannot follow the function shape\n'
-fi
+for fn in fmux_working fmux_state_window; do
+    FMUX_RUN=$((FMUX_RUN + 1))
+    if [ "$(type -t "$fn" 2>/dev/null)" = function ]; then
+        printf '  ok   extracted %s from bin/fmux\n' "$fn"
+    else
+        FMUX_FAIL=$((FMUX_FAIL + 1))
+        printf '  FAIL failed to extract %s from bin/fmux — the extraction awk cannot follow the function shape\n' "$fn"
+    fi
+done
 
 # ── Structural guards ──────────────────────────────────────────────────────
 # (a) Never put multibyte glyphs inside a bracket expression. `[✻✶…]` collapses under the C locale
@@ -94,6 +99,10 @@ run_cases() {
         'the past-failure shape that was frozen into an old comment — regression guard'
     pat_case MATCH '· Puttering... (1s · ↓ 12 tokens)' \
         'middle-dot (·) frame + ASCII ellipsis'
+    pat_case MATCH '✢ Gesticulating…' \
+        '★⑥ a bare spinner with no timer yet — measured live 2026-09-05. ③ cannot save it because it demands a digit after the ellipsis, so the first seconds of every turn read as idle'
+    pat_case MATCH '✽ Seasoning…' \
+        '⑥ same shape on a different glyph — the whole spinner glyph set must behave alike'
 
     # (②) false-positive defense — idle screens, and someone else's text that happens to be on screen
     pat_case no '✻ Baked for 11m 42s' \
@@ -120,6 +129,20 @@ run_cases() {
         'a tool-result line — even with parens+number, the glyph and ellipsis requirement blocks it'
     pat_case no '  (disable recaps in /config)' \
         'the actual selected line from the lx-notes capture — a line that starts with a paren'
+    pat_case no '· 앞으로 할 일을 정리하면…' \
+        '★the reason ⑥ excludes · and *: they double as bullet characters, so a prose bullet ending in an ellipsis must stay out. ⑥ takes only the five real spinner glyphs'
+    pat_case no '* 다음 단계는 여기까지...' \
+        '★same, ASCII bullet — dropping the digit requirement on ③ instead of adding ⑥ would have caught this'
+    # The three intruding lines from the 2026-09-05 bug. In the captures we have they are all
+    # indented, so fmux_state_window drops them before the pattern ever sees them — these cases
+    # are the second lock: if the TUI ever draws one of them at column 0, the pattern still has
+    # to refuse it on its own.
+    pat_case no '✔ Update installed · Restart to apply' \
+        'the right-aligned banner that started the 2026-09-05 bug'
+    pat_case no 'new task? /clear to save 153.9k tokens' \
+        'the other banner shape — a k-suffixed token count with no parens and no glyph'
+    pat_case no '⎿  Tip: Dynamic workflows let Claude write a script that orchestrates many agents for you.' \
+        '★the tip line the picker actually mistook for the spinner'
 }
 
 LOCTAG='UTF-8'; export LC_ALL=en_US.UTF-8; run_cases
@@ -177,24 +200,56 @@ for f in "$FIX"/*.screen; do
 done
 # Nail down the capture count too — even if fixtures were wiped out wholesale, the loop above would
 # silently pass with 0 hits.
-assert_eq "$(ls "$FIX"/*.screen 2>/dev/null | grep -c .)" "8" "all 8 real captures are present (6 idle, 1 working, 1 waiting)"
+assert_eq "$(ls "$FIX"/*.screen 2>/dev/null | grep -c .)" "11" "all 11 real captures are present (8 idle, 2 working, 1 waiting)"
 
 # ── ④ the line-picking itself ────────────────────────────────────────────────
-# Nail down exactly what the pattern saw when it judged. If the awk starts picking a different line,
+# Nail down exactly what the verdict looked at. If the picker starts inspecting different lines,
 # ③ above could still pass in a "coincidentally matched on the wrong line" state.
-pick_line() {
-    awk '{ L[NR] = $0 }
-         /^❯/ { p = NR }
-         END { if (!p) exit
-               i = p - 1
-               if (i >= 1 && L[i] ~ /^──/) i--
-               while (i >= 1 && L[i] ~ /^[ \t]*$/) i--
-               if (i >= 1) print L[i] }' "$1"
-}
-assert_eq "$(pick_line "$FIX/device-refactor.screen")" '✻ Baked for 11m 42s' \
-    'in device-refactor, the line used for the verdict is a past-tense completion line'
-assert_eq "$(pick_line "$FIX/WORKING-sample-tui-worker.screen")" '✻ Choreographing… (43s · ↓ 1.9k tokens)' \
-    'in the WORKING capture, the line used for the verdict is the spinner line (not a progress line — EVIDENCE wrote this one wrong)'
+#
+# This used to keep its own copy of the picker awk, which defeated the purpose — a change in src
+# left the copy behind and the test went on measuring code that no longer ran. 2026-09-05: the
+# picker was split out as fmux_state_window precisely so this section can extract the real one.
+# (fmux_state_window was extracted alongside fmux_working at the top of this file.)
+# The line the verdict actually fires on = the first line of the window that matches.
+verdict_line() { fmux_state_window < "$1" | grep -aE "$WORKING_PAT" | head -1; }
+
+assert_eq "$(verdict_line "$FIX/device-refactor.screen")" '' \
+    'in device-refactor no line in the window matches — the completion line ✻ Baked for 11m 42s sits in it and is deliberately not caught'
+assert_eq "$(verdict_line "$FIX/WORKING-sample-tui-worker.screen")" '✻ Choreographing… (43s · ↓ 1.9k tokens)' \
+    'in the WORKING capture, the line the verdict fires on is the spinner line (not a progress line — EVIDENCE wrote this one wrong)'
+assert_eq "$(verdict_line "$FIX/WORKING-tip-line-below-spinner.screen")" '✶ Marinating… (1m 3s · ↓ 3.1k tokens · thinking more)' \
+    '★the 2026-09-05 regression: the spinner is found even though the TUI drew a tip line between it and the separator'
+
+# ★The window must keep out the intruding lines themselves — otherwise a future pattern change
+#   could start matching a banner or a tip and nobody would notice which line did it.
+assert_eq "$(fmux_state_window < "$FIX/WORKING-tip-line-below-spinner.screen" | grep -ac 'Tip: Dynamic workflows')" "0" \
+    '★the tip line that broke the old picker never even enters the window — it is indented two columns, so the column-0 rule drops it before the pattern is consulted'
+assert_eq "$(fmux_state_window < "$FIX/WORKING-tip-line-below-spinner.screen" | grep -ac '^──')" "0" \
+    'the separator never enters the window'
+assert_eq "$(fmux_state_window < "$FIX/WORKING-tip-line-below-spinner.screen" | grep -c .)" "1" \
+    'in this capture the window narrows to exactly one line — the spinner. Both guards (column-0 and depth) are doing work, and neither alone is being leaned on'
+assert_eq "$(fmux_state_window < "$FIX/WORKING-tip-line-below-spinner.screen" | grep -ac '^[ \t]')" "0" \
+    '★only column-0 lines enter the window — this is what keeps indented conversation prose out and makes widening the window affordable'
+
+# ★Depth is a measured value, not a feel. Re-deriving it: the working captures are caught at
+#   depth 3 and 4, and all idle captures stay clean far past the default. If someone lowers the
+#   default below the measured need, the 2026-09-05 bug comes straight back.
+for d in 1 2 3; do
+    got=0; FMUX_SCAN_LINES=$d fmux_state_window < "$FIX/WORKING-tip-line-below-spinner.screen" \
+        | grep -qaE "$WORKING_PAT" || got=$?
+    assert_eq "$got" "1" "at depth $d the spinner is still out of reach (this is why the default is not 4 or less)"
+done
+got=0; FMUX_SCAN_LINES=4 fmux_state_window < "$FIX/WORKING-tip-line-below-spinner.screen" \
+    | grep -qaE "$WORKING_PAT" || got=$?
+assert_eq "$got" "0" 'depth 4 is the measured minimum that reaches the spinner — the default 8 is double it'
+# The other direction: even a wildly over-wide window finds nothing in the idle captures. This is
+# the evidence that depth is not the constraint — the tightness of WORKING_PAT is.
+for f in "$FIX"/*.screen; do
+    base=${f##*/}
+    case "$base" in WORKING-*) continue ;; esac
+    got=0; FMUX_SCAN_LINES=40 fmux_state_window < "$f" | grep -qaE "$WORKING_PAT" || got=$?
+    assert_eq "$got" "1" "★even at depth 40 the idle capture stays clean — $base"
+done
 
 # ── ⑤ WAITING_PAT — the witness that unfreezes ⏸ ─────────────────────────────
 # Bug measured in practice on 2026-08-06: the status bar showed "⏸ tui-worker" but the list had no ⏸.
